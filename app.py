@@ -31,7 +31,7 @@ def check_password():
     return False
 
 # ==============================================================================
-# 1. FUNÇÕES ORIGINAIS (INTEGRALMENTE CONSERVADAS)
+# 1. FUNÇÕES ORIGINAIS (CONSERVADAS INTEGRALMENTE)
 # ==============================================================================
 CURRENT_YEAR = str(datetime.datetime.now().year)
 
@@ -98,15 +98,22 @@ def processar_pdf(file_bytes):
                             hist_upper = texto_sem_valor.upper()
                             if any(x in hist_upper for x in ["TED DEVOLVIDA", "DEVOLUCAO DE TED", "TED DEVOL"]):
                                 rows_devolucoes.append({"Data": data_str, "Valor_Extrato": valor_float})
-    except: return pd.DataFrame()
+    except:
+        return pd.DataFrame()
+
     df_debitos = pd.DataFrame(rows_debitos)
+    df_devolucoes = pd.DataFrame(rows_devolucoes) # Define explicitamente para evitar NameError
+
     if not df_devolucoes.empty and not df_debitos.empty:
         idx_rem = []
         for _, r_dev in df_devolucoes.iterrows():
             m = df_debitos[(df_debitos['Data'] == r_dev['Data']) & (abs(df_debitos['Valor_Extrato'] - r_dev['Valor_Extrato']) < 0.01) & (~df_debitos.index.isin(idx_rem))]
             if not m.empty: idx_rem.append(m.index[0])
         df_debitos = df_debitos.drop(idx_rem).reset_index(drop=True)
-    df = df_debitos[~df_debitos['Histórico'].astype(str).str.contains("SALDO|S A L D O|Resgate|BB-APLIC", case=False, na=False)].copy()
+
+    termos_excluir = "SALDO|S A L D O|Resgate|BB-APLIC C\.PRZ-APL\.AUT"
+    df = df_debitos[~df_debitos['Histórico'].astype(str).str.contains(termos_excluir, case=False, na=False)].copy()
+    
     df['Data_dt'] = pd.to_datetime(df['Data'], format='%d/%m/%Y', errors='coerce')
     mask_13113 = df['Histórico'].astype(str).str.contains("13113", na=False)
     if any(mask_13113):
@@ -123,7 +130,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         except: df = df.iloc[:, [4, 5, 8, -4, -2, -1]].copy()
         df.columns = ['Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
-        mask_transf = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
+        mask_transf = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
         df = df[mask_pagto | mask_transf].copy()
         df['Data_dt'] = df['Data'].apply(parse_br_date); df = df.dropna(subset=['Data_dt'])
         df['Data'] = df['Data_dt'].dt.strftime('%d/%m/%Y')
@@ -167,7 +174,7 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
     return df_f.sort_values(by=['dt', 'Documento']).drop(columns=['dt'])
 
 # ==============================================================================
-# 2. GERAÇÃO PDF (HISTÓRICO REMOVIDO CONFORME PEDIDO)
+# 2. GERAÇÃO PDF (HISTÓRICO REMOVIDO DO PDF)
 # ==============================================================================
 def gerar_pdf_final(df_f, nome_orig):
     buffer = io.BytesIO()
@@ -178,6 +185,7 @@ def gerar_pdf_final(df_f, nome_orig):
     story.append(Paragraph(f"<b>Conta:</b> {os.path.splitext(nome_orig)[0]}", ParagraphStyle(name='C', alignment=1)))
     story.append(Spacer(1, 15))
     
+    # Cabeçalho do PDF sem Histórico
     headers = ['Data', 'Documento', 'Vlr. Extrato', 'Vlr. Razão', 'Diferença']
     data = [headers]
     for _, r in df_f.iterrows():
@@ -200,7 +208,7 @@ def gerar_pdf_final(df_f, nome_orig):
     return buffer.getvalue()
 
 # ==============================================================================
-# 3. INTERFACE (STREAMLIT COM FUNDO BRANCO E HISTÓRICO)
+# 3. INTERFACE (FUNDOS BRANCOS E TOTAIS EM NEGRITO)
 # ==============================================================================
 if check_password():
     st.title("🏦 Conciliador Bancário - Banco do Brasil")
@@ -211,16 +219,22 @@ if check_password():
     if st.button("🚀 Processar Conciliação", use_container_width=True):
         if up_pdf and up_xlsx:
             with st.spinner("Processando..."):
-                df_p = processar_pdf(up_pdf.read())
-                df_e = processar_excel_detalhado(up_xlsx.read(), df_p, is_csv=up_xlsx.name.endswith('csv'))
-                if df_p.empty or df_e.empty: st.error("Erro nos arquivos."); st.stop()
+                # Captura bytes para não perder o ponteiro do arquivo
+                pdf_bytes = up_pdf.read()
+                xlsx_bytes = up_xlsx.read()
+                
+                df_p = processar_pdf(pdf_bytes)
+                df_e = processar_excel_detalhado(xlsx_bytes, df_p, is_csv=up_xlsx.name.endswith('csv'))
+                
+                if df_p.empty or df_e.empty: st.error("Erro no processamento."); st.stop()
+                
                 df_f = executar_conciliacao_inteligente(df_p, df_e)
                 
-                # HTML com Fundo Branco, Histórico e Totais em Negrito
+                # HTML com Fundo Branco na Tabela e Totais em Negrito
                 html = """
                 <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
-                <table style='width:100%; border-collapse: collapse; color: black; background-color: white;'>
-                    <tr style='background-color: #00008B; color: white;'>
+                <table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important;'>
+                    <tr style='background-color: #00008B; color: white !important;'>
                         <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Data</th>
                         <th style='padding: 8px; text-align: left; border: 1px solid #000;'>Histórico</th>
                         <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Documento</th>
@@ -231,18 +245,18 @@ if check_password():
                 for _, r in df_f.iterrows():
                     d_c = "red" if abs(r['Diferença']) >= 0.01 else "black"
                     html += f"""
-                    <tr style='border: 1px solid #000;'> 
-                        <td style='text-align: center; border: 1px solid #000;'>{r['Data']}</td> 
-                        <td style='text-align: left; border: 1px solid #000;'>{r['Histórico']}</td> 
-                        <td style='text-align: center; border: 1px solid #000;'>{r['Documento']}</td> 
-                        <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Valor_Extrato'])}</td> 
-                        <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Valor_Razao'])}</td> 
+                    <tr style='background-color: white;'> 
+                        <td style='text-align: center; border: 1px solid #000; color: black;'>{r['Data']}</td> 
+                        <td style='text-align: left; border: 1px solid #000; color: black;'>{r['Histórico']}</td> 
+                        <td style='text-align: center; border: 1px solid #000; color: black;'>{r['Documento']}</td> 
+                        <td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Extrato'])}</td> 
+                        <td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Razao'])}</td> 
                         <td style='text-align: right; color: {d_c}; border: 1px solid #000;'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td> 
                     </tr>"""
                 
-                # Linha de Totais: Fundo Branco, Fonte Negrito
+                # Totais: Fundo Branco, Fonte Negrito
                 html += f"""
-                    <tr style='font-weight: bold; background-color: white; border: 1px solid #000;'> 
+                    <tr style='font-weight: bold; background-color: white; color: black;'> 
                         <td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>
                         <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td>
                         <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Razao'].sum())}</td>
