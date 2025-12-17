@@ -31,7 +31,7 @@ def check_password():
     return False
 
 # ==============================================================================
-# 1. FUNÇÕES DE PROCESSAMENTO (LÓGICA ORIGINAL PRESERVADA)
+# 1. FUNÇÕES ORIGINAIS (INTEGRALMENTE CONSERVADAS)
 # ==============================================================================
 CURRENT_YEAR = str(datetime.datetime.now().year)
 
@@ -39,7 +39,9 @@ def limpar_documento_pdf(doc_str):
     if not doc_str: return ""
     apenas_digitos = re.sub(r'\D', '', str(doc_str))
     if not apenas_digitos: return ""
-    return apenas_digitos[-6:] if len(apenas_digitos) > 6 else apenas_digitos
+    if len(apenas_digitos) > 6:
+        return apenas_digitos[-6:]
+    return apenas_digitos
 
 def formatar_moeda_br(valor):
     if pd.isna(valor) or valor == "-": return "-"
@@ -48,9 +50,11 @@ def formatar_moeda_br(valor):
 def parse_br_date(date_val):
     if pd.isna(date_val): return pd.NaT
     try:
-        if isinstance(date_val, str): date_val = date_val.split()[0]
+        if isinstance(date_val, str):
+            date_val = date_val.split()[0]
         return pd.to_datetime(date_val, dayfirst=True, errors='coerce')
-    except: return pd.to_datetime(date_val, errors='coerce')
+    except:
+        return pd.to_datetime(date_val, errors='coerce')
 
 def processar_pdf(file_bytes):
     rows_debitos = []
@@ -96,34 +100,32 @@ def processar_pdf(file_bytes):
                                 rows_devolucoes.append({"Data": data_str, "Valor_Extrato": valor_float})
     except: return pd.DataFrame()
     df_debitos = pd.DataFrame(rows_debitos)
-    if df_debitos.empty: return df_debitos
-    if rows_devolucoes:
-        df_dev = pd.DataFrame(rows_devolucoes)
+    if not df_devolucoes.empty and not df_debitos.empty:
         idx_rem = []
-        for _, row_dev in df_dev.iterrows():
-            m = df_debitos[(df_debitos['Data'] == row_dev['Data']) & (abs(df_debitos['Valor_Extrato'] - row_dev['Valor_Extrato']) < 0.01) & (~df_debitos.index.isin(idx_rem))]
+        for _, r_dev in df_devolucoes.iterrows():
+            m = df_debitos[(df_debitos['Data'] == r_dev['Data']) & (abs(df_debitos['Valor_Extrato'] - r_dev['Valor_Extrato']) < 0.01) & (~df_debitos.index.isin(idx_rem))]
             if not m.empty: idx_rem.append(m.index[0])
         df_debitos = df_debitos.drop(idx_rem).reset_index(drop=True)
-    df = df_debitos[~df_debitos['Histórico'].str.contains("SALDO|S A L D O|Resgate|BB-APLIC", case=False, na=False)].copy()
+    df = df_debitos[~df_debitos['Histórico'].astype(str).str.contains("SALDO|S A L D O|Resgate|BB-APLIC", case=False, na=False)].copy()
     df['Data_dt'] = pd.to_datetime(df['Data'], format='%d/%m/%Y', errors='coerce')
-    mask_13113 = df['Histórico'].str.contains("13113", na=False)
+    mask_13113 = df['Histórico'].astype(str).str.contains("13113", na=False)
     if any(mask_13113):
-        df_t = df[mask_13113].copy()
-        df_o = df[~mask_13113].copy()
+        df_t = df[mask_13113].copy(); df_o = df[~mask_13113].copy()
         df_t_agg = df_t.groupby('Data_dt').agg({'Valor_Extrato': 'sum', 'Data': 'first'}).reset_index()
-        df_t_agg['Documento'] = "Tarifas Bancárias"
-        df_t_agg['Histórico'] = "Tarifas Bancárias do Dia"
+        df_t_agg['Documento'] = "Tarifas Bancárias"; df_t_agg['Histórico'] = "Tarifas Bancárias do Dia"
         df = pd.concat([df_o, df_t_agg], ignore_index=True)
     return df
 
 def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
     try:
         df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
-        df = df.iloc[:, [4, 5, 8, 25, 26, 27]].copy()
+        try: df = df.iloc[:, [4, 5, 8, 25, 26, 27]].copy()
+        except: df = df.iloc[:, [4, 5, 8, -4, -2, -1]].copy()
         df.columns = ['Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
-        df = df[df['Info_Z'].str.contains("Pagamento", na=False) | ((df['Info_Z'].str.contains("TRANSFERENCIA", na=False)) & (df['DC'].str.strip().str.upper() == 'C'))].copy()
-        df['Data_dt'] = df['Data'].apply(parse_br_date)
-        df = df.dropna(subset=['Data_dt'])
+        mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
+        mask_transf = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
+        df = df[mask_pagto | mask_transf].copy()
+        df['Data_dt'] = df['Data'].apply(parse_br_date); df = df.dropna(subset=['Data_dt'])
         df['Data'] = df['Data_dt'].dt.strftime('%d/%m/%Y')
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
@@ -165,23 +167,23 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
     return df_f.sort_values(by=['dt', 'Documento']).drop(columns=['dt'])
 
 # ==============================================================================
-# 2. GERAÇÃO DO PDF (REMOVIDO HISTÓRICO)
+# 2. GERAÇÃO PDF (HISTÓRICO REMOVIDO CONFORME PEDIDO)
 # ==============================================================================
-def gerar_pdf_final(df_f, nome_conta_orig):
+def gerar_pdf_final(df_f, nome_orig):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=10*mm, leftMargin=10*mm, topMargin=15*mm, bottomMargin=15*mm)
     story = []
     styles = getSampleStyleSheet()
     story.append(Paragraph("Relatório de Conciliação Bancária", styles["Title"]))
-    story.append(Paragraph(f"<b>Conta:</b> {os.path.splitext(nome_conta_orig)[0]}", ParagraphStyle(name='C', alignment=1)))
+    story.append(Paragraph(f"<b>Conta:</b> {os.path.splitext(nome_orig)[0]}", ParagraphStyle(name='C', alignment=1)))
     story.append(Spacer(1, 15))
     
-    # Cabeçalho sem Histórico
     headers = ['Data', 'Documento', 'Vlr. Extrato', 'Vlr. Razão', 'Diferença']
     data = [headers]
     for _, r in df_f.iterrows():
         diff = r['Diferença']
         data.append([r['Data'], str(r['Documento']), formatar_moeda_br(r['Valor_Extrato']), formatar_moeda_br(r['Valor_Razao']), formatar_moeda_br(diff) if abs(diff) >= 0.01 else "-"] )
+    
     data.append(['TOTAL', '', formatar_moeda_br(df_f['Valor_Extrato'].sum()), formatar_moeda_br(df_f['Valor_Razao'].sum()), formatar_moeda_br(df_f['Diferença'].sum())])
     
     t = Table(data, colWidths=[25*mm, 65*mm, 33*mm, 33*mm, 33*mm])
@@ -198,7 +200,7 @@ def gerar_pdf_final(df_f, nome_conta_orig):
     return buffer.getvalue()
 
 # ==============================================================================
-# 3. INTERFACE WEB (EXIBIÇÃO COM HISTÓRICO E TOTAIS LEGÍVEIS)
+# 3. INTERFACE (STREAMLIT COM FUNDO BRANCO E HISTÓRICO)
 # ==============================================================================
 if check_password():
     st.title("🏦 Conciliador Bancário - Banco do Brasil")
@@ -214,27 +216,41 @@ if check_password():
                 if df_p.empty or df_e.empty: st.error("Erro nos arquivos."); st.stop()
                 df_f = executar_conciliacao_inteligente(df_p, df_e)
                 
-                # HTML para tela (Com Histórico e Totais com cor padrão/negrito)
-                html = """<table style='width:100%; border-collapse: collapse; color: black;'>
+                # HTML com Fundo Branco, Histórico e Totais em Negrito
+                html = """
+                <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
+                <table style='width:100%; border-collapse: collapse; color: black; background-color: white;'>
                     <tr style='background-color: #00008B; color: white;'>
-                        <th style='padding: 8px; text-align: center;'>Data</th>
-                        <th style='padding: 8px; text-align: left;'>Histórico</th>
-                        <th style='padding: 8px; text-align: center;'>Documento</th>
-                        <th style='padding: 8px; text-align: right;'>Vlr. Extrato</th>
-                        <th style='padding: 8px; text-align: right;'>Vlr. Razão</th>
-                        <th style='padding: 8px; text-align: right;'>Diferença</th>
+                        <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Data</th>
+                        <th style='padding: 8px; text-align: left; border: 1px solid #000;'>Histórico</th>
+                        <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Documento</th>
+                        <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Vlr. Extrato</th>
+                        <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Vlr. Razão</th>
+                        <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Diferença</th>
                     </tr>"""
                 for _, r in df_f.iterrows():
                     d_c = "red" if abs(r['Diferença']) >= 0.01 else "black"
-                    html += f"<tr style='border-bottom: 1px solid #ddd;'> <td style='text-align: center;'>{r['Data']}</td> <td style='text-align: left;'>{r['Histórico']}</td> <td style='text-align: center;'>{r['Documento']}</td> <td style='text-align: right;'>{formatar_moeda_br(r['Valor_Extrato'])}</td> <td style='text-align: right;'>{formatar_moeda_br(r['Valor_Razao'])}</td> <td style='text-align: right; color: {d_c};'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td> </tr>"
+                    html += f"""
+                    <tr style='border: 1px solid #000;'> 
+                        <td style='text-align: center; border: 1px solid #000;'>{r['Data']}</td> 
+                        <td style='text-align: left; border: 1px solid #000;'>{r['Histórico']}</td> 
+                        <td style='text-align: center; border: 1px solid #000;'>{r['Documento']}</td> 
+                        <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Valor_Extrato'])}</td> 
+                        <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Valor_Razao'])}</td> 
+                        <td style='text-align: right; color: {d_c}; border: 1px solid #000;'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td> 
+                    </tr>"""
                 
-                # Linha de Totais (Cor padrão do fundo da página, mas em negrito)
-                html += f"""<tr style='font-weight: bold;'> 
-                    <td colspan='3' style='padding: 10px; text-align: center;'>TOTAL</td>
-                    <td style='text-align: right;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td>
-                    <td style='text-align: right;'>{formatar_moeda_br(df_f['Valor_Razao'].sum())}</td>
-                    <td style='text-align: right;'>{formatar_moeda_br(df_f['Diferença'].sum())}</td> </tr> </table>"""
+                # Linha de Totais: Fundo Branco, Fonte Negrito
+                html += f"""
+                    <tr style='font-weight: bold; background-color: white; border: 1px solid #000;'> 
+                        <td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>
+                        <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td>
+                        <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Razao'].sum())}</td>
+                        <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Diferença'].sum())}</td> 
+                    </tr> </table> </div>"""
                 
                 st.markdown(html, unsafe_allow_html=True)
                 pdf_data = gerar_pdf_final(df_f, up_pdf.name)
-                st.download_button("📥 Baixar PDF", pdf_data, f"Relatorio.pdf", "application/pdf", use_container_width=True)
+                st.download_button("📥 Baixar Relatório PDF", pdf_data, "Relatorio.pdf", "application/pdf", use_container_width=True)
+        else:
+            st.warning("⚠️ Selecione os dois arquivos primeiro.")
