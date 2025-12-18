@@ -21,20 +21,17 @@ from reportlab.lib.units import mm
 st.set_page_config(page_title="Extração de Tarifas Bancárias", layout="wide")
 
 # ==============================================================================
-# 1. DESIGN GERAL DA PÁGINA (Seu código de Design)
+# 1. DESIGN GERAL DA PÁGINA
 # ==============================================================================
 
 def aplicar_estilo_global():
-    """Aplica o CSS personalizado conforme solicitado."""
+    """Aplica o CSS personalizado."""
     st.markdown("""
     <style>
-        /* Reduzir espaçamento do topo da página */
         .block-container {
             padding-top: 2rem !important;
             padding-bottom: 2rem !important;
         }
-
-        /* Estilização dos Botões */
         div.stButton > button {
             background-color: rgb(38, 39, 48) !important;
             color: white !important;
@@ -43,14 +40,12 @@ def aplicar_estilo_global():
             border-radius: 5px;
             font-size: 16px;
             transition: 0.3s;
-            width: 100%; /* Botão ocupa largura total da coluna */
+            width: 100%;
         }
         div.stButton > button:hover {
             background-color: rgb(20, 20, 25) !important;
             border-color: white;
         }
-
-        /* Classe para Labels Grandes (Uploaders) */
         .big-label {
             font-size: 24px !important;
             font-weight: 600 !important;
@@ -70,7 +65,7 @@ def renderizar_espacador_botao():
     st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. DESIGN DA TABELA E PDF
+# 2. DESIGN DA TABELA E PDF (CORRIGIDO)
 # ==============================================================================
 
 class DesignTabelaHTML:
@@ -91,13 +86,21 @@ class DesignTabelaHTML:
     """
 
 class DesignRelatorioPDF:
-    """Configurações visuais para o PDF."""
+    """Configurações visuais para a geração do PDF."""
+    
+    # Definição explícita das margens para evitar AttributeError
+    PAGE_SIZE = A4
+    MARGIN_RIGHT = 10 * mm
+    MARGIN_LEFT = 10 * mm
+    MARGIN_TOP = 15 * mm
+    MARGIN_BOTTOM = 15 * mm
+    
     @staticmethod
     def get_table_style(has_data=True):
         style_cmds = [
             ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-            ('BACKGROUND', (0,0), (-1,0), colors.darkblue),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('BACKGROUND', (0,0), (-1,0), colors.darkblue), # Cabeçalho Azul
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),     # Texto Cabeçalho Branco
             ('ALIGN', (0,0), (0,-1), 'CENTER'),     # Data
             ('ALIGN', (1,0), (1,-1), 'LEFT'),       # Histórico
             ('ALIGN', (2,0), (2,-1), 'CENTER'),     # Documento
@@ -105,6 +108,8 @@ class DesignRelatorioPDF:
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('FONTSIZE', (0,0), (-1,-1), 9),
             ('BOTTOMPADDING', (0,0), (-1,0), 8),
+            # Cor padrão dos dados (linhas normais)
+            ('TEXTCOLOR', (0,1), (-1,-1), colors.black),
         ]
         return TableStyle(style_cmds)
 
@@ -125,7 +130,7 @@ def format_currency_br(val):
     return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 # ==============================================================================
-# 4. MOTORES DE EXTRAÇÃO (BB, CAIXA, BANPARÁ)
+# 4. MOTORES DE EXTRAÇÃO
 # ==============================================================================
 
 def processar_bb(file_bytes):
@@ -166,11 +171,9 @@ def processar_bb(file_bytes):
     if not header: return pd.DataFrame()
     df = pd.DataFrame(all_rows, columns=header)
     
-    # Limpeza
     for c in df.select_dtypes(include=['object']).columns:
         df[c] = df[c].apply(clean_text_general)
     
-    # Normalização
     for col in df.columns:
         norm = col.lower()
         if "lote" in norm: df = df.rename(columns={col:"lote"})
@@ -180,7 +183,6 @@ def processar_bb(file_bytes):
     
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # Fallback
     if "dt_balancete" not in df.columns:
         for col in df.columns:
             if any(re.match(r'\d{2}/\d{2}/\d{4}', str(v)) for v in df[col].head(10)):
@@ -197,7 +199,6 @@ def processar_bb(file_bytes):
     df["valor_num"] = df.get("valor").apply(br_to_float)
     df["dt_obj"] = pd.to_datetime(df.get("dt_balancete"), dayfirst=True, errors="coerce")
 
-    # Filtro e Saída
     df_final = df[df["lote_norm"] == TARGET_LOTE_BB].copy()
     df_final = df_final.rename(columns={"historico": "Histórico", "lote": "Documento", "valor_num": "Valor"})
     return df_final[["dt_obj", "Histórico", "Documento", "Valor"]]
@@ -231,7 +232,6 @@ def processar_caixa(file_bytes):
                         date_str = m.group(1)
                         rest = s[m.end():].strip()
                         val_matches = list(VALOR_RE.finditer(rest))
-                        
                         valor_text = None
                         if len(val_matches) == 1:
                             valor_text = val_matches[0].group(0)
@@ -241,11 +241,9 @@ def processar_caixa(file_bytes):
                             before_val = rest[:val_matches[-2].start()].strip()
                         else:
                             before_val = rest
-                        
                         nr_doc = None
                         for tok in rest.split():
                             if re.fullmatch(r'\d+', tok): nr_doc = tok; break
-                        
                         if nr_doc:
                             idx = rest.find(nr_doc)
                             hist_zone = rest[idx+len(nr_doc):].strip()
@@ -254,8 +252,7 @@ def processar_caixa(file_bytes):
                                 hist = hist_zone[:vpos].strip() if vpos != -1 else hist_zone
                             else: hist = hist_zone
                         else: hist = before_val
-                        
-                        rows.append({"dt_str": date_str, "Documento": nr_doc if nr_doc else "", "Histórico": hist, "Valor": br_to_float(valor_text)})
+                        rows.append({"dt_str": date_str, "Documento": nr_doc if nr_doc else "", "Histórico": clean_text_general(hist), "Valor": br_to_float(valor_text)})
                     else:
                         if rows:
                             extra = clean_text_general(ln)
@@ -287,7 +284,7 @@ def processar_banpara(file_bytes):
         t = re.sub(r'[^\d,\.\u00A0-]', '', t)
         t = t.replace('\u00A0','').replace('.', '').replace(',', '.')
         if t in ("", "-", "."): return None
-        try: return abs(float(t)) # Força positivo
+        try: return abs(float(t))
         except: return None
 
     transactions = []
@@ -301,24 +298,20 @@ def processar_banpara(file_bytes):
                     s = clean_text_general(ln)
                     if not s: continue
                     if DATE_FULL.match(s): continue
-                    
                     m = DATE_DM.match(s)
                     if m:
                         dt = f"{m.group(1)}/{cur_year}"
                         rest = s[m.end():].strip()
                         vals = list(VALOR_RE.finditer(rest))
-                        
                         v_txt = None
                         if len(vals) >= 1:
                             idx = -2 if len(vals) >= 2 else 0
                             v_txt = vals[idx].group(0)
                             search = rest[:vals[idx].start()]
                         else: search = rest
-                        
                         doc_m = re.search(r'\b(\d{1,6})\b', search)
                         doc = doc_m.group(1) if doc_m else ""
                         desc = search[:doc_m.start()].strip() if doc_m else search
-                        
                         tx = {"dt_str": dt, "Histórico": clean_text_general(desc), "Documento": doc, "Valor": br_to_float(v_txt)}
                         transactions.append(tx)
                         last_tx = tx
@@ -337,7 +330,7 @@ def processar_banpara(file_bytes):
         return any(t in ss for t in TARGET_TERMS)
 
     df_f = df[df["Histórico"].apply(is_target)].copy()
-    if "Valor" in df_f.columns: df_f["Valor"] = df_f["Valor"].abs() # Reforço
+    if "Valor" in df_f.columns: df_f["Valor"] = df_f["Valor"].abs()
     df_f["dt_obj"] = pd.to_datetime(df_f["dt_str"], dayfirst=True, errors="coerce")
     return df_f[["dt_obj", "Histórico", "Documento", "Valor"]]
 
@@ -346,12 +339,7 @@ def processar_banpara(file_bytes):
 # ==============================================================================
 
 def preparar_dados_relatorio(df):
-    """
-    Organiza o DF para exibição, inserindo linhas de subtotais e total.
-    Retorna uma lista de dicionários com flag 'IsTotal'.
-    """
     if df.empty: return [], 0
-    
     df = df.sort_values(by="dt_obj")
     report_data = []
     grand_total = 0
@@ -378,7 +366,6 @@ def preparar_dados_relatorio(df):
                 "IsGrandTotal": False
             })
             
-        # Subtotal
         report_data.append({
             "Data": date_str,
             "Histórico": "Total do Dia",
@@ -388,7 +375,6 @@ def preparar_dados_relatorio(df):
             "IsGrandTotal": False
         })
     
-    # Total Geral
     report_data.append({
         "Data": "",
         "Histórico": "TOTAL GERAL",
@@ -401,22 +387,21 @@ def preparar_dados_relatorio(df):
     return report_data, grand_total
 
 def gerar_html_tabela(report_data):
-    """Gera string HTML usando as classes de design."""
     html = DesignTabelaHTML.CONTAINER_OPEN + DesignTabelaHTML.TABLE_OPEN
     html += DesignTabelaHTML.HEADER_HTML
     
     for row in report_data:
         v_fmt = format_currency_br(row['Valor'])
-        
-        # Define estilo da linha
-        style = "background-color: white;"
+        style = "background-color: white; color: black;"
         doc_align = "center"
         hist_style = "text-align: left;"
         
         if row['IsTotal']:
-            style = "background-color: #f0f0f0; font-weight: bold; border-top: 1px solid #ccc;"
+            # Subtotais em cinza claro, negrito, cor preta
+            style = "background-color: #f0f0f0; font-weight: bold; border-top: 1px solid #ccc; color: black;"
             if row['IsGrandTotal']:
-                style = "background-color: #1F497D; color: white; font-weight: bold;"
+                # Total Geral: Fundo cinza mais escuro ou azul claro para contraste, TEXTO PRETO conforme pedido
+                style = "background-color: #d1d9e6; color: black; font-weight: bold; border-top: 2px solid #000;"
         
         html += f"<tr style='{style}'>"
         html += f"<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>{row['Data']}</td>"
@@ -429,7 +414,7 @@ def gerar_html_tabela(report_data):
     return html
 
 def gerar_pdf_bytes(report_data, titulo):
-    """Gera o arquivo PDF usando ReportLab e retorna bytes."""
+    # Uso explícito das margens da classe DesignRelatorioPDF (agora corrigida)
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, 
@@ -438,46 +423,40 @@ def gerar_pdf_bytes(report_data, titulo):
         leftMargin=DesignRelatorioPDF.MARGIN_LEFT,
         topMargin=DesignRelatorioPDF.MARGIN_TOP,
         bottomMargin=DesignRelatorioPDF.MARGIN_BOTTOM,
-        title=titulo
+        title=titulo  # Metadados do título do PDF
     )
     
     elements = []
     styles = getSampleStyleSheet()
     
-    # Título
     elements.append(Paragraph(titulo, styles['Title']))
     elements.append(Spacer(1, 10*mm))
     
-    # Dados da Tabela
-    # Header
     table_data = [['Data', 'Histórico', 'Documento', 'Valor']]
     
-    # Rows
-    row_styles = [] # Para pintar linhas específicas se necessário manualmente, mas usaremos lógica no TableStyle se complexo
-    
-    for i, row in enumerate(report_data):
+    for row in report_data:
         v_fmt = format_currency_br(row['Valor'])
-        table_data.append([row['Data'], Paragraph(row['Histórico'], styles['Normal']), row['Documento'], v_fmt])
+        # Tenta sanitizar o histórico para evitar erros no Paragraph
+        hist_txt = str(row['Histórico']).replace("<", "&lt;").replace(">", "&gt;")
+        table_data.append([row['Data'], Paragraph(hist_txt, styles['Normal']), row['Documento'], v_fmt])
 
     t = Table(table_data, colWidths=[25*mm, 90*mm, 35*mm, 35*mm], repeatRows=1)
     
-    # Estilo Base
     ts = DesignRelatorioPDF.get_table_style()
     
-    # Estilização condicional (linhas de total)
     for idx, row in enumerate(report_data):
-        row_idx = idx + 1 # +1 por causa do header
+        row_idx = idx + 1
         if row['IsTotal']:
-            # Fundo Cinza para subtotais
             ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.lightgrey)
             ts.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
-            # Borda superior
             ts.add('LINEABOVE', (0, row_idx), (-1, row_idx), 1, colors.black)
             
+            # Garante que a cor do texto seja PRETA também nos subtotais e total geral
+            ts.add('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.black)
+            
             if row['IsGrandTotal']:
-                # Fundo Azul Escuro para Total Geral
-                ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#1F497D'))
-                ts.add('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.white)
+                # Fundo um pouco mais escuro para destaque, mas texto PRETO
+                ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#d1d9e6')) 
 
     t.setStyle(ts)
     elements.append(t)
@@ -492,7 +471,6 @@ def gerar_pdf_bytes(report_data, titulo):
 aplicar_estilo_global()
 renderizar_cabecalho("Extração de Tarifas Bancárias")
 
-# Layout de Seleção
 col1, col2 = st.columns(2)
 with col1:
     renderizar_label_uploader("Selecione o Banco")
@@ -502,7 +480,6 @@ with col2:
     renderizar_label_uploader("Upload do Extrato (PDF)")
     uploaded_file = st.file_uploader("", type="pdf", label_visibility="collapsed")
 
-# Botão Processar
 st.markdown("<br>", unsafe_allow_html=True)
 if st.button("INICIAR PROCESSAMENTO"):
     if uploaded_file:
@@ -510,7 +487,6 @@ if st.button("INICIAR PROCESSAMENTO"):
             file_bytes = uploaded_file.read()
             df_result = pd.DataFrame()
             
-            # 1. Processamento
             if banco_option == "Banco do Brasil":
                 df_result = processar_bb(file_bytes)
             elif banco_option == "Caixa Econômica":
@@ -518,24 +494,25 @@ if st.button("INICIAR PROCESSAMENTO"):
             elif banco_option == "BANPARÁ":
                 df_result = processar_banpara(file_bytes)
             
-            # 2. Exibição e Download
             if not df_result.empty:
-                # Prepara dados (subtotais, totais)
                 report_data, _ = preparar_dados_relatorio(df_result)
                 
-                # Gera HTML
+                # HTML na tela
                 html_table = gerar_html_tabela(report_data)
                 st.markdown(html_table, unsafe_allow_html=True)
                 
-                # Gera PDF
-                pdf_bytes = gerar_pdf_bytes(report_data, f"Relatório de Tarifas - {banco_option}")
+                # Nome do arquivo PDF
+                nome_arquivo_original = os.path.splitext(uploaded_file.name)[0]
+                nome_pdf_final = f"Tarifas Bancárias {nome_arquivo_original}"
                 
-                # Botão Download
+                # Gera PDF
+                pdf_bytes = gerar_pdf_bytes(report_data, nome_pdf_final)
+                
                 renderizar_espacador_botao()
                 st.download_button(
-                    label="BAIXAR RELATÓRIO PDF",
+                    label="GERAR RELATÓRIO PDF",
                     data=pdf_bytes,
-                    file_name=f"Tarifas_{banco_option.replace(' ', '_')}.pdf",
+                    file_name=f"{nome_pdf_final}.pdf",
                     mime="application/pdf"
                 )
             else:
