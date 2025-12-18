@@ -109,7 +109,7 @@ class DesignRelatorioPDF:
             ('FONTSIZE', (0,0), (-1,-1), 9),
             ('BOTTOMPADDING', (0,0), (-1,0), 8),
             ('TEXTCOLOR', (0,1), (-1,-1), colors.black), # Dados pretos
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), # Alinhamento vertical
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), # Alinhamento vertical GLOBAL
         ]
         return TableStyle(style_cmds)
 
@@ -450,12 +450,10 @@ def gerar_pdf_bytes(report_data, titulo):
             
             if row['IsGrandTotal']:
                 ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#d1d9e6'))
-                # AUMENTAR FONTE DO VALOR PARA O DOBRO (9 * 2 = 18)
-                # A coluna Valor é a índice 3
-                ts.add('FONTSIZE', (3, row_idx), (3, row_idx), 18)
-                # Opcional: Ajustar padding se necessário
-                ts.add('TOPPADDING', (3, row_idx), (3, row_idx), 6)
-                ts.add('BOTTOMPADDING', (3, row_idx), (3, row_idx), 6)
+                # Fonte do valor (coluna 3) aumentada para 12
+                ts.add('FONTSIZE', (3, row_idx), (3, row_idx), 12)
+                # Alinhamento vertical centralizado para garantir harmonia
+                ts.add('VALIGN', (0, row_idx), (-1, row_idx), 'MIDDLE')
 
     t.setStyle(ts)
     elements.append(t)
