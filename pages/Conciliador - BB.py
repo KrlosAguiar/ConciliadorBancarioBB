@@ -47,22 +47,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- SENHA ---
-SENHA_MESTRA = "cliente123"
-
-def check_password():
-    if "password_correct" not in st.session_state:
-        st.session_state["password_correct"] = False
-    if st.session_state["password_correct"]: return True
-    st.title("🔐 Acesso Restrito")
-    password = st.text_input("Digite a chave de acesso:", type="password")
-    if st.button("Entrar"):
-        if password == SENHA_MESTRA:
-            st.session_state["password_correct"] = True
-            st.rerun()
-        else: st.error("Chave incorreta!")
-    return False
-
 # ==============================================================================
 # 1. FUNÇÕES DE PROCESSAMENTO
 # ==============================================================================
@@ -244,76 +228,77 @@ def gerar_pdf_final(df_f, titulo_completo):
 # ==============================================================================
 # 3. INTERFACE
 # ==============================================================================
-if check_password():
-    st.markdown("<h1 style='text-align: center;'>Conciliador Bancário (Banco x GovBr)</h1>", unsafe_allow_html=True)
-    st.markdown("---")
+# A verificação de senha foi removida daqui
 
-    c1, c2 = st.columns(2)
-    with c1: 
-        st.markdown('<p class="big-label">Selecione o Extrato Bancário em PDF</p>', unsafe_allow_html=True)
-        up_pdf = st.file_uploader("", type="pdf", label_visibility="collapsed")
-    with c2: 
-        st.markdown('<p class="big-label">Selecione o Razão da Contabilidade em Excel</p>', unsafe_allow_html=True)
-        up_xlsx = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed")
+st.markdown("<h1 style='text-align: center;'>Conciliador Bancário (Banco x GovBr)</h1>", unsafe_allow_html=True)
+st.markdown("---")
 
-    if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
-        if up_pdf and up_xlsx:
-            with st.spinner("Processando..."):
-                pdf_bytes = up_pdf.read()
-                xlsx_bytes = up_xlsx.read()
-                
-                df_p = processar_pdf(pdf_bytes)
-                df_e = processar_excel_detalhado(xlsx_bytes, df_p, is_csv=up_xlsx.name.endswith('csv'))
-                
-                if df_p.empty or df_e.empty: st.error("Erro no processamento."); st.stop()
-                
-                df_f = executar_conciliacao_inteligente(df_p, df_e)
-                
-                html = """
-                <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
-                <table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important;'>
-                    <tr style='background-color: #00008B; color: white !important;'>
-                        <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Data</th>
-                        <th style='padding: 8px; text-align: left; border: 1px solid #000;'>Histórico</th>
-                        <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Documento</th>
-                        <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Vlr. Extrato</th>
-                        <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Vlr. Razão</th>
-                        <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Diferença</th>
-                    </tr>"""
-                for _, r in df_f.iterrows():
-                    d_c = "red" if abs(r['Diferença']) >= 0.01 else "black"
-                    html += f"""
-                    <tr style='background-color: white;'> 
-                        <td style='text-align: center; border: 1px solid #000; color: black;'>{r['Data']}</td> 
-                        <td style='text-align: left; border: 1px solid #000; color: black;'>{r['Histórico']}</td> 
-                        <td style='text-align: center; border: 1px solid #000; color: black;'>{r['Documento']}</td> 
-                        <td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Extrato'])}</td> 
-                        <td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Razao'])}</td> 
-                        <td style='text-align: right; color: {d_c}; border: 1px solid #000;'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td> 
-                    </tr>"""
-                
+c1, c2 = st.columns(2)
+with c1: 
+    st.markdown('<p class="big-label">Selecione o Extrato Bancário em PDF</p>', unsafe_allow_html=True)
+    up_pdf = st.file_uploader("", type="pdf", label_visibility="collapsed")
+with c2: 
+    st.markdown('<p class="big-label">Selecione o Razão da Contabilidade em Excel</p>', unsafe_allow_html=True)
+    up_xlsx = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed")
+
+if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
+    if up_pdf and up_xlsx:
+        with st.spinner("Processando..."):
+            pdf_bytes = up_pdf.read()
+            xlsx_bytes = up_xlsx.read()
+            
+            df_p = processar_pdf(pdf_bytes)
+            df_e = processar_excel_detalhado(xlsx_bytes, df_p, is_csv=up_xlsx.name.endswith('csv'))
+            
+            if df_p.empty or df_e.empty: st.error("Erro no processamento."); st.stop()
+            
+            df_f = executar_conciliacao_inteligente(df_p, df_e)
+            
+            html = """
+            <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
+            <table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important;'>
+                <tr style='background-color: #00008B; color: white !important;'>
+                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Data</th>
+                    <th style='padding: 8px; text-align: left; border: 1px solid #000;'>Histórico</th>
+                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Documento</th>
+                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Vlr. Extrato</th>
+                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Vlr. Razão</th>
+                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Diferença</th>
+                </tr>"""
+            for _, r in df_f.iterrows():
+                d_c = "red" if abs(r['Diferença']) >= 0.01 else "black"
                 html += f"""
-                    <tr style='font-weight: bold; background-color: white; color: black;'> 
-                        <td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>
-                        <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td>
-                        <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Razao'].sum())}</td>
-                        <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Diferença'].sum())}</td> 
-                    </tr> </table> </div>"""
-                
-                st.markdown(html, unsafe_allow_html=True)
-                
-                nome_limpo = os.path.splitext(up_pdf.name)[0]
-                titulo_final = f"Conciliação {nome_limpo}"
-                pdf_data = gerar_pdf_final(df_f, titulo_final)
-                
-                # Espaço manual e Botão de Download com file_name explícito para corrigir o erro de nome hash
-                st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
-                st.download_button(
-                    label="BAIXAR RELATÓRIO PDF",
-                    data=pdf_data,
-                    file_name=f"{titulo_final}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-        else:
-            st.warning("⚠️ Selecione os dois arquivos primeiro.")
+                <tr style='background-color: white;'> 
+                    <td style='text-align: center; border: 1px solid #000; color: black;'>{r['Data']}</td> 
+                    <td style='text-align: left; border: 1px solid #000; color: black;'>{r['Histórico']}</td> 
+                    <td style='text-align: center; border: 1px solid #000; color: black;'>{r['Documento']}</td> 
+                    <td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Extrato'])}</td> 
+                    <td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Razao'])}</td> 
+                    <td style='text-align: right; color: {d_c}; border: 1px solid #000;'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td> 
+                </tr>"""
+            
+            html += f"""
+                <tr style='font-weight: bold; background-color: white; color: black;'> 
+                    <td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>
+                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td>
+                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Razao'].sum())}</td>
+                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Diferença'].sum())}</td> 
+                </tr> </table> </div>"""
+            
+            st.markdown(html, unsafe_allow_html=True)
+            
+            nome_limpo = os.path.splitext(up_pdf.name)[0]
+            titulo_final = f"Conciliação {nome_limpo}"
+            pdf_data = gerar_pdf_final(df_f, titulo_final)
+            
+            # Espaço manual e Botão de Download com file_name explícito para corrigir o erro de nome hash
+            st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
+            st.download_button(
+                label="BAIXAR RELATÓRIO PDF",
+                data=pdf_data,
+                file_name=f"{titulo_final}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+    else:
+        st.warning("⚠️ Selecione os dois arquivos primeiro.")
