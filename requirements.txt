@@ -4,3 +4,4 @@ pdfplumber
 reportlab
 openpyxl
 watchdog
+ftfy
