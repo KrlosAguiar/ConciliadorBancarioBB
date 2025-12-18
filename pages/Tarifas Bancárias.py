@@ -32,6 +32,7 @@ def aplicar_estilo_global():
             padding-top: 2rem !important;
             padding-bottom: 2rem !important;
         }
+        /* Botões com largura total e cor personalizada */
         div.stButton > button {
             background-color: rgb(38, 39, 48) !important;
             color: white !important;
@@ -40,7 +41,7 @@ def aplicar_estilo_global():
             border-radius: 5px;
             font-size: 16px;
             transition: 0.3s;
-            width: 100%;
+            width: 100%; /* Garante 100% da largura do container pai */
         }
         div.stButton > button:hover {
             background-color: rgb(20, 20, 25) !important;
@@ -65,7 +66,7 @@ def renderizar_espacador_botao():
     st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. DESIGN DA TABELA E PDF (CORRIGIDO)
+# 2. DESIGN DA TABELA E PDF
 # ==============================================================================
 
 class DesignTabelaHTML:
@@ -88,7 +89,6 @@ class DesignTabelaHTML:
 class DesignRelatorioPDF:
     """Configurações visuais para a geração do PDF."""
     
-    # Definição explícita das margens para evitar AttributeError
     PAGE_SIZE = A4
     MARGIN_RIGHT = 10 * mm
     MARGIN_LEFT = 10 * mm
@@ -108,8 +108,8 @@ class DesignRelatorioPDF:
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('FONTSIZE', (0,0), (-1,-1), 9),
             ('BOTTOMPADDING', (0,0), (-1,0), 8),
-            # Cor padrão dos dados (linhas normais)
-            ('TEXTCOLOR', (0,1), (-1,-1), colors.black),
+            ('TEXTCOLOR', (0,1), (-1,-1), colors.black), # Dados pretos
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), # Alinhamento vertical
         ]
         return TableStyle(style_cmds)
 
@@ -397,10 +397,8 @@ def gerar_html_tabela(report_data):
         hist_style = "text-align: left;"
         
         if row['IsTotal']:
-            # Subtotais em cinza claro, negrito, cor preta
             style = "background-color: #f0f0f0; font-weight: bold; border-top: 1px solid #ccc; color: black;"
             if row['IsGrandTotal']:
-                # Total Geral: Fundo cinza mais escuro ou azul claro para contraste, TEXTO PRETO conforme pedido
                 style = "background-color: #d1d9e6; color: black; font-weight: bold; border-top: 2px solid #000;"
         
         html += f"<tr style='{style}'>"
@@ -414,7 +412,6 @@ def gerar_html_tabela(report_data):
     return html
 
 def gerar_pdf_bytes(report_data, titulo):
-    # Uso explícito das margens da classe DesignRelatorioPDF (agora corrigida)
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, 
@@ -423,7 +420,7 @@ def gerar_pdf_bytes(report_data, titulo):
         leftMargin=DesignRelatorioPDF.MARGIN_LEFT,
         topMargin=DesignRelatorioPDF.MARGIN_TOP,
         bottomMargin=DesignRelatorioPDF.MARGIN_BOTTOM,
-        title=titulo  # Metadados do título do PDF
+        title=titulo
     )
     
     elements = []
@@ -436,7 +433,6 @@ def gerar_pdf_bytes(report_data, titulo):
     
     for row in report_data:
         v_fmt = format_currency_br(row['Valor'])
-        # Tenta sanitizar o histórico para evitar erros no Paragraph
         hist_txt = str(row['Histórico']).replace("<", "&lt;").replace(">", "&gt;")
         table_data.append([row['Data'], Paragraph(hist_txt, styles['Normal']), row['Documento'], v_fmt])
 
@@ -450,13 +446,16 @@ def gerar_pdf_bytes(report_data, titulo):
             ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.lightgrey)
             ts.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
             ts.add('LINEABOVE', (0, row_idx), (-1, row_idx), 1, colors.black)
-            
-            # Garante que a cor do texto seja PRETA também nos subtotais e total geral
             ts.add('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.black)
             
             if row['IsGrandTotal']:
-                # Fundo um pouco mais escuro para destaque, mas texto PRETO
-                ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#d1d9e6')) 
+                ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#d1d9e6'))
+                # AUMENTAR FONTE DO VALOR PARA O DOBRO (9 * 2 = 18)
+                # A coluna Valor é a índice 3
+                ts.add('FONTSIZE', (3, row_idx), (3, row_idx), 18)
+                # Opcional: Ajustar padding se necessário
+                ts.add('TOPPADDING', (3, row_idx), (3, row_idx), 6)
+                ts.add('BOTTOMPADDING', (3, row_idx), (3, row_idx), 6)
 
     t.setStyle(ts)
     elements.append(t)
@@ -481,7 +480,8 @@ with col2:
     uploaded_file = st.file_uploader("", type="pdf", label_visibility="collapsed")
 
 st.markdown("<br>", unsafe_allow_html=True)
-if st.button("INICIAR PROCESSAMENTO"):
+# Botão Iniciar com largura total
+if st.button("INICIAR PROCESSAMENTO", use_container_width=True):
     if uploaded_file:
         with st.spinner("Processando dados..."):
             file_bytes = uploaded_file.read()
@@ -501,7 +501,7 @@ if st.button("INICIAR PROCESSAMENTO"):
                 html_table = gerar_html_tabela(report_data)
                 st.markdown(html_table, unsafe_allow_html=True)
                 
-                # Nome do arquivo PDF
+                # Nome do arquivo
                 nome_arquivo_original = os.path.splitext(uploaded_file.name)[0]
                 nome_pdf_final = f"Tarifas Bancárias {nome_arquivo_original}"
                 
@@ -509,11 +509,13 @@ if st.button("INICIAR PROCESSAMENTO"):
                 pdf_bytes = gerar_pdf_bytes(report_data, nome_pdf_final)
                 
                 renderizar_espacador_botao()
+                # Botão Download com largura total
                 st.download_button(
-                    label="GERAR RELATÓRIO PDF",
+                    label="BAIXAR RELATÓRIO PDF",
                     data=pdf_bytes,
                     file_name=f"{nome_pdf_final}.pdf",
-                    mime="application/pdf"
+                    mime="application/pdf",
+                    use_container_width=True
                 )
             else:
                 st.warning(f"Nenhum dado encontrado para **{banco_option}** com os filtros configurados.")
