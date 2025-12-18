@@ -12,7 +12,40 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.units import mm
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Conciliador Bancário - Banco do Brasil", layout="wide")
+st.set_page_config(page_title="Conciliador Bancário", layout="wide")
+
+# --- CSS PERSONALIZADO (ESTILOS VISUAIS) ---
+st.markdown("""
+<style>
+    /* 1. Reduzir espaçamento do topo da página */
+    .block-container {
+        padding-top: 2rem !important;
+        padding-bottom: 2rem !important;
+    }
+
+    /* 2. Estilização dos Botões (Cor RGB 38, 39, 48) */
+    div.stButton > button {
+        background-color: rgb(38, 39, 48) !important;
+        color: white !important;
+        font-weight: bold !important;
+        border: 1px solid rgb(60, 60, 60); /* Borda sutil para contraste */
+        border-radius: 5px;
+        font-size: 16px;
+        transition: 0.3s;
+    }
+    div.stButton > button:hover {
+        background-color: rgb(20, 20, 25) !important; /* Um pouco mais escuro no hover */
+        border-color: white;
+    }
+
+    /* 3. Estilo para as Labels Grandes dos Uploaders */
+    .big-label {
+        font-size: 24px !important;
+        font-weight: 600 !important;
+        margin-bottom: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # --- SENHA ---
 SENHA_MESTRA = "cliente123"
@@ -31,7 +64,7 @@ def check_password():
     return False
 
 # ==============================================================================
-# 1. FUNÇÕES ORIGINAIS (CONSERVADAS INTEGRALMENTE)
+# 1. FUNÇÕES DE PROCESSAMENTO
 # ==============================================================================
 CURRENT_YEAR = str(datetime.datetime.now().year)
 
@@ -102,7 +135,7 @@ def processar_pdf(file_bytes):
         return pd.DataFrame()
 
     df_debitos = pd.DataFrame(rows_debitos)
-    df_devolucoes = pd.DataFrame(rows_devolucoes) # Define explicitamente para evitar NameError
+    df_devolucoes = pd.DataFrame(rows_devolucoes)
 
     if not df_devolucoes.empty and not df_debitos.empty:
         idx_rem = []
@@ -174,18 +207,19 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
     return df_f.sort_values(by=['dt', 'Documento']).drop(columns=['dt'])
 
 # ==============================================================================
-# 2. GERAÇÃO PDF (HISTÓRICO REMOVIDO DO PDF)
+# 2. GERAÇÃO PDF
 # ==============================================================================
-def gerar_pdf_final(df_f, nome_orig):
+def gerar_pdf_final(df_f, titulo_completo):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=10*mm, leftMargin=10*mm, topMargin=15*mm, bottomMargin=15*mm)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=10*mm, leftMargin=10*mm, topMargin=15*mm, bottomMargin=15*mm, title=titulo_completo)
+    
     story = []
     styles = getSampleStyleSheet()
     story.append(Paragraph("Relatório de Conciliação Bancária", styles["Title"]))
-    story.append(Paragraph(f"<b>Conta:</b> {os.path.splitext(nome_orig)[0]}", ParagraphStyle(name='C', alignment=1)))
+    nome_conta_interno = titulo_completo.replace("Conciliação ", "")
+    story.append(Paragraph(f"<b>Conta:</b> {nome_conta_interno}", ParagraphStyle(name='C', alignment=1)))
     story.append(Spacer(1, 15))
     
-    # Cabeçalho do PDF sem Histórico
     headers = ['Data', 'Documento', 'Vlr. Extrato', 'Vlr. Razão', 'Diferença']
     data = [headers]
     for _, r in df_f.iterrows():
@@ -208,18 +242,23 @@ def gerar_pdf_final(df_f, nome_orig):
     return buffer.getvalue()
 
 # ==============================================================================
-# 3. INTERFACE (FUNDOS BRANCOS E TOTAIS EM NEGRITO)
+# 3. INTERFACE
 # ==============================================================================
 if check_password():
-    st.title("🏦 Conciliador Bancário - Banco do Brasil")
-    c1, c2 = st.columns(2)
-    with c1: up_pdf = st.file_uploader("1. Extrato (PDF)", type="pdf")
-    with c2: up_xlsx = st.file_uploader("2. Razão (Excel/CSV)", type=["xlsx", "csv"])
+    st.markdown("<h1 style='text-align: center;'>Conciliador Bancário (Banco x GovBr)</h1>", unsafe_allow_html=True)
+    st.markdown("---")
 
-    if st.button("🚀 Processar Conciliação", use_container_width=True):
+    c1, c2 = st.columns(2)
+    with c1: 
+        st.markdown('<p class="big-label">Selecione o Extrato Bancário em PDF</p>', unsafe_allow_html=True)
+        up_pdf = st.file_uploader("", type="pdf", label_visibility="collapsed")
+    with c2: 
+        st.markdown('<p class="big-label">Selecione o Razão da Contabilidade em Excel</p>', unsafe_allow_html=True)
+        up_xlsx = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed")
+
+    if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
         if up_pdf and up_xlsx:
             with st.spinner("Processando..."):
-                # Captura bytes para não perder o ponteiro do arquivo
                 pdf_bytes = up_pdf.read()
                 xlsx_bytes = up_xlsx.read()
                 
@@ -230,7 +269,6 @@ if check_password():
                 
                 df_f = executar_conciliacao_inteligente(df_p, df_e)
                 
-                # HTML com Fundo Branco na Tabela e Totais em Negrito
                 html = """
                 <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
                 <table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important;'>
@@ -254,7 +292,6 @@ if check_password():
                         <td style='text-align: right; color: {d_c}; border: 1px solid #000;'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td> 
                     </tr>"""
                 
-                # Totais: Fundo Branco, Fonte Negrito
                 html += f"""
                     <tr style='font-weight: bold; background-color: white; color: black;'> 
                         <td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>
@@ -264,7 +301,19 @@ if check_password():
                     </tr> </table> </div>"""
                 
                 st.markdown(html, unsafe_allow_html=True)
-                pdf_data = gerar_pdf_final(df_f, up_pdf.name)
-                st.download_button("📥 Baixar Relatório PDF", pdf_data, "Relatorio.pdf", "application/pdf", use_container_width=True)
+                
+                nome_limpo = os.path.splitext(up_pdf.name)[0]
+                titulo_final = f"Conciliação {nome_limpo}"
+                pdf_data = gerar_pdf_final(df_f, titulo_final)
+                
+                # Espaço manual e Botão de Download com file_name explícito para corrigir o erro de nome hash
+                st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
+                st.download_button(
+                    label="BAIXAR RELATÓRIO PDF",
+                    data=pdf_data,
+                    file_name=f"{titulo_final}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
         else:
             st.warning("⚠️ Selecione os dois arquivos primeiro.")
