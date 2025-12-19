@@ -10,6 +10,19 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import mm
+from PIL import Image
+import os
+
+# Define o caminho para a imagem que está na raiz do projeto
+# Isso garante que funcione tanto localmente quanto no servidor
+icon_path = os.path.join(os.getcwd(), "Barcarena.png")
+icon_image = Image.open(icon_path)
+
+st.set_page_config(
+    page_title="Portal Financeiro",
+    page_icon=icon_image, # Aqui aplicamos o seu ícone customizado
+    layout="wide"
+)
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Conciliador Bancário", layout="wide")
