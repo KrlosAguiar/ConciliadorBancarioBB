@@ -2,7 +2,7 @@ import streamlit as st
 from PIL import Image
 import os
 
-# Configuração de Caminho e Ícone para a Aba do Navegador
+# Configuração de Caminho e Ícone
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
 icon_image = Image.open(icon_path)
 
@@ -12,11 +12,16 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- CABEÇALHO ---
-# Insere a imagem acima do título (o padrão do st.image já é alinhado à esquerda)
-st.image(icon_image, width=120) 
+# --- CABEÇALHO COM ÍCONE ---
+# Criamos duas colunas: uma pequena para o logo e uma grande para o título
+col_logo, col_titulo = st.columns([1, 8])
 
-st.title("Departamento de Contabilidade - Barcarena/PA")
+with col_logo:
+    st.image(icon_image, width=80) # Ajuste a largura conforme necessário
+
+with col_titulo:
+    st.title("Departamento de Contabilidade - Barcarena/PA")
+
 st.markdown("---")
 
 # --- CORPO DA PÁGINA COM ESPAÇAMENTO DUPLO ---
@@ -33,7 +38,11 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
 * **Conciliador Bancário:** Cruza os dados do Extrato Bancário com o Razão da Contabilidade.
 
+&nbsp;
+
 * **Tarifas Bancárias:** Extrai os lançamentos das tarifas do Extrato Bancário e emite um relatório pronto para empenho, liquidação e pagamento.
+
+&nbsp;
 
 * **(Em breve) Novos Módulos:** Outras ferramentas serão adicionadas aqui.
 
