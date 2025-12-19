@@ -399,7 +399,8 @@ def gerar_html_tabela(report_data):
         if row['IsTotal']:
             style = "background-color: lightgray; font-weight: bold; border-top: 1px solid #ccc; color: black;"
             if row['IsGrandTotal']:
-                style = "background-color: gray; color: black; font-weight: bold; border-top: 1px solid #000; font-size: 14px"
+                # Fonte 125% maior que o padrão para ficar proporcional
+                style = "background-color: gray; color: black; font-weight: bold; border-top: 1px solid #000; font-size: 125%"
         
         html += f"<tr style='{style}'>"
         html += f"<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>{row['Data']}</td>"
@@ -451,18 +452,18 @@ def gerar_pdf_bytes(report_data, titulo):
             if row['IsGrandTotal']:
                 ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.gray) # ou colors.HexColor('#d1d9e6')
                 
-                # 1. Fonte aumentada (apenas coluna 3/Valor)
-                ts.add('FONTSIZE', (3, row_idx), (3, row_idx), 14)
+                # 1. Fonte aumentada (aprox 30% maior que a base 9, similar ao visual da tela) em TODA A LINHA
+                ts.add('FONTSIZE', (0, row_idx), (-1, row_idx), 12)
                 
-                # 2. Alinhamento vertical centralizado
+                # 2. Negrito em toda a linha (redundante pois já foi add acima, mas reforça)
+                ts.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
+
+                # 3. Alinhamento vertical centralizado
                 ts.add('VALIGN', (0, row_idx), (-1, row_idx), 'MIDDLE')
                 
-                # 3. AJUSTE DA ALTURA (PADDING)
-                ts.add('TOPPADDING', (0, row_idx), (-1, row_idx), 5)
-                ts.add('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 7)
-                
-                # 4. NEGRITO NA LINHA TODA (Adicionado)
-                ts.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
+                # 4. Padding balanceado para centralizar verticalmente na linha
+                ts.add('TOPPADDING', (0, row_idx), (-1, row_idx), 10)
+                ts.add('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 10)
 
     t.setStyle(ts)
     elements.append(t)
