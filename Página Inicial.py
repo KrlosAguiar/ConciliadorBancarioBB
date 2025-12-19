@@ -28,7 +28,7 @@ st.markdown(
     <div style="display: flex; align-items: center;">
         <img src="data:image/png;base64,{img_base64}" 
              style="width: 40px; border-radius: 0px;">
-        <span style="margin-left: 10px;">
+        <span style="margin-left: 15px;">
             <h1 style="margin: 0;">Departamento de Contabilidade - Barcarena/PA</h1>
         </span>
     </div>
@@ -62,3 +62,4 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 ---
 **Status do Sistema:** ✅ Online
 """)
+
