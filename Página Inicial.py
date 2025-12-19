@@ -1,4 +1,17 @@
 import streamlit as st
+from PIL import Image
+import os
+
+# Define o caminho para a imagem que está na raiz do projeto
+# Isso garante que funcione tanto localmente quanto no servidor
+icon_path = os.path.join(os.getcwd(), "Barcarena.png")
+icon_image = Image.open(icon_path)
+
+st.set_page_config(
+    page_title="Portal Financeiro",
+    page_icon=icon_image, # Aqui aplicamos o seu ícone customizado
+    layout="wide"
+)
 
 # Configuração da página principal
 st.set_page_config(
@@ -25,6 +38,7 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
 # Dica: Se quiser que o login seja feito AQUI e valha para tudo,
 # você pode mover a função check_password para cá no futuro.
+
 
 
 
