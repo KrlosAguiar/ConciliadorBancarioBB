@@ -78,7 +78,7 @@ class DesignTabelaHTML:
     
     # Cabeçalho
     HEADER_HTML = """
-    <tr style='background-color: #00008B; color: white !important;'>
+    <tr style='background-color: black; color: white !important;'>
         <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Data</th>
         <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Histórico</th>
         <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Documento</th>
@@ -449,11 +449,20 @@ def gerar_pdf_bytes(report_data, titulo):
             ts.add('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.black)
             
             if row['IsGrandTotal']:
-                ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#d1d9e6'))
-                # Fonte do valor (coluna 3) aumentada para 12
+                ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.gray) # ou colors.HexColor('#d1d9e6')
+                
+                # 1. Fonte aumentada (apenas coluna 3/Valor)
                 ts.add('FONTSIZE', (3, row_idx), (3, row_idx), 12)
-                # Alinhamento vertical centralizado para garantir harmonia
+                
+                # 2. Alinhamento vertical centralizado
                 ts.add('VALIGN', (0, row_idx), (-1, row_idx), 'MIDDLE')
+                
+                # 3. AJUSTE DA ALTURA (PADDING)
+                ts.add('TOPPADDING', (0, row_idx), (-1, row_idx), 10)
+                ts.add('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 10)
+                
+                # 4. NEGRITO NA LINHA TODA (Adicionado)
+                ts.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
 
     t.setStyle(ts)
     elements.append(t)
@@ -474,7 +483,7 @@ with col1:
     banco_option = st.selectbox("", ["Banco do Brasil", "Caixa Econômica", "BANPARÁ"], label_visibility="collapsed")
 
 with col2:
-    renderizar_label_uploader("Upload do Extrato (PDF)")
+    renderizar_label_uploader("Selecione o Extrato Bancário em PDF")
     uploaded_file = st.file_uploader("", type="pdf", label_visibility="collapsed")
 
 st.markdown("<br>", unsafe_allow_html=True)
