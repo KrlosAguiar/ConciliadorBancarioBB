@@ -80,9 +80,9 @@ class DesignTabelaHTML:
     HEADER_HTML = """
     <tr style='background-color: #00008B; color: white !important;'>
         <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Data</th>
-        <th style='padding: 8px; text-align: left; border: 1px solid #000;'>Histórico</th>
+        <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Histórico</th>
         <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Documento</th>
-        <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Valor</th>
+        <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Valor</th>
     </tr>
     """
 
@@ -99,12 +99,12 @@ class DesignRelatorioPDF:
     def get_table_style(has_data=True):
         style_cmds = [
             ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-            ('BACKGROUND', (0,0), (-1,0), colors.darkblue), # Cabeçalho Azul
+            ('BACKGROUND', (0,0), (-1,0), colors.black),
             ('TEXTCOLOR', (0,0), (-1,0), colors.white),     # Texto Cabeçalho Branco
             ('ALIGN', (0,0), (0,-1), 'CENTER'),     # Data
-            ('ALIGN', (1,0), (1,-1), 'LEFT'),       # Histórico
+            ('ALIGN', (1,0), (1,-1), 'CENTER'),       # Histórico
             ('ALIGN', (2,0), (2,-1), 'CENTER'),     # Documento
-            ('ALIGN', (3,0), (-1,-1), 'RIGHT'),     # Valor
+            ('ALIGN', (3,0), (-1,-1), 'CENTER'),     # Valor
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('FONTSIZE', (0,0), (-1,-1), 9),
             ('BOTTOMPADDING', (0,0), (-1,0), 8),
@@ -397,15 +397,15 @@ def gerar_html_tabela(report_data):
         hist_style = "text-align: left;"
         
         if row['IsTotal']:
-            style = "background-color: #f0f0f0; font-weight: bold; border-top: 1px solid #ccc; color: black;"
+            style = "background-color: lightgray; font-weight: bold; border-top: 1px solid #ccc; color: black;"
             if row['IsGrandTotal']:
-                style = "background-color: #d1d9e6; color: black; font-weight: bold; border-top: 2px solid #000;"
+                style = "background-color: gray; color: black; font-weight: bold; border-top: 1px solid #000;"
         
         html += f"<tr style='{style}'>"
         html += f"<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>{row['Data']}</td>"
         html += f"<td style='padding: 8px; {hist_style} border: 1px solid #ddd;'>{row['Histórico']}</td>"
         html += f"<td style='padding: 8px; text-align: {doc_align}; border: 1px solid #ddd;'>{row['Documento']}</td>"
-        html += f"<td style='padding: 8px; text-align: right; border: 1px solid #ddd;'>{v_fmt}</td>"
+        html += f"<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>{v_fmt}</td>"
         html += "</tr>"
 
     html += DesignTabelaHTML.TABLE_CLOSE + DesignTabelaHTML.CONTAINER_CLOSE
