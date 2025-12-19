@@ -215,7 +215,7 @@ def gerar_pdf_final(df_f, titulo_completo):
     t = Table(data, colWidths=[25*mm, 65*mm, 33*mm, 33*mm, 33*mm])
     t.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-        ('BACKGROUND', (0,0), (-1,0), colors.darkblue),
+        ('BACKGROUND', (0,0), (-1,0), colors.black),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('ALIGN', (0,0), (0,-1), 'CENTER'), ('ALIGN', (1,0), (1,-1), 'CENTER'), ('ALIGN', (2,0), (-1,-1), 'RIGHT'),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey),
@@ -257,7 +257,7 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             html = """
             <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
             <table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important;'>
-                <tr style='background-color: #00008B; color: white !important;'>
+                <tr style='background-color: black; color: white !important;'>
                     <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Data</th>
                     <th style='padding: 8px; text-align: left; border: 1px solid #000;'>Histórico</th>
                     <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Documento</th>
@@ -278,7 +278,7 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
                 </tr>"""
             
             html += f"""
-                <tr style='font-weight: bold; background-color: white; color: black;'> 
+                <tr style='font-weight: bold; background-color: gray; color: black;'> 
                     <td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>
                     <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td>
                     <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Razao'].sum())}</td>
