@@ -1,6 +1,7 @@
 import streamlit as st
 from PIL import Image
 import os
+import base64
 
 # Configuração de Caminho e Ícone
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
@@ -12,19 +13,32 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- CABEÇALHO COM ÍCONE ---
-# Criamos duas colunas: uma pequena para o logo e uma grande para o título
-col_logo, col_titulo = st.columns([1, 8])
+# Função para converter imagem para base64 (necessário para HTML inline)
+def get_base64_image(img_path):
+    with open(img_path, "rb") as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
 
-with col_logo:
-    st.image(icon_image, width=80) # Ajuste a largura conforme necessário
+img_base64 = get_base64_image(icon_path)
 
-with col_titulo:
-    st.title("Departamento de Contabilidade - Barcarena/PA")
+# --- CABEÇALHO CUSTOMIZADO ---
+# Usamos HTML para garantir cantos quadrados, tamanho reduzido e distância exata
+st.markdown(
+    f"""
+    <div style="display: flex; align-items: center;">
+        <img src="data:image/png;base64,{img_base64}" 
+             style="width: 40px; border-radius: 0px;">
+        <span style="margin-left: 10px;">
+            <h1 style="margin: 0;">Departamento de Contabilidade - Barcarena/PA</h1>
+        </span>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
 
 st.markdown("---")
 
-# --- CORPO DA PÁGINA COM ESPAÇAMENTO DUPLO ---
+# --- CORPO DA PÁGINA ---
 st.markdown("""
 ### Bem-vindo ao sistema centralizado de ferramentas contábeis.
 
@@ -38,11 +52,7 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
 * **Conciliador Bancário:** Cruza os dados do Extrato Bancário com o Razão da Contabilidade.
 
-&nbsp;
-
 * **Tarifas Bancárias:** Extrai os lançamentos das tarifas do Extrato Bancário e emite um relatório pronto para empenho, liquidação e pagamento.
-
-&nbsp;
 
 * **(Em breve) Novos Módulos:** Outras ferramentas serão adicionadas aqui.
 
