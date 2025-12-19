@@ -278,7 +278,7 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
                 </tr>"""
             
             html += f"""
-                <tr style='font-weight: bold; background-color: gray; color: black;'> 
+                <tr style='font-weight: bold; background-color: lightgrey; color: black;'> 
                     <td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>
                     <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td>
                     <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Razao'].sum())}</td>
