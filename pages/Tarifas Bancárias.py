@@ -399,7 +399,7 @@ def gerar_html_tabela(report_data):
         if row['IsTotal']:
             style = "background-color: lightgray; font-weight: bold; border-top: 1px solid #ccc; color: black;"
             if row['IsGrandTotal']:
-                style = "background-color: gray; color: black; font-weight: bold; border-top: 1px solid #000;"
+                style = "background-color: gray; color: black; font-weight: bold; border-top: 1px solid #000; font-size: 14px"
         
         html += f"<tr style='{style}'>"
         html += f"<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>{row['Data']}</td>"
@@ -458,8 +458,8 @@ def gerar_pdf_bytes(report_data, titulo):
                 ts.add('VALIGN', (0, row_idx), (-1, row_idx), 'MIDDLE')
                 
                 # 3. AJUSTE DA ALTURA (PADDING)
-                ts.add('TOPPADDING', (0, row_idx), (-1, row_idx), 10)
-                ts.add('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 10)
+                ts.add('TOPPADDING', (0, row_idx), (-1, row_idx), 5)
+                ts.add('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 5)
                 
                 # 4. NEGRITO NA LINHA TODA (Adicionado)
                 ts.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
