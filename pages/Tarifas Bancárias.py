@@ -452,14 +452,14 @@ def gerar_pdf_bytes(report_data, titulo):
                 ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.gray) # ou colors.HexColor('#d1d9e6')
                 
                 # 1. Fonte aumentada (apenas coluna 3/Valor)
-                ts.add('FONTSIZE', (3, row_idx), (3, row_idx), 12)
+                ts.add('FONTSIZE', (3, row_idx), (3, row_idx), 14)
                 
                 # 2. Alinhamento vertical centralizado
                 ts.add('VALIGN', (0, row_idx), (-1, row_idx), 'MIDDLE')
                 
                 # 3. AJUSTE DA ALTURA (PADDING)
                 ts.add('TOPPADDING', (0, row_idx), (-1, row_idx), 5)
-                ts.add('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 5)
+                ts.add('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 7)
                 
                 # 4. NEGRITO NA LINHA TODA (Adicionado)
                 ts.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
