@@ -427,6 +427,9 @@ def gerar_pdf_bytes(report_data, titulo):
     elements = []
     styles = getSampleStyleSheet()
     
+    # Criamos um estilo específico para o Histórico em Negrito quando for Total
+    bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontName='Helvetica-Bold')
+    
     elements.append(Paragraph(titulo, styles['Title']))
     elements.append(Spacer(1, 10*mm))
     
@@ -435,7 +438,16 @@ def gerar_pdf_bytes(report_data, titulo):
     for row in report_data:
         v_fmt = format_currency_br(row['Valor'])
         hist_txt = str(row['Histórico']).replace("<", "&lt;").replace(">", "&gt;")
-        table_data.append([row['Data'], Paragraph(hist_txt, styles['Normal']), row['Documento'], v_fmt])
+        
+        # Se for uma linha de Total, usamos o estilo de parágrafo em negrito
+        current_style = bold_style if row['IsTotal'] else styles['Normal']
+        
+        table_data.append([
+            row['Data'], 
+            Paragraph(hist_txt, current_style), 
+            row['Documento'], 
+            v_fmt
+        ])
 
     t = Table(table_data, colWidths=[25*mm, 90*mm, 35*mm, 35*mm], repeatRows=1)
     
@@ -450,18 +462,18 @@ def gerar_pdf_bytes(report_data, titulo):
             ts.add('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.black)
             
             if row['IsGrandTotal']:
-                ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.gray) # ou colors.HexColor('#d1d9e6')
+                ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.gray)
                 
-                # 1. Fonte aumentada (aprox 30% maior que a base 9, similar ao visual da tela) em TODA A LINHA
+                # 1. Fonte aumentada em TODA A LINHA (incluindo o texto TOTAL GERAL)
                 ts.add('FONTSIZE', (0, row_idx), (-1, row_idx), 12)
                 
-                # 2. Negrito em toda a linha (redundante pois já foi add acima, mas reforça)
+                # 2. Reforço do Negrito em toda a linha
                 ts.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
 
                 # 3. Alinhamento vertical centralizado
                 ts.add('VALIGN', (0, row_idx), (-1, row_idx), 'MIDDLE')
                 
-                # 4. Padding balanceado para centralizar verticalmente na linha
+                # 4. Padding balanceado para centralizar verticalmente
                 ts.add('TOPPADDING', (0, row_idx), (-1, row_idx), 10)
                 ts.add('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 10)
 
