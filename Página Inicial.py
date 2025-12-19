@@ -15,7 +15,8 @@ st.markdown("""
 
 Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
-- **Conciliador Bancário:** Ferramenta para cruzar dados do Extrato PDF com o Razão em Excel.
+- **Conciliador Bancário:** Cruza os dados do Extrato Bancário com o Razão da Contabilidade.
+- **Tarifas Bancárias:** Extrai os lançamentos das tarifas do Extrato Bancário, e emite um relatório pronto para empenho, liquidação e pagamento.
 - **(Em breve) Novos Módulos:** Outras ferramentas serão adicionadas aqui.
 
 ---
@@ -24,4 +25,5 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
 # Dica: Se quiser que o login seja feito AQUI e valha para tudo,
 # você pode mover a função check_password para cá no futuro.
+
 
