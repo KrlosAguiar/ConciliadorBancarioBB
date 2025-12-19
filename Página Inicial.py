@@ -19,7 +19,9 @@ st.markdown("---")
 st.markdown("""
 ### Bem-vindo ao sistema centralizado de ferramentas contábeis.
 
+
 Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
+
 
 - **Conciliador Bancário:** Cruza os dados do Extrato Bancário com o Razão da Contabilidade.
 
@@ -27,12 +29,14 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
 - **(Em breve) Novos Módulos:** Outras ferramentas serão adicionadas aqui.
 
+
 ---
 **Status do Sistema:** ✅ Online
 """)
 
 # Dica: Se quiser que o login seja feito AQUI e valha para tudo,
 # você pode mover a função check_password para cá no futuro.
+
 
 
 
