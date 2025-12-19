@@ -2,50 +2,44 @@ import streamlit as st
 from PIL import Image
 import os
 
-# Define o caminho para a imagem que está na raiz do projeto
-# Isso garante que funcione tanto localmente quanto no servidor
+# Configuração de Caminho e Ícone para a Aba do Navegador
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
 icon_image = Image.open(icon_path)
 
 st.set_page_config(
     page_title="DECON - Barcarena/PA",
-    page_icon=icon_image, # Aqui aplicamos o seu ícone customizado
+    page_icon=icon_image,
     layout="wide"
 )
+
+# --- CABEÇALHO ---
+# Insere a imagem acima do título (o padrão do st.image já é alinhado à esquerda)
+st.image(icon_image, width=120) 
 
 st.title("Departamento de Contabilidade - Barcarena/PA")
 st.markdown("---")
 
+# --- CORPO DA PÁGINA COM ESPAÇAMENTO DUPLO ---
 st.markdown("""
 ### Bem-vindo ao sistema centralizado de ferramentas contábeis.
 
-<br>
+&nbsp;
+&nbsp;
 
 Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
-<br>
+&nbsp;
+&nbsp;
 
-- **Conciliador Bancário:** Cruza os dados do Extrato Bancário com o Razão da Contabilidade.
+* **Conciliador Bancário:** Cruza os dados do Extrato Bancário com o Razão da Contabilidade.
 
-- **Tarifas Bancárias:** Extrai os lançamentos das tarifas do Extrato Bancário e emite um relatório pronto para empenho, liquidação e pagamento.
+* **Tarifas Bancárias:** Extrai os lançamentos das tarifas do Extrato Bancário e emite um relatório pronto para empenho, liquidação e pagamento.
 
-- **(Em breve) Novos Módulos:** Outras ferramentas serão adicionadas aqui.
+* **(Em breve) Novos Módulos:** Outras ferramentas serão adicionadas aqui.
 
-<br>
+&nbsp;
+&nbsp;
 
 ---
 **Status do Sistema:** ✅ Online
 """)
-
-# Dica: Se quiser que o login seja feito AQUI e valha para tudo,
-# você pode mover a função check_password para cá no futuro.
-
-
-
-
-
-
-
-
-
-
