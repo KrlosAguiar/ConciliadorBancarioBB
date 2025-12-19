@@ -41,7 +41,7 @@ def aplicar_estilo_global():
             border-radius: 5px;
             font-size: 16px;
             transition: 0.3s;
-            width: 100%; /* Garante 100% da largura do container pai */
+            width: 100%; 
         }
         div.stButton > button:hover {
             background-color: rgb(20, 20, 25) !important;
@@ -76,7 +76,6 @@ class DesignTabelaHTML:
     TABLE_OPEN = "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; font-family: sans-serif;'>"
     TABLE_CLOSE = "</table>"
     
-    # Cabeçalho
     HEADER_HTML = """
     <tr style='background-color: black; color: white !important;'>
         <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Data</th>
@@ -88,7 +87,6 @@ class DesignTabelaHTML:
 
 class DesignRelatorioPDF:
     """Configurações visuais para a geração do PDF."""
-    
     PAGE_SIZE = A4
     MARGIN_RIGHT = 10 * mm
     MARGIN_LEFT = 10 * mm
@@ -100,16 +98,16 @@ class DesignRelatorioPDF:
         style_cmds = [
             ('GRID', (0,0), (-1,-1), 0.5, colors.black),
             ('BACKGROUND', (0,0), (-1,0), colors.black),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),     # Texto Cabeçalho Branco
-            ('ALIGN', (0,0), (0,-1), 'CENTER'),     # Data
-            ('ALIGN', (1,0), (1,-1), 'CENTER'),       # Histórico
-            ('ALIGN', (2,0), (2,-1), 'CENTER'),     # Documento
-            ('ALIGN', (3,0), (-1,-1), 'CENTER'),     # Valor
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (0,-1), 'CENTER'),
+            ('ALIGN', (1,0), (1,-1), 'CENTER'),
+            ('ALIGN', (2,0), (2,-1), 'CENTER'),
+            ('ALIGN', (3,0), (-1,-1), 'CENTER'),
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('FONTSIZE', (0,0), (-1,-1), 9),
             ('BOTTOMPADDING', (0,0), (-1,0), 8),
-            ('TEXTCOLOR', (0,1), (-1,-1), colors.black), # Dados pretos
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), # Alinhamento vertical GLOBAL
+            ('TEXTCOLOR', (0,1), (-1,-1), colors.black),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ]
         return TableStyle(style_cmds)
 
@@ -130,7 +128,7 @@ def format_currency_br(val):
     return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 # ==============================================================================
-# 4. MOTORES DE EXTRAÇÃO
+# 4. MOTORES DE EXTRAÇÃO (CORREÇÃO BB APLICADA)
 # ==============================================================================
 
 def processar_bb(file_bytes):
@@ -174,15 +172,18 @@ def processar_bb(file_bytes):
     for c in df.select_dtypes(include=['object']).columns:
         df[c] = df[c].apply(clean_text_general)
     
+    # Mapeamento para renomeação
     for col in df.columns:
         norm = col.lower()
         if "lote" in norm: df = df.rename(columns={col:"lote"})
-        if "data" in norm: df = df.rename(columns={col:"dt_balancete"})
+        if "data" in norm or "balancete" in norm: df = df.rename(columns={col:"dt_balancete"})
         if "valor" in norm: df = df.rename(columns={col:"valor"})
         if "hist" in norm: df = df.rename(columns={col:"historico"})
-    
+        if "documento" in norm: df = df.rename(columns={col:"documento_original"})
+
     df = df.loc[:, ~df.columns.duplicated()]
 
+    # Fallbacks para colunas não encontradas
     if "dt_balancete" not in df.columns:
         for col in df.columns:
             if any(re.match(r'\d{2}/\d{2}/\d{4}', str(v)) for v in df[col].head(10)):
@@ -191,16 +192,29 @@ def processar_bb(file_bytes):
         for col in df.columns:
             if any(VALOR_RE.match(str(v).strip()) for v in df[col].head(10)):
                 df = df.rename(columns={col:"valor"}); break
-    
-    df = df.loc[:, ~df.columns.duplicated()]
-    if "lote" not in df.columns: df["lote"] = None
 
-    df["lote_norm"] = df["lote"].apply(lambda v: re.sub(r'\D+','', str(v)) if v else "")
+    # LOGICA DE CORREÇÃO: Extrair 6 últimos dígitos da coluna Documento
+    def extrair_doc(val):
+        if not val: return ""
+        nums = re.findall(r'\d', str(val))
+        if not nums: return ""
+        return "".join(nums)[-6:] # Pega os 6 últimos
+
+    df["lote_norm"] = df.get("lote", pd.Series([""]*len(df))).apply(lambda v: re.sub(r'\D+','', str(v)) if v else "")
+    df["doc_processado"] = df.get("documento_original", pd.Series([""]*len(df))).apply(extrair_doc)
     df["valor_num"] = df.get("valor").apply(br_to_float)
     df["dt_obj"] = pd.to_datetime(df.get("dt_balancete"), dayfirst=True, errors="coerce")
 
+    # Filtra pelo lote alvo (13113)
     df_final = df[df["lote_norm"] == TARGET_LOTE_BB].copy()
-    df_final = df_final.rename(columns={"historico": "Histórico", "lote": "Documento", "valor_num": "Valor"})
+    
+    # Preenche a coluna final do relatório
+    df_final = df_final.rename(columns={
+        "historico": "Histórico", 
+        "doc_processado": "Documento", 
+        "valor_num": "Valor"
+    })
+    
     return df_final[["dt_obj", "Histórico", "Documento", "Valor"]]
 
 def processar_caixa(file_bytes):
@@ -335,7 +349,7 @@ def processar_banpara(file_bytes):
     return df_f[["dt_obj", "Histórico", "Documento", "Valor"]]
 
 # ==============================================================================
-# 5. LÓGICA DE GERAÇÃO DE RELATÓRIO (HTML E PDF)
+# 5. LÓGICA DE GERAÇÃO DE RELATÓRIO
 # ==============================================================================
 
 def preparar_dados_relatorio(df):
@@ -347,139 +361,76 @@ def preparar_dados_relatorio(df):
     for date, group in df.groupby("dt_obj"):
         daily_total = 0
         date_str = date.strftime("%d/%m/%Y")
-        
         for _, row in group.iterrows():
             val = row["Valor"] if pd.notnull(row["Valor"]) else 0
             daily_total += val
             grand_total += val
-            
-            raw_doc = row["Documento"]
-            if isinstance(raw_doc, pd.Series): raw_doc = raw_doc.iloc[0]
-            doc_val = str(raw_doc) if pd.notna(raw_doc) and str(raw_doc).strip() != "" else ""
-
             report_data.append({
-                "Data": date_str,
-                "Histórico": row["Histórico"],
-                "Documento": doc_val,
-                "Valor": val,
-                "IsTotal": False,
-                "IsGrandTotal": False
+                "Data": date_str, "Histórico": row["Histórico"], "Documento": row["Documento"],
+                "Valor": val, "IsTotal": False, "IsGrandTotal": False
             })
-            
         report_data.append({
-            "Data": date_str,
-            "Histórico": "Total do Dia",
-            "Documento": "-",
-            "Valor": daily_total,
-            "IsTotal": True,
-            "IsGrandTotal": False
+            "Data": date_str, "Histórico": "Total do Dia", "Documento": "-",
+            "Valor": daily_total, "IsTotal": True, "IsGrandTotal": False
         })
-    
     report_data.append({
-        "Data": "",
-        "Histórico": "TOTAL GERAL",
-        "Documento": "-",
-        "Valor": grand_total,
-        "IsTotal": True,
-        "IsGrandTotal": True
+        "Data": "", "Histórico": "TOTAL GERAL", "Documento": "-",
+        "Valor": grand_total, "IsTotal": True, "IsGrandTotal": True
     })
-    
     return report_data, grand_total
 
 def gerar_html_tabela(report_data):
     html = DesignTabelaHTML.CONTAINER_OPEN + DesignTabelaHTML.TABLE_OPEN
     html += DesignTabelaHTML.HEADER_HTML
-    
     for row in report_data:
         v_fmt = format_currency_br(row['Valor'])
         style = "background-color: white; color: black;"
-        doc_align = "center"
-        hist_style = "text-align: left;"
-        
         if row['IsTotal']:
             style = "background-color: lightgray; font-weight: bold; border-top: 1px solid #ccc; color: black;"
             if row['IsGrandTotal']:
-                # Fonte 125% maior que o padrão para ficar proporcional
                 style = "background-color: gray; color: black; font-weight: bold; border-top: 1px solid #000; font-size: 125%"
-        
         html += f"<tr style='{style}'>"
         html += f"<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>{row['Data']}</td>"
-        html += f"<td style='padding: 8px; {hist_style} border: 1px solid #ddd;'>{row['Histórico']}</td>"
-        html += f"<td style='padding: 8px; text-align: {doc_align}; border: 1px solid #ddd;'>{row['Documento']}</td>"
+        html += f"<td style='padding: 8px; text-align: left; border: 1px solid #ddd;'>{row['Histórico']}</td>"
+        html += f"<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>{row['Documento']}</td>"
         html += f"<td style='padding: 8px; text-align: center; border: 1px solid #ddd;'>{v_fmt}</td>"
         html += "</tr>"
-
     html += DesignTabelaHTML.TABLE_CLOSE + DesignTabelaHTML.CONTAINER_CLOSE
     return html
 
 def gerar_pdf_bytes(report_data, titulo):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, 
-        pagesize=A4, 
-        rightMargin=DesignRelatorioPDF.MARGIN_RIGHT,
-        leftMargin=DesignRelatorioPDF.MARGIN_LEFT,
-        topMargin=DesignRelatorioPDF.MARGIN_TOP,
-        bottomMargin=DesignRelatorioPDF.MARGIN_BOTTOM,
-        title=titulo
-    )
-    
+    doc = SimpleDocTemplate(buffer, pagesize=A4, 
+                            rightMargin=DesignRelatorioPDF.MARGIN_RIGHT,
+                            leftMargin=DesignRelatorioPDF.MARGIN_LEFT,
+                            topMargin=DesignRelatorioPDF.MARGIN_TOP,
+                            bottomMargin=DesignRelatorioPDF.MARGIN_BOTTOM, title=titulo)
     elements = []
     styles = getSampleStyleSheet()
-    
-    # Criamos um estilo específico para o Histórico em Negrito quando for Total
     bold_style = ParagraphStyle('BoldStyle', parent=styles['Normal'], fontName='Helvetica-Bold')
-    
     elements.append(Paragraph(titulo, styles['Title']))
     elements.append(Spacer(1, 10*mm))
-    
     table_data = [['Data', 'Histórico', 'Documento', 'Valor']]
-    
     for row in report_data:
         v_fmt = format_currency_br(row['Valor'])
         hist_txt = str(row['Histórico']).replace("<", "&lt;").replace(">", "&gt;")
-        
-        # Se for uma linha de Total, usamos o estilo de parágrafo em negrito
         current_style = bold_style if row['IsTotal'] else styles['Normal']
-        
-        table_data.append([
-            row['Data'], 
-            Paragraph(hist_txt, current_style), 
-            row['Documento'], 
-            v_fmt
-        ])
-
+        table_data.append([row['Data'], Paragraph(hist_txt, current_style), row['Documento'], v_fmt])
     t = Table(table_data, colWidths=[25*mm, 90*mm, 35*mm, 35*mm], repeatRows=1)
-    
     ts = DesignRelatorioPDF.get_table_style()
-    
     for idx, row in enumerate(report_data):
         row_idx = idx + 1
         if row['IsTotal']:
             ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.lightgrey)
             ts.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
-            ts.add('LINEABOVE', (0, row_idx), (-1, row_idx), 1, colors.black)
-            ts.add('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.black)
-            
             if row['IsGrandTotal']:
                 ts.add('BACKGROUND', (0, row_idx), (-1, row_idx), colors.gray)
-                
-                # 1. Fonte aumentada em TODA A LINHA (incluindo o texto TOTAL GERAL)
                 ts.add('FONTSIZE', (0, row_idx), (-1, row_idx), 12)
-                
-                # 2. Reforço do Negrito em toda a linha
-                ts.add('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold')
-
-                # 3. Alinhamento vertical centralizado
                 ts.add('VALIGN', (0, row_idx), (-1, row_idx), 'MIDDLE')
-                
-                # 4. Padding balanceado para centralizar verticalmente
                 ts.add('TOPPADDING', (0, row_idx), (-1, row_idx), 10)
                 ts.add('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 10)
-
     t.setStyle(ts)
     elements.append(t)
-    
     doc.build(elements)
     return buffer.getvalue()
 
@@ -494,19 +445,16 @@ col1, col2 = st.columns(2)
 with col1:
     renderizar_label_uploader("Selecione o Banco")
     banco_option = st.selectbox("", ["Banco do Brasil", "Caixa Econômica", "BANPARÁ"], label_visibility="collapsed")
-
 with col2:
     renderizar_label_uploader("Selecione o Extrato Bancário em PDF")
     uploaded_file = st.file_uploader("", type="pdf", label_visibility="collapsed")
 
 st.markdown("<br>", unsafe_allow_html=True)
-# Botão Iniciar com largura total
 if st.button("INICIAR PROCESSAMENTO", use_container_width=True):
     if uploaded_file:
         with st.spinner("Processando dados..."):
             file_bytes = uploaded_file.read()
             df_result = pd.DataFrame()
-            
             if banco_option == "Banco do Brasil":
                 df_result = processar_bb(file_bytes)
             elif banco_option == "Caixa Econômica":
@@ -516,28 +464,14 @@ if st.button("INICIAR PROCESSAMENTO", use_container_width=True):
             
             if not df_result.empty:
                 report_data, _ = preparar_dados_relatorio(df_result)
-                
-                # HTML na tela
                 html_table = gerar_html_tabela(report_data)
                 st.markdown(html_table, unsafe_allow_html=True)
-                
-                # Nome do arquivo
-                nome_arquivo_original = os.path.splitext(uploaded_file.name)[0]
-                nome_pdf_final = f"Tarifas Bancárias {nome_arquivo_original}"
-                
-                # Gera PDF
+                nome_pdf_final = f"Tarifas Bancárias {os.path.splitext(uploaded_file.name)[0]}"
                 pdf_bytes = gerar_pdf_bytes(report_data, nome_pdf_final)
-                
                 renderizar_espacador_botao()
-                # Botão Download com largura total
-                st.download_button(
-                    label="BAIXAR RELATÓRIO PDF",
-                    data=pdf_bytes,
-                    file_name=f"{nome_pdf_final}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+                st.download_button(label="BAIXAR RELATÓRIO PDF", data=pdf_bytes,
+                                   file_name=f"{nome_pdf_final}.pdf", mime="application/pdf", use_container_width=True)
             else:
-                st.warning(f"Nenhum dado encontrado para **{banco_option}** com os filtros configurados.")
+                st.warning(f"Nenhum dado encontrado.")
     else:
-        st.warning("⚠️ Por favor, faça o upload do arquivo PDF antes de iniciar.")
+        st.warning("⚠️ Faça o upload do arquivo.")
