@@ -166,7 +166,7 @@ if uploaded_file:
             df_raw = read_ods_streamlit(file_bytes)
             
             df_limpo = df_raw.drop([0, 1, 2, 3, 4, 7]).reset_index(drop=True)
-            if df_limpo.iloc[1].astype(str).str.contains("Julho", case=False).any():
+            if df_limpo.iloc[1].astype(str).str.contains("Diferença", case=False).any():
                 merged = []
                 for i in range(0, len(df_limpo), 2):
                     if i + 1 < len(df_limpo):
