@@ -19,14 +19,13 @@ from reportlab.lib.units import inch, mm
 # ==============================================================================
 # CONFIGURAÇÃO DA PÁGINA
 # ==============================================================================
+# Define o caminho para a imagem que está na raiz do projeto
+# Isso garante que funcione tanto localmente quanto no servidor
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
-try:
-    icon_image = Image.open(icon_path)
-except:
-    icon_image = "📊"
+icon_image = Image.open(icon_path)
 
 st.set_page_config(
-    page_title="Portal Financeiro - Projeção de Folha",
+    page_title="Projeção de Folha",
     page_icon=icon_image,
     layout="wide"
 )
