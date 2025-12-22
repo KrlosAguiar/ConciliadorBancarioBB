@@ -44,10 +44,6 @@ st.markdown("""
     }
     div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
     .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
-    
-    /* Forçar fundo branco e texto preto na div da tabela */
-    .tabela-container { background-color: white !important; padding: 15px; border-radius: 5px; border: 1px solid #ddd; }
-    .tabela-container td { color: black !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -110,8 +106,8 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
     story.append(Spacer(1, 15))
     
     small_text = ParagraphStyle('Small', parent=styles['Normal'], fontSize=7, leading=8)
-    val_text_std = ParagraphStyle('ValStd', parent=styles['Normal'], fontSize=8, alignment=2)
-    val_text_center = ParagraphStyle('ValCenter', parent=styles['Normal'], fontSize=8, alignment=1)
+    val_text_std = ParagraphStyle('ValStd', parent=styles['Normal'], fontSize=8, alignment=2) # Direita
+    val_text_center = ParagraphStyle('ValCenter', parent=styles['Normal'], fontSize=8, alignment=1) # Centro
 
     headers = ['Órgão/Unidade', 'Cod', 'Despesa', 'Liquidado', 'Saldo', 'Média', 'Projeção', 'Suplementar']
     data = [headers]
@@ -126,7 +122,7 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
         
         data.append([
             Paragraph(str(r['Órgão']), small_text),
-            Paragraph(str(r['Código']), val_text_center),
+            Paragraph(str(r['Código']), val_text_center), 
             Paragraph(str(r['Despesa']), small_text),
             Paragraph(formatar_moeda_br(r['Liquidado']), val_text_std),
             Paragraph(formatar_moeda_br(r['Saldo']), val_text_std),
@@ -150,7 +146,7 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
     return buffer.getvalue()
 
 # ==============================================================================
-# 3. INTERFACE
+# 3. INTERFACE STREAMLIT
 # ==============================================================================
 
 st.markdown("<h1 style='text-align: center;'>Projeção de Folha de Pagamento</h1>", unsafe_allow_html=True)
@@ -195,17 +191,17 @@ if uploaded_file:
             df_calc['Suplementar'] = col_saldo - df_calc['Projeção']
 
             df_calc.iloc[:, 0] = df_calc.iloc[:, 0].replace("", np.nan).ffill()
-            df_calc['Órgão'] = df_calc.iloc[:, 0].apply(lambda x: re.sub(r'^\d+\s*', '', str(x)))
+            df_calc['Órgão'] = df_calc['Órgão'] = df_calc.iloc[:, 0].apply(lambda x: re.sub(r'^\d+\s*', '', str(x)))
             df_calc['Código'] = df_calc.iloc[:, 1]
             df_calc['Despesa'] = df_calc.iloc[:, 2]
             df_calc['Saldo_Val'] = col_saldo
 
             df_f = df_calc[['Órgão', 'Código', 'Despesa', 'Liquidado', 'Saldo_Val', 'Média', 'Projeção', 'Suplementar']].rename(columns={'Saldo_Val': 'Saldo'})
 
-            # --- EXIBIÇÃO EM TELA COM FIX DE COR PRETA ---
+            # --- EXIBIÇÃO EM TELA (HTML FIXADO) ---
             html = f"""
-            <div class='tabela-container'>
-            <table style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; background-color: white;'>
+            <div style='background-color: white !important; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
+            <table style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; background-color: white !important;'>
                 <tr style='background-color: black; color: white !important;'>
                     <th style='padding: 8px; text-align: center; border: 1px solid #000; color: white !important;'>Órgão/Unidade</th>
                     <th style='padding: 8px; text-align: center; border: 1px solid #000; color: white !important;'>Cod</th>
@@ -218,13 +214,14 @@ if uploaded_file:
                 </tr>"""
             
             for _, r in df_f.iterrows():
-                # Lógica da coluna Suplementar: Vermelho e Negrito se < 0
+                # Lógica de cor e peso: Se for negativo na coluna Suplementar, fica vermelho e negrito
                 is_neg = r['Suplementar'] < 0
-                suplementar_color = "red" if is_neg else "black"
-                suplementar_weight = "bold" if is_neg else "normal"
+                cor_suple = "red" if is_neg else "black"
+                peso_suple = "bold" if is_neg else "normal"
                 
+                # Injeção manual de 'color: black' em todas as TDs para evitar texto branco
                 html += f"""
-                <tr style='background-color: white;'>
+                <tr style='background-color: white !important;'>
                     <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: left;'>{r['Órgão']}</td>
                     <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: center;'>{r['Código']}</td>
                     <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: left;'>{r['Despesa']}</td>
@@ -232,7 +229,7 @@ if uploaded_file:
                     <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: right;'>{formatar_moeda_br(r['Saldo'])}</td>
                     <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: right;'>{formatar_moeda_br(r['Média'])}</td>
                     <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: right;'>{formatar_moeda_br(r['Projeção'])}</td>
-                    <td style='padding: 5px; border: 1px solid #000; color: {suplementar_color} !important; text-align: right; font-weight: {suplementar_weight} !important;'>{formatar_moeda_br(r['Suplementar'])}</td>
+                    <td style='padding: 5px; border: 1px solid #000; color: {cor_suple} !important; text-align: right; font-weight: {peso_suple} !important;'>{formatar_moeda_br(r['Suplementar'])}</td>
                 </tr>"""
             html += "</table></div>"
             
