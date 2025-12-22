@@ -17,15 +17,16 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
 
 # ==============================================================================
-# CONFIGURAÇÃO DA PÁGINA
+# CONFIGURAÇÃO DA PÁGINA (ÚNICA E NO TOPO)
 # ==============================================================================
-# Tenta carregar o ícone, se não existir, usa um padrão
+# Tenta carregar o ícone na raiz do projeto
+icon_path = os.path.join(os.getcwd(), "Barcarena.png")
 try:
-    icon_path = os.path.join(os.getcwd(), "Barcarena.png")
     icon_image = Image.open(icon_path)
 except:
     icon_image = "📊"
 
+# REMOVIDO O DUPLO SET_PAGE_CONFIG. APENAS UMA CHAMADA:
 st.set_page_config(
     page_title="Portal Financeiro - Projeção de Folha",
     page_icon=icon_image,
@@ -50,6 +51,8 @@ def aplicar_estilo_global():
         div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
         .big-label { font-size: 20px !important; font-weight: 600 !important; margin-bottom: 10px; }
         .footer-info { text-align: center; color: #666; font-size: 12px; margin-top: 50px; }
+        /* Garante que a tabela HTML seja legível */
+        .stDataFrame { background-color: white; border-radius: 5px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -58,11 +61,10 @@ def renderizar_cabecalho(titulo):
     st.markdown("---")
 
 # ==============================================================================
-# 2. FUNÇÕES DE PROCESSAMENTO (LÓGICA PRESERVADA)
+# 2. FUNÇÕES DE PROCESSAMENTO
 # ==============================================================================
 
 def read_ods_streamlit(file_bytes):
-    """Lê o arquivo ODS diretamente da memória."""
     with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
         with z.open('content.xml') as f:
             root = ET.parse(f).getroot()
@@ -101,7 +103,7 @@ def to_num(val):
     except: return 0.0
 
 # ==============================================================================
-# 3. GERAÇÃO DE PDF (DESIGN LANDSCAPE)
+# 3. GERAÇÃO DE PDF
 # ==============================================================================
 
 def gerar_pdf_folha(df, decorridos, restantes, titulo_pdf):
@@ -111,17 +113,15 @@ def gerar_pdf_folha(df, decorridos, restantes, titulo_pdf):
     elements = []
     styles = getSampleStyleSheet()
 
-    # Estilos customizados
     header_style = ParagraphStyle('HBold', parent=styles['Normal'], alignment=1, fontSize=12, leading=14, fontName='Helvetica-Bold')
     col_header_style = ParagraphStyle('ColH', parent=styles['Normal'], alignment=1, fontSize=8, fontName='Helvetica-Bold')
     small_text_style = ParagraphStyle('Small', parent=styles['Normal'], fontSize=7, leading=8)
     val_style = ParagraphStyle('Value', parent=styles['Normal'], alignment=1, fontSize=9, leading=10)
 
     elements.append(Paragraph("<b>PROJEÇÃO DE FOLHA DE PAGAMENTO</b>", styles['Title']))
-    elements.append(Paragraph(f"FOLHAS DECORRIDAS: {decorridos} | FOLHAS RESTANTES: {restantes}", header_style))
+    elements.append(Paragraph(f"<b>FOLHAS DECORRIDAS: {decorridos} | FOLHAS RESTANTES: {restantes}</b>", header_style))
     elements.append(Spacer(1, 10*mm))
 
-    # Tabela com "Cod" sem ponto
     data_table = [[
         Paragraph("Órgão/Unidade", col_header_style), Paragraph("Cod", col_header_style), 
         Paragraph("Despesa", col_header_style), Paragraph("Liquidado", col_header_style), 
@@ -158,13 +158,12 @@ def gerar_pdf_folha(df, decorridos, restantes, titulo_pdf):
     return buffer.getvalue()
 
 # ==============================================================================
-# 4. APLICAÇÃO PRINCIPAL (UI)
+# 4. EXECUÇÃO DA PÁGINA
 # ==============================================================================
 
 aplicar_estilo_global()
 renderizar_cabecalho("📊 Projeção de Folha de Pagamento")
 
-# Upload e Seleção
 st.markdown('<p class="big-label">Upload do arquivo PMB.ods</p>', unsafe_allow_html=True)
 uploaded_file = st.file_uploader("", type=["ods"], label_visibility="collapsed")
 
@@ -174,10 +173,8 @@ if uploaded_file:
             file_bytes = uploaded_file.read()
             df_raw = read_ods_streamlit(file_bytes)
             
-            # --- PROCESSAMENTO LOGICO ---
             df_limpo = df_raw.drop([0, 1, 2, 3, 4, 7]).reset_index(drop=True)
             
-            # Gatilho Julho
             if df_limpo.iloc[1].astype(str).str.contains("Julho", case=False).any():
                 merged = []
                 for i in range(0, len(df_limpo), 2):
@@ -187,7 +184,6 @@ if uploaded_file:
             else:
                 df_res = df_limpo
 
-            # Meses e Nomenclatura
             header = df_res.iloc[0].astype(str).str.strip().tolist()
             meses_lista = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
             meses_encontrados = [m for m in meses_lista if any(m.lower() == h.lower() for h in header)]
@@ -196,7 +192,6 @@ if uploaded_file:
             decorridos = len(meses_encontrados)
             restantes = 13 - decorridos
 
-            # Cálculos
             df_calc = df_res.iloc[1:].copy()
             idx_total = header.index("Total") if "Total" in header else 6
             idx_saldo = header.index("Saldo") if "Saldo" in header else 18
@@ -209,30 +204,23 @@ if uploaded_file:
             df_calc['Projeção'] = df_calc['Média'] * restantes
             df_calc['Suplementar'] = col_saldo - df_calc['Projeção']
 
-            # Limpeza de Nomes
             df_calc.iloc[:, 0] = df_calc.iloc[:, 0].replace("", np.nan).ffill()
             df_calc['Órgão'] = df_calc.iloc[:, 0].apply(lambda x: re.sub(r'^\d+\s*', '', str(x)))
             df_calc['Código'] = df_calc.iloc[:, 1]
             df_calc['Despesa'] = df_calc.iloc[:, 2]
             df_calc['Saldo'] = col_saldo
 
-            # --- EXIBIÇÃO NA TELA ---
             st.success(f"Cálculo concluído: {decorridos} meses decorridos. Último mês: {ultimo_mes}")
             
-            # Tabela Estilizada para Tela (HTML)
             df_view = df_calc[['Órgão', 'Código', 'Despesa', 'Liquidado', 'Saldo', 'Média', 'Projeção', 'Suplementar']].copy()
-            
-            # Formatação para exibição na tela
             df_view_fmt = df_view.copy()
             for col in ['Liquidado', 'Saldo', 'Média', 'Projeção', 'Suplementar']:
                 df_view_fmt[col] = df_view_fmt[col].apply(format_currency_br)
             
             st.dataframe(df_view_fmt, use_container_width=True)
 
-            # --- GERAÇÃO DO PDF PARA DOWNLOAD ---
             nome_original = os.path.splitext(uploaded_file.name)[0]
             titulo_final = f"Projeção {nome_original} {ultimo_mes}"
-            
             pdf_bytes = gerar_pdf_folha(df_view, decorridos, restantes, titulo_final)
             
             st.markdown("<br>", unsafe_allow_html=True)
@@ -244,4 +232,4 @@ if uploaded_file:
                 use_container_width=True
             )
 
-st.markdown('<div class="footer-info">Portal Financeiro - Desenvolvido para Projeção Orçamentária</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer-info">Portal Financeiro - Projeção Orçamentária</div>', unsafe_allow_html=True)
