@@ -17,16 +17,14 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
 
 # ==============================================================================
-# CONFIGURAÇÃO DA PÁGINA (ÚNICA E NO TOPO)
+# CONFIGURAÇÃO DA PÁGINA
 # ==============================================================================
-# Tenta carregar o ícone na raiz do projeto
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
 try:
     icon_image = Image.open(icon_path)
 except:
     icon_image = "📊"
 
-# REMOVIDO O DUPLO SET_PAGE_CONFIG. APENAS UMA CHAMADA:
 st.set_page_config(
     page_title="Portal Financeiro - Projeção de Folha",
     page_icon=icon_image,
@@ -40,19 +38,26 @@ def aplicar_estilo_global():
     st.markdown("""
     <style>
         .block-container { padding-top: 2rem !important; }
-        div.stButton > button {
+        
+        /* Ajuste para que todos os botões Streamlit ocupem 100% da largura */
+        div.stButton > button, div.stDownloadButton > button {
             background-color: rgb(38, 39, 48) !important;
             color: white !important;
             font-weight: bold !important;
             border-radius: 5px;
-            width: 100%; height: 50px;
+            width: 100% !important; 
+            height: 50px;
             transition: 0.3s;
+            border: 1px solid rgb(60, 60, 60);
         }
-        div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
+        
+        div.stButton > button:hover, div.stDownloadButton > button:hover { 
+            background-color: rgb(20, 20, 25) !important; 
+            border-color: white; 
+        }
+
         .big-label { font-size: 20px !important; font-weight: 600 !important; margin-bottom: 10px; }
         .footer-info { text-align: center; color: #666; font-size: 12px; margin-top: 50px; }
-        /* Garante que a tabela HTML seja legível */
-        .stDataFrame { background-color: white; border-radius: 5px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -61,7 +66,7 @@ def renderizar_cabecalho(titulo):
     st.markdown("---")
 
 # ==============================================================================
-# 2. FUNÇÕES DE PROCESSAMENTO
+# 2. FUNÇÕES DE APOIO (LÓGICA PRESERVADA)
 # ==============================================================================
 
 def read_ods_streamlit(file_bytes):
@@ -101,10 +106,6 @@ def to_num(val):
         if ',' in s: s = s.replace('.', '').replace(',', '.')
         return float(s)
     except: return 0.0
-
-# ==============================================================================
-# 3. GERAÇÃO DE PDF
-# ==============================================================================
 
 def gerar_pdf_folha(df, decorridos, restantes, titulo_pdf):
     buffer = io.BytesIO()
@@ -158,17 +159,18 @@ def gerar_pdf_folha(df, decorridos, restantes, titulo_pdf):
     return buffer.getvalue()
 
 # ==============================================================================
-# 4. EXECUÇÃO DA PÁGINA
+# 3. EXECUÇÃO DA INTERFACE
 # ==============================================================================
 
 aplicar_estilo_global()
-renderizar_cabecalho("📊 Projeção de Folha de Pagamento")
+renderizar_cabecalho("Projeção de Folha de Pagamento")
 
-st.markdown('<p class="big-label">Upload do arquivo PMB.ods</p>', unsafe_allow_html=True)
+st.markdown('<p class="big-label">Selecione o arquivo no formato .ods</p>', unsafe_allow_html=True)
 uploaded_file = st.file_uploader("", type=["ods"], label_visibility="collapsed")
 
 if uploaded_file:
-    if st.button("INICIAR PROCESSAMENTO"):
+    # ADICIONADO use_container_width=True PARA IGUALAR AO BOTÃO DE DOWNLOAD
+    if st.button("INICIAR PROCESSAMENTO", use_container_width=True):
         with st.spinner("Extraindo e calculando dados..."):
             file_bytes = uploaded_file.read()
             df_raw = read_ods_streamlit(file_bytes)
@@ -231,5 +233,3 @@ if uploaded_file:
                 mime="application/pdf",
                 use_container_width=True
             )
-
-st.markdown('<div class="footer-info">Portal Financeiro - Projeção Orçamentária</div>', unsafe_allow_html=True)
