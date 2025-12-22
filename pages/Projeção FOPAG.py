@@ -23,7 +23,7 @@ icon_path = os.path.join(os.getcwd(), "Barcarena.png")
 icon_image = Image.open(icon_path)
 
 st.set_page_config(
-    page_title="Projeção de FOPAG",
+    page_title="Projeção de Folha",
     page_icon=icon_image,
     layout="wide"
 )
@@ -44,14 +44,11 @@ st.markdown("""
     }
     div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
     .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
-    
-    /* Forçar cor preta no conteúdo da tabela para evitar conflito com tema Dark */
-    .tabela-fopag td { color: black !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. FUNÇÕES DE APOIO
+# 1. FUNÇÕES DE PROCESSAMENTO
 # ==============================================================================
 
 def formatar_moeda_br(valor):
@@ -116,7 +113,6 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
     data = [headers]
     
     for _, r in df_f.iterrows():
-        # Lógica Seletiva: Apenas Suplementar Negativo fica maior (10)
         is_neg = r['Suplementar'] < 0
         sup_font_size = 10 if is_neg else 8
         sup_style = ParagraphStyle('Sup', parent=val_text_std, 
@@ -126,7 +122,7 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
         
         data.append([
             Paragraph(str(r['Órgão']), small_text),
-            Paragraph(str(r['Código']), val_text_center), # Código Centralizado
+            Paragraph(str(r['Código']), val_text_center),
             Paragraph(str(r['Despesa']), small_text),
             Paragraph(formatar_moeda_br(r['Liquidado']), val_text_std),
             Paragraph(formatar_moeda_br(r['Saldo']), val_text_std),
@@ -140,7 +136,7 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.black),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (0,0), (-1,0), 'CENTER'), # Cabeçalhos centralizados
+        ('ALIGN', (0,0), (-1,0), 'CENTER'),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
@@ -202,10 +198,10 @@ if uploaded_file:
 
             df_f = df_calc[['Órgão', 'Código', 'Despesa', 'Liquidado', 'Saldo_Val', 'Média', 'Projeção', 'Suplementar']].rename(columns={'Saldo_Val': 'Saldo'})
 
-            # --- EXIBIÇÃO EM TELA (HTML COM COR PRETA FORÇADA) ---
-            html = f"""
+            # --- EXIBIÇÃO EM TELA (HTML AJUSTADO) ---
+            html = """
             <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
-            <table class='tabela-fopag' style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; color: black !important;'>
+            <table style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; color: black !important;'>
                 <tr style='background-color: black; color: white !important;'>
                     <th style='padding: 8px; text-align: center; border: 1px solid #000; color: white !important;'>Órgão/Unidade</th>
                     <th style='padding: 8px; text-align: center; border: 1px solid #000; color: white !important;'>Cod</th>
@@ -218,7 +214,11 @@ if uploaded_file:
                 </tr>"""
             
             for _, r in df_f.iterrows():
-                s_color = "red" if r['Suplementar'] < 0 else "black"
+                # AJUSTE: Cor e Negrito condicionais para a coluna Suplementar
+                is_neg = r['Suplementar'] < 0
+                s_color = "red" if is_neg else "black"
+                s_weight = "bold" if is_neg else "normal"
+                
                 html += f"""
                 <tr style='background-color: white;'>
                     <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: left;'>{r['Órgão']}</td>
@@ -228,7 +228,7 @@ if uploaded_file:
                     <td style='text-align: right; border: 1px solid #000; color: black !important; padding-right: 5px;'>{formatar_moeda_br(r['Saldo'])}</td>
                     <td style='text-align: right; border: 1px solid #000; color: black !important; padding-right: 5px;'>{formatar_moeda_br(r['Média'])}</td>
                     <td style='text-align: right; border: 1px solid #000; color: black !important; padding-right: 5px;'>{formatar_moeda_br(r['Projeção'])}</td>
-                    <td style='text-align: right; color: {s_color} !important; border: 1px solid #000; font-weight: bold; padding-right: 5px;'>{formatar_moeda_br(r['Suplementar'])}</td>
+                    <td style='text-align: right; color: {s_color} !important; border: 1px solid #000; font-weight: {s_weight}; padding-right: 5px;'>{formatar_moeda_br(r['Suplementar'])}</td>
                 </tr>"""
             html += "</table></div>"
             
