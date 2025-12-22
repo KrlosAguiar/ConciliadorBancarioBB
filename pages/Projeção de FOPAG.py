@@ -91,7 +91,7 @@ def read_ods_streamlit(file_bytes):
     return pd.DataFrame([r + [""] * (max_len - len(r)) for r in data])
 
 # ==============================================================================
-# 2. GERAÇÃO DO PDF
+# 2. GERAÇÃO DO PDF (ESTILO CORRIGIDO)
 # ==============================================================================
 
 def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
@@ -106,13 +106,14 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
     story.append(Spacer(1, 15))
     
     small_text = ParagraphStyle('Small', parent=styles['Normal'], fontSize=7, leading=8)
-    val_text_std = ParagraphStyle('ValStd', parent=styles['Normal'], fontSize=8, alignment=2)
-    val_text_center = ParagraphStyle('ValCenter', parent=styles['Normal'], fontSize=8, alignment=1)
+    val_text_std = ParagraphStyle('ValStd', parent=styles['Normal'], fontSize=8, alignment=2) # Direita
+    val_text_center = ParagraphStyle('ValCenter', parent=styles['Normal'], fontSize=8, alignment=1) # Centro
 
     headers = ['Órgão/Unidade', 'Cod', 'Despesa', 'Liquidado', 'Saldo', 'Média', 'Projeção', 'Suplementar']
     data = [headers]
     
     for _, r in df_f.iterrows():
+        # Lógica Seletiva: Aumentar fonte APENAS na coluna Suplementar se for Negativo
         is_neg = r['Suplementar'] < 0
         sup_font = 10 if is_neg else 8
         sup_style = ParagraphStyle('Sup', parent=val_text_std, 
@@ -122,13 +123,13 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
         
         data.append([
             Paragraph(str(r['Órgão']), small_text),
-            Paragraph(str(r['Código']), val_text_center), 
+            Paragraph(str(r['Código']), val_text_center), # Código Centralizado (Fonte 8)
             Paragraph(str(r['Despesa']), small_text),
-            Paragraph(formatar_moeda_br(r['Liquidado']), val_text_std),
-            Paragraph(formatar_moeda_br(r['Saldo']), val_text_std),
-            Paragraph(formatar_moeda_br(r['Média']), val_text_std),
-            Paragraph(formatar_moeda_br(r['Projeção']), val_text_std),
-            Paragraph(formatar_moeda_br(r['Suplementar']), sup_style)
+            Paragraph(formatar_moeda_br(r['Liquidado']), val_text_std), # Fonte 8
+            Paragraph(formatar_moeda_br(r['Saldo']), val_text_std),    # Fonte 8
+            Paragraph(formatar_moeda_br(r['Média']), val_text_std),    # Fonte 8
+            Paragraph(formatar_moeda_br(r['Projeção']), val_text_std), # Fonte 8
+            Paragraph(formatar_moeda_br(r['Suplementar']), sup_style)  # Fonte 10 se negativo
         ])
     
     t = Table(data, colWidths=[55*mm, 15*mm, 55*mm, 30*mm, 30*mm, 30*mm, 30*mm, 32*mm], repeatRows=1)
@@ -136,7 +137,7 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.black),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (0,0), (-1,0), 'CENTER'),
+        ('ALIGN', (0,0), (-1,0), 'CENTER'), # Centraliza apenas os títulos do cabeçalho
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
@@ -146,8 +147,10 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
     return buffer.getvalue()
 
 # ==============================================================================
-# 3. INTERFACE
+# 3. INTERFACE STREAMLIT
 # ==============================================================================
+
+
 
 st.markdown("<h1 style='text-align: center;'>Projeção de Folha de Pagamento</h1>", unsafe_allow_html=True)
 st.markdown("---")
@@ -198,7 +201,7 @@ if uploaded_file:
 
             df_f = df_calc[['Órgão', 'Código', 'Despesa', 'Liquidado', 'Saldo_Val', 'Média', 'Projeção', 'Suplementar']].rename(columns={'Saldo_Val': 'Saldo'})
 
-            # --- EXIBIÇÃO EM TELA (HTML TOTALMENTE TRAVADO EM PRETO) ---
+            # --- EXIBIÇÃO EM TELA (FIXADO COR PRETA E DESTAQUES) ---
             html = f"""
             <div style='background-color: white !important; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
             <table style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; background-color: white !important;'>
@@ -214,22 +217,22 @@ if uploaded_file:
                 </tr>"""
             
             for _, r in df_f.iterrows():
-                # AJUSTE FINAL DE COR: Suplementar fica Vermelho/Negrito se Negativo. Todo o resto fica Preto.
-                val_suplementar = r['Suplementar']
-                is_negativo = val_suplementar < 0
-                cor_suple = "red" if is_negativo else "black"
-                peso_suple = "bold" if is_negativo else "normal"
+                # AJUSTE PARA TELA: Suplementar fica Vermelho/Negrito se Negativo. Todo o resto fica Preto.
+                val_suple = r['Suplementar']
+                is_negativo = val_suple < 0
+                cor_texto_suple = "red" if is_negativo else "black"
+                peso_texto_suple = "bold" if is_negativo else "normal"
                 
                 html += f"""
                 <tr style='background-color: white !important;'>
                     <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: left;'>{r['Órgão']}</td>
                     <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: center;'>{r['Código']}</td>
                     <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: left;'>{r['Despesa']}</td>
-                    <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: right;'>{formatar_moeda_br(r['Liquidado'])}</td>
-                    <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: right;'>{formatar_moeda_br(r['Saldo'])}</td>
-                    <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: right;'>{formatar_moeda_br(r['Média'])}</td>
-                    <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: right;'>{formatar_moeda_br(r['Projeção'])}</td>
-                    <td style='padding: 5px; border: 1px solid #000; color: {cor_suple} !important; text-align: right; font-weight: {peso_suple} !important;'>{formatar_moeda_br(val_suplementar)}</td>
+                    <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: right; padding-right: 5px;'>{formatar_moeda_br(r['Liquidado'])}</td>
+                    <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: right; padding-right: 5px;'>{formatar_moeda_br(r['Saldo'])}</td>
+                    <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: right; padding-right: 5px;'>{formatar_moeda_br(r['Média'])}</td>
+                    <td style='padding: 5px; border: 1px solid #000; color: black !important; text-align: right; padding-right: 5px;'>{formatar_moeda_br(r['Projeção'])}</td>
+                    <td style='padding: 5px; border: 1px solid #000; color: {cor_texto_suple} !important; text-align: right; font-weight: {peso_texto_suple} !important; padding-right: 5px;'>{formatar_moeda_br(val_suple)}</td>
                 </tr>"""
             html += "</table></div>"
             
