@@ -17,25 +17,21 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm, inch
 
 # ==============================================================================
-# CONFIGURAÇÃO DA PÁGINA (ESTILO CONCILIADOR)
+# CONFIGURAÇÃO DA PÁGINA
 # ==============================================================================
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
 icon_image = Image.open(icon_path)
 
 st.set_page_config(
-    page_title="Projeção de FOPAG",
+    page_title="Projeção de Folha",
     page_icon=icon_image,
     layout="wide"
 )
 
-# --- CSS PERSONALIZADO (IDÊNTICO AO CONCILIADOR) ---
+# --- CSS PERSONALIZADO ---
 st.markdown("""
 <style>
-    .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 2rem !important;
-    }
-
+    .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
     div.stButton > button, div.stDownloadButton > button {
         background-color: rgb(38, 39, 48) !important;
         color: white !important;
@@ -43,25 +39,16 @@ st.markdown("""
         border: 1px solid rgb(60, 60, 60);
         border-radius: 5px;
         font-size: 16px;
-        transition: 0.3s;
         height: 50px;
         width: 100%;
     }
-    div.stButton > button:hover, div.stDownloadButton > button:hover {
-        background-color: rgb(20, 20, 25) !important;
-        border-color: white;
-    }
-
-    .big-label {
-        font-size: 24px !important;
-        font-weight: 600 !important;
-        margin-bottom: 10px;
-    }
+    div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
+    .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. FUNÇÕES DE APOIO E PROCESSAMENTO
+# 1. FUNÇÕES DE PROCESSAMENTO
 # ==============================================================================
 
 def formatar_moeda_br(valor):
@@ -104,33 +91,32 @@ def read_ods_streamlit(file_bytes):
     return pd.DataFrame([r + [""] * (max_len - len(r)) for r in data])
 
 # ==============================================================================
-# 2. GERAÇÃO DO PDF (ESTILO CONCILIADOR)
+# 2. GERAÇÃO DO PDF
 # ==============================================================================
 
 def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
     buffer = io.BytesIO()
-    # Landscape para caber as colunas da folha
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=10*mm, leftMargin=10*mm, topMargin=15*mm, bottomMargin=15*mm, title=titulo_completo)
     
     story = []
     styles = getSampleStyleSheet()
-    
-    # Título do Relatório
     story.append(Paragraph("Projeção de Folha de Pagamento", styles["Title"]))
     params = f"<b>Parâmetros:</b> {decorridos} Meses Decorridos | {restantes} Meses Restantes"
     story.append(Paragraph(params, ParagraphStyle(name='C', alignment=1, fontSize=10)))
     story.append(Spacer(1, 15))
     
-    # Estilos de texto interno
     small_text = ParagraphStyle('Small', parent=styles['Normal'], fontSize=7, leading=8)
-    val_text = ParagraphStyle('Val', parent=styles['Normal'], fontSize=8, alignment=2) # Alinhado à Direita
+    val_text = ParagraphStyle('Val', parent=styles['Normal'], fontSize=8, alignment=2)
 
     headers = ['Órgão/Unidade', 'Cod', 'Despesa', 'Liquidado', 'Saldo', 'Média', 'Projeção', 'Suplementar']
     data = [headers]
     
     for _, r in df_f.iterrows():
-        color = "red" if r['Suplementar'] < 0 else "black"
-        sup_style = ParagraphStyle('Sup', parent=val_text, textColor=color, fontName='Helvetica-Bold' if r['Suplementar'] < 0 else 'Helvetica')
+        # Ajuste de tamanho se for negativo na coluna Suplementar
+        is_neg = r['Suplementar'] < 0
+        f_size = 10 if is_neg else 8
+        sup_style = ParagraphStyle('Sup', parent=val_text, textColor=colors.red if is_neg else colors.black, 
+                                   fontSize=f_size, fontName='Helvetica-Bold' if is_neg else 'Helvetica')
         
         data.append([
             Paragraph(str(r['Órgão']), small_text),
@@ -143,17 +129,15 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
             Paragraph(formatar_moeda_br(r['Suplementar']), sup_style)
         ])
     
-    # Ajuste de larguras (Total ~277mm em paisagem)
     t = Table(data, colWidths=[55*mm, 15*mm, 55*mm, 30*mm, 30*mm, 30*mm, 30*mm, 32*mm], repeatRows=1)
-    
     t.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.black),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (0,0), (2,-1), 'LEFT'),
-        ('ALIGN', (3,0), (-1,-1), 'RIGHT'),
+        ('ALIGN', (0,0), (-1,0), 'CENTER'), # Centraliza títulos
+        ('ALIGN', (0,1), (2,-1), 'LEFT'),
+        ('ALIGN', (3,1), (-1,-1), 'RIGHT'),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,-1), 8),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
     
@@ -162,7 +146,7 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
     return buffer.getvalue()
 
 # ==============================================================================
-# 3. INTERFACE STREAMLIT
+# 3. INTERFACE
 # ==============================================================================
 
 
@@ -179,7 +163,6 @@ if uploaded_file:
             file_bytes = uploaded_file.read()
             df_raw = read_ods_streamlit(file_bytes)
             
-            # --- LÓGICA DE EXTRAÇÃO PRESERVADA ---
             df_limpo = df_raw.drop([0, 1, 2, 3, 4, 7]).reset_index(drop=True)
             if df_limpo.iloc[1].astype(str).str.contains("Julho", case=False).any():
                 merged = []
@@ -218,39 +201,38 @@ if uploaded_file:
 
             df_f = df_calc[['Órgão', 'Código', 'Despesa', 'Liquidado', 'Saldo_Val', 'Média', 'Projeção', 'Suplementar']].rename(columns={'Saldo_Val': 'Saldo'})
 
-            # --- EXIBIÇÃO EM TELA (HTML STYLE CONCILIADOR) ---
+            # --- EXIBIÇÃO EM TELA (HTML STYLE CORRIGIDO) ---
             html = """
             <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
-            <table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; font-family: sans-serif; font-size: 13px;'>
+            <table style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px;'>
                 <tr style='background-color: black; color: white !important;'>
-                    <th style='padding: 8px; text-align: left; border: 1px solid #000;'>Órgão/Unidade</th>
+                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Órgão/Unidade</th>
                     <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Cod</th>
-                    <th style='padding: 8px; text-align: left; border: 1px solid #000;'>Despesa</th>
-                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Liquidado</th>
-                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Saldo</th>
-                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Média</th>
-                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Projeção</th>
-                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Suplementar</th>
+                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Despesa</th>
+                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Liquidado</th>
+                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Saldo</th>
+                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Média</th>
+                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Projeção</th>
+                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Suplementar</th>
                 </tr>"""
             
             for _, r in df_f.iterrows():
                 s_color = "red" if r['Suplementar'] < 0 else "black"
                 html += f"""
                 <tr style='background-color: white;'>
-                    <td style='padding: 5px; border: 1px solid #000;'>{r['Órgão']}</td>
-                    <td style='text-align: center; border: 1px solid #000;'>{r['Código']}</td>
-                    <td style='padding: 5px; border: 1px solid #000;'>{r['Despesa']}</td>
-                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Liquidado'])}</td>
-                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Saldo'])}</td>
-                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Média'])}</td>
-                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Projeção'])}</td>
-                    <td style='text-align: right; color: {s_color}; border: 1px solid #000; font-weight: bold;'>{formatar_moeda_br(r['Suplementar'])}</td>
+                    <td style='padding: 5px; border: 1px solid #000; color: black !important;'>{r['Órgão']}</td>
+                    <td style='text-align: center; border: 1px solid #000; color: black !important;'>{r['Código']}</td>
+                    <td style='padding: 5px; border: 1px solid #000; color: black !important;'>{r['Despesa']}</td>
+                    <td style='text-align: right; border: 1px solid #000; color: black !important;'>{formatar_moeda_br(r['Liquidado'])}</td>
+                    <td style='text-align: right; border: 1px solid #000; color: black !important;'>{formatar_moeda_br(r['Saldo'])}</td>
+                    <td style='text-align: right; border: 1px solid #000; color: black !important;'>{formatar_moeda_br(r['Média'])}</td>
+                    <td style='text-align: right; border: 1px solid #000; color: black !important;'>{formatar_moeda_br(r['Projeção'])}</td>
+                    <td style='text-align: right; color: {s_color} !important; border: 1px solid #000; font-weight: bold;'>{formatar_moeda_br(r['Suplementar'])}</td>
                 </tr>"""
             html += "</table></div>"
             
             st.markdown(html, unsafe_allow_html=True)
 
-            # --- BOTÃO DE DOWNLOAD PDF ---
             nome_limpo = os.path.splitext(uploaded_file.name)[0]
             titulo_final = f"Projeção {nome_limpo} {ultimo_mes}"
             pdf_data = gerar_pdf_final(df_f, decorridos, restantes, titulo_final)
