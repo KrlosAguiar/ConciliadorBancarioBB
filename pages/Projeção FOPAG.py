@@ -23,7 +23,7 @@ icon_path = os.path.join(os.getcwd(), "Barcarena.png")
 icon_image = Image.open(icon_path)
 
 st.set_page_config(
-    page_title="Projeção de Folha",
+    page_title="Projeção de FOPAG",
     page_icon=icon_image,
     layout="wide"
 )
@@ -44,11 +44,14 @@ st.markdown("""
     }
     div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
     .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
+    
+    /* Regra global para garantir que tabelas HTML fiquem pretas */
+    .tabela-fopag td { color: black !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. FUNÇÕES DE PROCESSAMENTO
+# 1. FUNÇÕES DE APOIO
 # ==============================================================================
 
 def formatar_moeda_br(valor):
@@ -113,16 +116,17 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
     data = [headers]
     
     for _, r in df_f.iterrows():
+        # Destaque condicional APENAS para a coluna Suplementar
         is_neg = r['Suplementar'] < 0
-        sup_font_size = 10 if is_neg else 8
+        sup_font = 10 if is_neg else 8
         sup_style = ParagraphStyle('Sup', parent=val_text_std, 
                                    textColor=colors.red if is_neg else colors.black, 
-                                   fontSize=sup_font_size, 
+                                   fontSize=sup_font, 
                                    fontName='Helvetica-Bold' if is_neg else 'Helvetica')
         
         data.append([
             Paragraph(str(r['Órgão']), small_text),
-            Paragraph(str(r['Código']), val_text_center),
+            Paragraph(str(r['Código']), val_text_center), # Código Centralizado
             Paragraph(str(r['Despesa']), small_text),
             Paragraph(formatar_moeda_br(r['Liquidado']), val_text_std),
             Paragraph(formatar_moeda_br(r['Saldo']), val_text_std),
@@ -136,7 +140,7 @@ def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.black),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (0,0), (-1,0), 'CENTER'),
+        ('ALIGN', (0,0), (-1,0), 'CENTER'), # Títulos centralizados
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
@@ -198,10 +202,10 @@ if uploaded_file:
 
             df_f = df_calc[['Órgão', 'Código', 'Despesa', 'Liquidado', 'Saldo_Val', 'Média', 'Projeção', 'Suplementar']].rename(columns={'Saldo_Val': 'Saldo'})
 
-            # --- EXIBIÇÃO EM TELA (HTML AJUSTADO) ---
-            html = """
+            # --- EXIBIÇÃO EM TELA (CSS INLINE PARA PRETO) ---
+            html = f"""
             <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
-            <table style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; color: black !important;'>
+            <table class='tabela-fopag' style='width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; color: black !important; background-color: white;'>
                 <tr style='background-color: black; color: white !important;'>
                     <th style='padding: 8px; text-align: center; border: 1px solid #000; color: white !important;'>Órgão/Unidade</th>
                     <th style='padding: 8px; text-align: center; border: 1px solid #000; color: white !important;'>Cod</th>
@@ -214,7 +218,7 @@ if uploaded_file:
                 </tr>"""
             
             for _, r in df_f.iterrows():
-                # AJUSTE: Cor e Negrito condicionais para a coluna Suplementar
+                # Destaque Visual APENAS na coluna Suplementar (Vermelho/Negrito se Negativo)
                 is_neg = r['Suplementar'] < 0
                 s_color = "red" if is_neg else "black"
                 s_weight = "bold" if is_neg else "normal"
