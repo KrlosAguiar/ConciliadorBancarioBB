@@ -29,7 +29,7 @@ st.markdown(
         <img src="data:image/png;base64,{img_base64}" 
              style="width: 40px; border-radius: 0px;">
         <span style="margin-left: 15px;">
-            <h1 style="margin: 0;">Departamento de Contabilidade - Barcarena/PA</h1>
+            <h1 style="margin: 0;">Departamento de Contabilidade</h1>
         </span>
     </div>
     """, 
@@ -52,7 +52,7 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
 * **Conciliador Bancário:** Cruza os dados do Extrato Bancário com o Razão da Contabilidade.
 
-* **Tarifas Bancárias:** Extrai os lançamentos das tarifas do Extrato Bancário e emite um relatório pronto para empenho, liquidação e pagamento.
+* **Tarifas Bancárias:** Extrai os lançamentos das tarifas do Extrato Bancário para empenho, liquidação e pagamento.
 
 * **(Em breve) Novos Módulos:** Outras ferramentas serão adicionadas aqui.
 
@@ -62,4 +62,5 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 ---
 **Status do Sistema:** ✅ Online
 """)
+
 
