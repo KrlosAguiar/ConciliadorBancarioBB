@@ -14,59 +14,71 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch, mm
+from reportlab.lib.units import mm, inch
 
 # ==============================================================================
-# CONFIGURAÇÃO DA PÁGINA
+# CONFIGURAÇÃO DA PÁGINA (ESTILO CONCILIADOR)
 # ==============================================================================
-# Define o caminho para a imagem que está na raiz do projeto
-# Isso garante que funcione tanto localmente quanto no servidor
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
 icon_image = Image.open(icon_path)
 
 st.set_page_config(
-    page_title="Projeção de Folha",
+    page_title="Projeção de FOPAG",
     page_icon=icon_image,
     layout="wide"
 )
 
-# ==============================================================================
-# 1. DESIGN E ESTILIZAÇÃO (CSS)
-# ==============================================================================
-def aplicar_estilo_global():
-    st.markdown("""
-    <style>
-        .block-container { padding-top: 2rem !important; }
-        
-        /* Ajuste para que todos os botões Streamlit ocupem 100% da largura */
-        div.stButton > button, div.stDownloadButton > button {
-            background-color: rgb(38, 39, 48) !important;
-            color: white !important;
-            font-weight: bold !important;
-            border-radius: 5px;
-            width: 100% !important; 
-            height: 50px;
-            transition: 0.3s;
-            border: 1px solid rgb(60, 60, 60);
-        }
-        
-        div.stButton > button:hover, div.stDownloadButton > button:hover { 
-            background-color: rgb(20, 20, 25) !important; 
-            border-color: white; 
-        }
+# --- CSS PERSONALIZADO (IDÊNTICO AO CONCILIADOR) ---
+st.markdown("""
+<style>
+    .block-container {
+        padding-top: 2rem !important;
+        padding-bottom: 2rem !important;
+    }
 
-        .big-label { font-size: 20px !important; font-weight: 600 !important; margin-bottom: 10px; }
-        .footer-info { text-align: center; color: #666; font-size: 12px; margin-top: 50px; }
-    </style>
-    """, unsafe_allow_html=True)
+    div.stButton > button, div.stDownloadButton > button {
+        background-color: rgb(38, 39, 48) !important;
+        color: white !important;
+        font-weight: bold !important;
+        border: 1px solid rgb(60, 60, 60);
+        border-radius: 5px;
+        font-size: 16px;
+        transition: 0.3s;
+        height: 50px;
+        width: 100%;
+    }
+    div.stButton > button:hover, div.stDownloadButton > button:hover {
+        background-color: rgb(20, 20, 25) !important;
+        border-color: white;
+    }
 
-def renderizar_cabecalho(titulo):
-    st.markdown(f"<h1 style='text-align: center;'>{titulo}</h1>", unsafe_allow_html=True)
-    st.markdown("---")
+    .big-label {
+        font-size: 24px !important;
+        font-weight: 600 !important;
+        margin-bottom: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. FUNÇÕES DE APOIO (LÓGICA PRESERVADA)
+# 1. FUNÇÕES DE APOIO E PROCESSAMENTO
 # ==============================================================================
+
+def formatar_moeda_br(valor):
+    if pd.isna(valor) or valor == "-": return "-"
+    try:
+        v = float(valor)
+        return f"{v:,.2f}".replace(',', '_').replace('.', ',').replace('_', '.')
+    except:
+        return str(valor)
+
+def to_num(val):
+    if val is None or str(val).strip() in ["", "-", "None"]: return 0.0
+    s = str(val).strip()
+    try:
+        if ',' in s: s = s.replace('.', '').replace(',', '.')
+        return float(s)
+    except: return 0.0
 
 def read_ods_streamlit(file_bytes):
     with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
@@ -91,91 +103,84 @@ def read_ods_streamlit(file_bytes):
     max_len = max(len(r) for r in data) if data else 0
     return pd.DataFrame([r + [""] * (max_len - len(r)) for r in data])
 
-def format_currency_br(val):
-    try:
-        v = float(val)
-        return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except:
-        return "R$ 0,00"
+# ==============================================================================
+# 2. GERAÇÃO DO PDF (ESTILO CONCILIADOR)
+# ==============================================================================
 
-def to_num(val):
-    if val is None or str(val).strip() in ["", "-", "None"]: return 0.0
-    s = str(val).strip()
-    try:
-        if ',' in s: s = s.replace('.', '').replace(',', '.')
-        return float(s)
-    except: return 0.0
-
-def gerar_pdf_folha(df, decorridos, restantes, titulo_pdf):
+def gerar_pdf_final(df_f, decorridos, restantes, titulo_completo):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=15, leftMargin=15, topMargin=20, bottomMargin=20)
-    doc.title = titulo_pdf
-    elements = []
+    # Landscape para caber as colunas da folha
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=10*mm, leftMargin=10*mm, topMargin=15*mm, bottomMargin=15*mm, title=titulo_completo)
+    
+    story = []
     styles = getSampleStyleSheet()
+    
+    # Título do Relatório
+    story.append(Paragraph("Projeção de Folha de Pagamento", styles["Title"]))
+    params = f"<b>Parâmetros:</b> {decorridos} Meses Decorridos | {restantes} Meses Restantes"
+    story.append(Paragraph(params, ParagraphStyle(name='C', alignment=1, fontSize=10)))
+    story.append(Spacer(1, 15))
+    
+    # Estilos de texto interno
+    small_text = ParagraphStyle('Small', parent=styles['Normal'], fontSize=7, leading=8)
+    val_text = ParagraphStyle('Val', parent=styles['Normal'], fontSize=8, alignment=2) # Alinhado à Direita
 
-    header_style = ParagraphStyle('HBold', parent=styles['Normal'], alignment=1, fontSize=12, leading=14, fontName='Helvetica-Bold')
-    col_header_style = ParagraphStyle('ColH', parent=styles['Normal'], alignment=1, fontSize=8, fontName='Helvetica-Bold')
-    small_text_style = ParagraphStyle('Small', parent=styles['Normal'], fontSize=7, leading=8)
-    val_style = ParagraphStyle('Value', parent=styles['Normal'], alignment=1, fontSize=9, leading=10)
-
-    elements.append(Paragraph("<b>PROJEÇÃO DE FOLHA DE PAGAMENTO</b>", styles['Title']))
-    elements.append(Paragraph(f"<b>FOLHAS DECORRIDAS: {decorridos} | FOLHAS RESTANTES: {restantes}</b>", header_style))
-    elements.append(Spacer(1, 10*mm))
-
-    data_table = [[
-        Paragraph("Órgão/Unidade", col_header_style), Paragraph("Cod", col_header_style), 
-        Paragraph("Despesa", col_header_style), Paragraph("Liquidado", col_header_style), 
-        Paragraph("Saldo", col_header_style), Paragraph("Média", col_header_style), 
-        Paragraph("Projeção", col_header_style), Paragraph("Suplementar", col_header_style)
-    ]]
-
-    for _, row in df.iterrows():
-        suple_val = row['Suplementar']
-        color = "red" if suple_val < 0 else "black"
-        suple_style = ParagraphStyle('Suple', parent=val_style, textColor=color, fontName='Helvetica-Bold' if suple_val < 0 else 'Helvetica')
-
-        data_table.append([
-            Paragraph(str(row['Órgão']), small_text_style), 
-            Paragraph(str(row['Código']), val_style), 
-            Paragraph(str(row['Despesa']), small_text_style),
-            Paragraph(format_currency_br(row['Liquidado']), val_style), 
-            Paragraph(format_currency_br(row['Saldo']), val_style),
-            Paragraph(format_currency_br(row['Média']), val_style), 
-            Paragraph(format_currency_br(row['Projeção']), val_style), 
-            Paragraph(format_currency_br(row['Suplementar']), suple_style)
+    headers = ['Órgão/Unidade', 'Cod', 'Despesa', 'Liquidado', 'Saldo', 'Média', 'Projeção', 'Suplementar']
+    data = [headers]
+    
+    for _, r in df_f.iterrows():
+        color = "red" if r['Suplementar'] < 0 else "black"
+        sup_style = ParagraphStyle('Sup', parent=val_text, textColor=color, fontName='Helvetica-Bold' if r['Suplementar'] < 0 else 'Helvetica')
+        
+        data.append([
+            Paragraph(str(r['Órgão']), small_text),
+            str(r['Código']),
+            Paragraph(str(r['Despesa']), small_text),
+            formatar_moeda_br(r['Liquidado']),
+            formatar_moeda_br(r['Saldo']),
+            formatar_moeda_br(r['Média']),
+            formatar_moeda_br(r['Projeção']),
+            Paragraph(formatar_moeda_br(r['Suplementar']), sup_style)
         ])
-
-    widths = [2.2*inch, 0.4*inch, 2.2*inch, 1.22*inch, 1.22*inch, 1.22*inch, 1.22*inch, 1.22*inch]
-    t = Table(data_table, repeatRows=1, colWidths=widths)
+    
+    # Ajuste de larguras (Total ~277mm em paisagem)
+    t = Table(data, colWidths=[55*mm, 15*mm, 55*mm, 30*mm, 30*mm, 30*mm, 30*mm, 32*mm], repeatRows=1)
+    
     t.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f2f2f2")),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+        ('BACKGROUND', (0,0), (-1,0), colors.black),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('ALIGN', (0,0), (2,-1), 'LEFT'),
+        ('ALIGN', (3,0), (-1,-1), 'RIGHT'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,-1), 8),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
-
-    elements.append(t)
-    doc.build(elements)
+    
+    story.append(t)
+    doc.build(story)
     return buffer.getvalue()
 
 # ==============================================================================
-# 3. EXECUÇÃO DA INTERFACE
+# 3. INTERFACE STREAMLIT
 # ==============================================================================
 
-aplicar_estilo_global()
-renderizar_cabecalho("Projeção de Folha de Pagamento")
+
+
+st.markdown("<h1 style='text-align: center;'>Projeção de Folha de Pagamento</h1>", unsafe_allow_html=True)
+st.markdown("---")
 
 st.markdown('<p class="big-label">Selecione o arquivo no formato .ods</p>', unsafe_allow_html=True)
 uploaded_file = st.file_uploader("", type=["ods"], label_visibility="collapsed")
 
 if uploaded_file:
-    # ADICIONADO use_container_width=True PARA IGUALAR AO BOTÃO DE DOWNLOAD
     if st.button("INICIAR PROCESSAMENTO", use_container_width=True):
-        with st.spinner("Extraindo e calculando dados..."):
+        with st.spinner("Processando..."):
             file_bytes = uploaded_file.read()
             df_raw = read_ods_streamlit(file_bytes)
             
+            # --- LÓGICA DE EXTRAÇÃO PRESERVADA ---
             df_limpo = df_raw.drop([0, 1, 2, 3, 4, 7]).reset_index(drop=True)
-            
             if df_limpo.iloc[1].astype(str).str.contains("Julho", case=False).any():
                 merged = []
                 for i in range(0, len(df_limpo), 2):
@@ -185,17 +190,17 @@ if uploaded_file:
             else:
                 df_res = df_limpo
 
-            header = df_res.iloc[0].astype(str).str.strip().tolist()
+            header_row = df_res.iloc[0].astype(str).str.strip().tolist()
             meses_lista = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
-            meses_encontrados = [m for m in meses_lista if any(m.lower() == h.lower() for h in header)]
+            meses_encontrados = [m for m in meses_lista if any(m.lower() == h.lower() for h in header_row)]
             ultimo_mes = meses_encontrados[-1] if meses_encontrados else "Processamento"
-            
             decorridos = len(meses_encontrados)
             restantes = 13 - decorridos
 
+            # Cálculos
             df_calc = df_res.iloc[1:].copy()
-            idx_total = header.index("Total") if "Total" in header else 6
-            idx_saldo = header.index("Saldo") if "Saldo" in header else 18
+            idx_total = header_row.index("Total") if "Total" in header_row else 6
+            idx_saldo = header_row.index("Saldo") if "Saldo" in header_row else 18
             
             col_total = df_calc.iloc[:, idx_total].apply(to_num)
             col_saldo = df_calc.iloc[:, idx_saldo].apply(to_num)
@@ -209,25 +214,51 @@ if uploaded_file:
             df_calc['Órgão'] = df_calc.iloc[:, 0].apply(lambda x: re.sub(r'^\d+\s*', '', str(x)))
             df_calc['Código'] = df_calc.iloc[:, 1]
             df_calc['Despesa'] = df_calc.iloc[:, 2]
-            df_calc['Saldo'] = col_saldo
+            df_calc['Saldo_Val'] = col_saldo
 
-            st.success(f"Cálculo concluído: {decorridos} meses decorridos. Último mês: {ultimo_mes}")
-            
-            df_view = df_calc[['Órgão', 'Código', 'Despesa', 'Liquidado', 'Saldo', 'Média', 'Projeção', 'Suplementar']].copy()
-            df_view_fmt = df_view.copy()
-            for col in ['Liquidado', 'Saldo', 'Média', 'Projeção', 'Suplementar']:
-                df_view_fmt[col] = df_view_fmt[col].apply(format_currency_br)
-            
-            st.dataframe(df_view_fmt, use_container_width=True)
+            df_f = df_calc[['Órgão', 'Código', 'Despesa', 'Liquidado', 'Saldo_Val', 'Média', 'Projeção', 'Suplementar']].rename(columns={'Saldo_Val': 'Saldo'})
 
-            nome_original = os.path.splitext(uploaded_file.name)[0]
-            titulo_final = f"Projeção {nome_original} {ultimo_mes}"
-            pdf_bytes = gerar_pdf_folha(df_view, decorridos, restantes, titulo_final)
+            # --- EXIBIÇÃO EM TELA (HTML STYLE CONCILIADOR) ---
+            html = """
+            <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
+            <table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; font-family: sans-serif; font-size: 13px;'>
+                <tr style='background-color: black; color: white !important;'>
+                    <th style='padding: 8px; text-align: left; border: 1px solid #000;'>Órgão/Unidade</th>
+                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Cod</th>
+                    <th style='padding: 8px; text-align: left; border: 1px solid #000;'>Despesa</th>
+                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Liquidado</th>
+                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Saldo</th>
+                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Média</th>
+                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Projeção</th>
+                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Suplementar</th>
+                </tr>"""
             
-            st.markdown("<br>", unsafe_allow_html=True)
+            for _, r in df_f.iterrows():
+                s_color = "red" if r['Suplementar'] < 0 else "black"
+                html += f"""
+                <tr style='background-color: white;'>
+                    <td style='padding: 5px; border: 1px solid #000;'>{r['Órgão']}</td>
+                    <td style='text-align: center; border: 1px solid #000;'>{r['Código']}</td>
+                    <td style='padding: 5px; border: 1px solid #000;'>{r['Despesa']}</td>
+                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Liquidado'])}</td>
+                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Saldo'])}</td>
+                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Média'])}</td>
+                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(r['Projeção'])}</td>
+                    <td style='text-align: right; color: {s_color}; border: 1px solid #000; font-weight: bold;'>{formatar_moeda_br(r['Suplementar'])}</td>
+                </tr>"""
+            html += "</table></div>"
+            
+            st.markdown(html, unsafe_allow_html=True)
+
+            # --- BOTÃO DE DOWNLOAD PDF ---
+            nome_limpo = os.path.splitext(uploaded_file.name)[0]
+            titulo_final = f"Projeção {nome_limpo} {ultimo_mes}"
+            pdf_data = gerar_pdf_final(df_f, decorridos, restantes, titulo_final)
+            
+            st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
             st.download_button(
-                label="📥 BAIXAR RELATÓRIO PDF",
-                data=pdf_bytes,
+                label="BAIXAR RELATÓRIO PDF",
+                data=pdf_data,
                 file_name=f"{titulo_final}.pdf",
                 mime="application/pdf",
                 use_container_width=True
