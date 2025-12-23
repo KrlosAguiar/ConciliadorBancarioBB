@@ -11,52 +11,31 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import mm
 from PIL import Image
-import os
+import fitz  # Importante: Requer pymupdf no requirements.txt
 
-# Define o caminho para a imagem que está na raiz do projeto
-# Isso garante que funcione tanto localmente quanto no servidor
+# --- CONFIGURAÇÃO DA PÁGINA (Unificada) ---
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
-icon_image = Image.open(icon_path)
+try:
+    icon_image = Image.open(icon_path)
+    st.set_page_config(page_title="Portal Financeiro", page_icon=icon_image, layout="wide")
+except:
+    st.set_page_config(page_title="Portal Financeiro", layout="wide")
 
-st.set_page_config(
-    page_title="Portal Financeiro",
-    page_icon=icon_image, # Aqui aplicamos o seu ícone customizado
-    layout="wide"
-)
-
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Conciliador Bancário", layout="wide")
-
-# --- CSS PERSONALIZADO (ESTILOS VISUAIS) ---
+# --- CSS PERSONALIZADO ---
 st.markdown("""
 <style>
-    /* 1. Reduzir espaçamento do topo da página */
-    .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 2rem !important;
-    }
-
-    /* 2. Estilização dos Botões (Cor RGB 38, 39, 48) */
+    .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
     div.stButton > button {
         background-color: rgb(38, 39, 48) !important;
         color: white !important;
         font-weight: bold !important;
-        border: 1px solid rgb(60, 60, 60); /* Borda sutil para contraste */
+        border: 1px solid rgb(60, 60, 60);
         border-radius: 5px;
         font-size: 16px;
         transition: 0.3s;
     }
-    div.stButton > button:hover {
-        background-color: rgb(20, 20, 25) !important; /* Um pouco mais escuro no hover */
-        border-color: white;
-    }
-
-    /* 3. Estilo para as Labels Grandes dos Uploaders */
-    .big-label {
-        font-size: 24px !important;
-        font-weight: 600 !important;
-        margin-bottom: 10px;
-    }
+    div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
+    .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -69,9 +48,7 @@ def limpar_documento_pdf(doc_str):
     if not doc_str: return ""
     apenas_digitos = re.sub(r'\D', '', str(doc_str))
     if not apenas_digitos: return ""
-    if len(apenas_digitos) > 6:
-        return apenas_digitos[-6:]
-    return apenas_digitos
+    return apenas_digitos[-6:] if len(apenas_digitos) > 6 else apenas_digitos
 
 def formatar_moeda_br(valor):
     if pd.isna(valor) or valor == "-": return "-"
@@ -80,63 +57,78 @@ def formatar_moeda_br(valor):
 def parse_br_date(date_val):
     if pd.isna(date_val): return pd.NaT
     try:
-        if isinstance(date_val, str):
-            date_val = date_val.split()[0]
+        if isinstance(date_val, str): date_val = date_val.split()[0]
         return pd.to_datetime(date_val, dayfirst=True, errors='coerce')
-    except:
-        return pd.to_datetime(date_val, errors='coerce')
+    except: return pd.to_datetime(date_val, errors='coerce')
 
 def processar_pdf(file_bytes):
     rows_debitos = []
-    rows_devolucoes = [] 
+    rows_devolucoes = []
+    coords_map = [] # Nova lista para rastrear coordenadas para marcação
+    
     try:
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            for page in pdf.pages:
+            for page_idx, page in enumerate(pdf.pages):
                 words = page.extract_words(x_tolerance=2, y_tolerance=2)
                 linhas_dict = {}
                 for w in words:
                     top = round(w['top'], 1)
                     linhas_dict.setdefault(top, []).append(w)
+                
                 for top in sorted(linhas_dict.keys()):
                     linha_words = linhas_dict[top]
                     texto_linha = " ".join([w['text'] for w in linha_words])
                     match_data = re.search(r'^(\d{2}/\d{2}(?:/\d{4})?)', texto_linha)
                     if not match_data: continue 
+                    
                     data_str = match_data.group(1)
                     if len(data_str) == 5: data_str = f"{data_str}/{CURRENT_YEAR}"
                     match_valor = re.search(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s?([DC])', texto_linha)
+                    
                     if match_valor:
                         valor_bruto = match_valor.group(1)
                         tipo = match_valor.group(2)
                         valor_float = float(valor_bruto.replace('.', '').replace(',', '.'))
+                        
+                        # Captura coordenada do valor para marcação futura
+                        coord_box = None
+                        for w in linha_words:
+                            if valor_bruto in w['text']:
+                                coord_box = (page_idx, w['x0'], w['top'], w['x1'], w['bottom'])
+                                break
+
                         texto_sem_data = texto_linha.replace(match_data.group(0), "", 1).strip()
                         texto_sem_valor = texto_sem_data.replace(match_valor.group(0), "").strip()
+                        
+                        entry = {
+                            "Data": data_str, "Histórico": texto_sem_valor.strip(),
+                            "Documento": "", "Valor_Extrato": valor_float, "coords": coord_box
+                        }
+
                         if tipo == 'D':
                             tokens = texto_sem_valor.split()
-                            doc_cand = ""
                             if tokens:
                                 for t in reversed(tokens):
                                     limpo = t.replace('.', '').replace('-', '')
                                     if limpo.isdigit() and len(limpo) >= 4:
-                                        doc_cand = t
+                                        entry["Documento"] = limpar_documento_pdf(t)
                                         break
-                            rows_debitos.append({
-                                "Data": data_str, "Histórico": texto_sem_valor.strip(),
-                                "Documento": limpar_documento_pdf(doc_cand), "Valor_Extrato": valor_float
-                            })
+                            rows_debitos.append(entry)
                         elif tipo == 'C':
                             hist_upper = texto_sem_valor.upper()
                             if any(x in hist_upper for x in ["TED DEVOLVIDA", "DEVOLUCAO DE TED", "TED DEVOL"]):
-                                rows_devolucoes.append({"Data": data_str, "Valor_Extrato": valor_float})
+                                rows_devolucoes.append(entry)
+                                
+        df_debitos = pd.DataFrame(rows_debitos)
+        # Guardamos a referência completa para a função de marcação antes das limpezas
+        coords_referencia = rows_debitos + rows_devolucoes
+        
     except:
-        return pd.DataFrame()
+        return pd.DataFrame(), []
 
-    df_debitos = pd.DataFrame(rows_debitos)
-    df_devolucoes = pd.DataFrame(rows_devolucoes)
-
-    if not df_devolucoes.empty and not df_debitos.empty:
+    if not rows_devolucoes == [] and not df_debitos.empty:
         idx_rem = []
-        for _, r_dev in df_devolucoes.iterrows():
+        for r_dev in rows_devolucoes:
             m = df_debitos[(df_debitos['Data'] == r_dev['Data']) & (abs(df_debitos['Valor_Extrato'] - r_dev['Valor_Extrato']) < 0.01) & (~df_debitos.index.isin(idx_rem))]
             if not m.empty: idx_rem.append(m.index[0])
         df_debitos = df_debitos.drop(idx_rem).reset_index(drop=True)
@@ -151,7 +143,8 @@ def processar_pdf(file_bytes):
         df_t_agg = df_t.groupby('Data_dt').agg({'Valor_Extrato': 'sum', 'Data': 'first'}).reset_index()
         df_t_agg['Documento'] = "Tarifas Bancárias"; df_t_agg['Histórico'] = "Tarifas Bancárias do Dia"
         df = pd.concat([df_o, df_t_agg], ignore_index=True)
-    return df
+    
+    return df, coords_referencia
 
 def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
     try:
@@ -204,27 +197,24 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
     return df_f.sort_values(by=['dt', 'Documento']).drop(columns=['dt'])
 
 # ==============================================================================
-# 2. GERAÇÃO PDF
+# 2. GERAÇÃO DE SAÍDAS (PDF E MARCAÇÃO)
 # ==============================================================================
+
 def gerar_pdf_final(df_f, titulo_completo):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=10*mm, leftMargin=10*mm, topMargin=15*mm, bottomMargin=15*mm, title=titulo_completo)
-    
     story = []
     styles = getSampleStyleSheet()
     story.append(Paragraph("Relatório de Conciliação Bancária", styles["Title"]))
     nome_conta_interno = titulo_completo.replace("Conciliação ", "")
     story.append(Paragraph(f"<b>Conta:</b> {nome_conta_interno}", ParagraphStyle(name='C', alignment=1)))
     story.append(Spacer(1, 15))
-    
     headers = ['Data', 'Documento', 'Vlr. Extrato', 'Vlr. Razão', 'Diferença']
     data = [headers]
     for _, r in df_f.iterrows():
         diff = r['Diferença']
         data.append([r['Data'], str(r['Documento']), formatar_moeda_br(r['Valor_Extrato']), formatar_moeda_br(r['Valor_Razao']), formatar_moeda_br(diff) if abs(diff) >= 0.01 else "-"] )
-    
     data.append(['TOTAL', '', formatar_moeda_br(df_f['Valor_Extrato'].sum()), formatar_moeda_br(df_f['Valor_Razao'].sum()), formatar_moeda_br(df_f['Diferença'].sum())])
-    
     t = Table(data, colWidths=[25*mm, 65*mm, 33*mm, 33*mm, 33*mm])
     t.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
@@ -238,21 +228,44 @@ def gerar_pdf_final(df_f, titulo_completo):
     doc.build(story)
     return buffer.getvalue()
 
+def gerar_extrato_marcado(pdf_bytes, df_f, coords_referencia, nome_original):
+    """Gera o PDF original com destaques amarelos nas divergências"""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    # Atualiza Metadados
+    meta = doc.metadata
+    meta["title"] = f"{nome_original} Marcado"
+    doc.set_metadata(meta)
+    
+    # Filtra apenas as linhas com diferença real
+    divergencias = df_f[abs(df_f['Diferença']) >= 0.01]
+    
+    for _, erro in divergencias.iterrows():
+        for item in coords_referencia:
+            # Verifica se o item da coordenada bate com a divergência encontrada
+            if item['Data'] == erro['Data'] and abs(item['Valor_Extrato'] - erro['Valor_Extrato']) < 0.01:
+                if item['coords']:
+                    pno, x0, top, x1, bottom = item['coords']
+                    page = doc[pno]
+                    rect = fitz.Rect(x0 - 2, top - 2, x1 + 2, bottom + 2)
+                    annot = page.add_highlight_annot(rect)
+                    annot.set_colors(stroke=[1, 1, 0]) # Amarelo
+                    annot.update()
+    
+    return doc.tobytes()
+
 # ==============================================================================
 # 3. INTERFACE
 # ==============================================================================
-# A verificação de senha foi removida daqui
-
 st.markdown("<h1 style='text-align: center;'>Conciliador Bancário (Banco x GovBr)</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
 c1, c2 = st.columns(2)
 with c1: 
     st.markdown('<p class="big-label">Selecione o Extrato Bancário em PDF</p>', unsafe_allow_html=True)
-    up_pdf = st.file_uploader("", type="pdf", label_visibility="collapsed")
+    up_pdf = st.file_uploader("", type="pdf", key="up_pdf", label_visibility="collapsed")
 with c2: 
     st.markdown('<p class="big-label">Selecione o Razão da Contabilidade em Excel</p>', unsafe_allow_html=True)
-    up_xlsx = st.file_uploader("", type=["xlsx", "csv"], label_visibility="collapsed")
+    up_xlsx = st.file_uploader("", type=["xlsx", "csv"], key="up_xlsx", label_visibility="collapsed")
 
 if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
     if up_pdf and up_xlsx:
@@ -260,56 +273,62 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             pdf_bytes = up_pdf.read()
             xlsx_bytes = up_xlsx.read()
             
-            df_p = processar_pdf(pdf_bytes)
+            df_p, coords_ref = processar_pdf(pdf_bytes)
             df_e = processar_excel_detalhado(xlsx_bytes, df_p, is_csv=up_xlsx.name.endswith('csv'))
             
             if df_p.empty or df_e.empty: st.error("Erro no processamento."); st.stop()
             
             df_f = executar_conciliacao_inteligente(df_p, df_e)
             
-            html = """
-            <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
-            <table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important;'>
-                <tr style='background-color: black; color: white !important;'>
-                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Data</th>
-                    <th style='padding: 8px; text-align: left; border: 1px solid #000;'>Histórico</th>
-                    <th style='padding: 8px; text-align: center; border: 1px solid #000;'>Documento</th>
-                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Vlr. Extrato</th>
-                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Vlr. Razão</th>
-                    <th style='padding: 8px; text-align: right; border: 1px solid #000;'>Diferença</th>
-                </tr>"""
+            # --- TABELA HTML ---
+            html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
+            html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important;'>"
+            html += "<tr style='background-color: black; color: white !important;'>"
+            html += "<th style='padding: 8px; border: 1px solid #000;'>Data</th><th style='padding: 8px; border: 1px solid #000;'>Histórico</th>"
+            html += "<th style='padding: 8px; border: 1px solid #000;'>Documento</th><th style='padding: 8px; border: 1px solid #000;'>Vlr. Extrato</th>"
+            html += "<th style='padding: 8px; border: 1px solid #000;'>Vlr. Razão</th><th style='padding: 8px; border: 1px solid #000;'>Diferença</th></tr>"
+            
             for _, r in df_f.iterrows():
                 d_c = "red" if abs(r['Diferença']) >= 0.01 else "black"
-                html += f"""
-                <tr style='background-color: white;'> 
-                    <td style='text-align: center; border: 1px solid #000; color: black;'>{r['Data']}</td> 
-                    <td style='text-align: left; border: 1px solid #000; color: black;'>{r['Histórico']}</td> 
-                    <td style='text-align: center; border: 1px solid #000; color: black;'>{r['Documento']}</td> 
-                    <td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Extrato'])}</td> 
-                    <td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Razao'])}</td> 
-                    <td style='text-align: right; color: {d_c}; border: 1px solid #000;'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td> 
-                </tr>"""
+                html += f"<tr style='background-color: white;'>"
+                html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Data']}</td>"
+                html += f"<td style='text-align: left; border: 1px solid #000; color: black;'>{r['Histórico']}</td>"
+                html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Documento']}</td>"
+                html += f"<td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Extrato'])}</td>"
+                html += f"<td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Razao'])}</td>"
+                html += f"<td style='text-align: right; color: {d_c}; border: 1px solid #000;'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td></tr>"
             
-            html += f"""
-                <tr style='font-weight: bold; background-color: lightgrey; color: black;'> 
-                    <td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>
-                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td>
-                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Razao'].sum())}</td>
-                    <td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Diferença'].sum())}</td> 
-                </tr> </table> </div>"""
-            
+            html += f"<tr style='font-weight: bold; background-color: lightgrey; color: black;'><td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>"
+            html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td>"
+            html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Razao'].sum())}</td>"
+            html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Diferença'].sum())}</td></tr></table></div>"
             st.markdown(html, unsafe_allow_html=True)
             
-            nome_limpo = os.path.splitext(up_pdf.name)[0]
-            titulo_final = f"Conciliação {nome_limpo}"
-            pdf_data = gerar_pdf_final(df_f, titulo_final)
+            # --- GERAÇÃO DE ARQUIVOS ---
+            nome_original_base = os.path.splitext(up_pdf.name)[0]
             
-            # Espaço manual e Botão de Download com file_name explícito para corrigir o erro de nome hash
+            # 1. Relatório PDF
+            pdf_relatorio = gerar_pdf_final(df_f, f"Conciliação {nome_original_base}")
+            
+            # 2. Extrato Marcado
+            pdf_marcado = gerar_extrato_marcado(pdf_bytes, df_f, coords_ref, nome_original_base)
+            
             st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
+            
+            # Botão 1: Relatório
             st.download_button(
                 label="BAIXAR RELATÓRIO PDF",
-                data=pdf_data,
-                file_name=f"{titulo_final}.pdf",
+                data=pdf_relatorio,
+                file_name=f"Conciliação {nome_original_base}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+            
+            # Botão 2: Extrato Marcado (Novo)
+            st.download_button(
+                label="BAIXAR EXTRATO COM MARCAÇÕES",
+                data=pdf_marcado,
+                file_name=f"{nome_original_base} Marcado.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
