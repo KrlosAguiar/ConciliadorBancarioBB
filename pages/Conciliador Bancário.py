@@ -317,7 +317,7 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             
             # Botão 1: Relatório
             st.download_button(
-                label="BAIXAR RELATÓRIO PDF",
+                label="BAIXAR RELATÓRIO DE CONCILIAÇÃO EM PDF",
                 data=pdf_relatorio,
                 file_name=f"Conciliação {nome_original_base}.pdf",
                 mime="application/pdf",
