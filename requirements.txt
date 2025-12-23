@@ -7,3 +7,4 @@ watchdog
 ftfy
 pillow
 numpy
+pymupdf
