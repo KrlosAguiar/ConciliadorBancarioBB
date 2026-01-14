@@ -386,7 +386,7 @@ st.markdown("---")
 
 c1, c2 = st.columns(2)
 with c1: 
-    st.markdown('<p class="big-label">Selecione o arquivo os extratos compactados</p>', unsafe_allow_html=True)
+    st.markdown('<p class="big-label">Selecione o arquivo .zip/.rar com os extratos bancários</p>', unsafe_allow_html=True)
     up_extratos = st.file_uploader("", type=["zip", "rar"], key="up_pdf", label_visibility="collapsed")
 with c2: 
     st.markdown('<p class="big-label">Selecione o relatório de saldos bancários</p>', unsafe_allow_html=True)
