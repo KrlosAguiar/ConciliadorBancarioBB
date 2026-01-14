@@ -14,17 +14,15 @@ from PIL import Image
 # Configuração do executável UNRAR (Necessário para o Cloud Run/Linux)
 rarfile.UNRAR_TOOL = "unrar"
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-icon_path = "Barcarena.png" 
+# --- CONFIGURAÇÃO DA PÁGINA (VISUAL IDÊNTICO AO EXEMPLO) ---
+icon_path = "Barcarena.png" # Certifique-se de ter essa imagem na pasta ou remova o try/except
 try:
-    # Tenta carregar o ícone se existir
     icon_image = Image.open(icon_path)
-    st.set_page_config(page_title="Conciliador V32", page_icon=icon_image, layout="wide")
+    st.set_page_config(page_title="Conciliador de Saldos Bancários", page_icon=icon_image, layout="wide")
 except:
-    # Se der erro (ex: imagem não existe), carrega sem ícone
-    st.set_page_config(page_title="Conciliador V32", layout="wide")
+    st.set_page_config(page_title="Conciliador de Saldos Bancários", layout="wide")
 
-# --- CSS PERSONALIZADO ---
+# --- CSS PERSONALIZADO (MANTIDO DO SEU EXEMPLO) ---
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
@@ -40,6 +38,7 @@ st.markdown("""
     div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
     .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
     
+    /* Estilo para a tabela de preview */
     .preview-table {
         width: 100%;
         border-collapse: collapse;
@@ -62,7 +61,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. FUNÇÕES DA LÓGICA V32
+# 2. FUNÇÕES DA LÓGICA V32 (MOTOR DE PROCESSAMENTO)
 # ==============================================================================
 
 def limpar_numero(valor):
@@ -209,9 +208,9 @@ def encontrar_saldo_pdf(caminho_pdf):
         return 0.0, "Erro"
 
 def ler_planilha_e_consolidar(file_obj):
+    # Aceita objeto de arquivo (BytesIO ou TempFile)
     try:
-        # Se for CSV
-        if file_obj.name.lower().endswith('.csv'):
+        if file_obj.name.endswith('.csv'):
             df_raw = pd.read_csv(file_obj, header=None, dtype=object)
         else:
             df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl', dtype=object)
@@ -397,18 +396,103 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
     if up_extratos and up_planilha:
         with st.spinner("Descompactando arquivos e analisando PDFs..."):
             
+            # --- 1. Preparação do Ambiente Temporário ---
             temp_dir = tempfile.mkdtemp()
             try:
-                # Salva o arquivo ZIP/RAR
+                # --- 2. Salva e Extrai o Arquivo Compactado ---
                 path_zip = os.path.join(temp_dir, up_extratos.name)
                 with open(path_zip, "wb") as f:
                     f.write(up_extratos.getbuffer())
                 
-                # Extrai
                 try:
                     if up_extratos.name.lower().endswith('.rar'):
                         with rarfile.RarFile(path_zip, 'r') as r: r.extractall(temp_dir)
                     else:
                         with zipfile.ZipFile(path_zip, 'r') as z: z.extractall(temp_dir)
                 except Exception as e:
-                    st.error(f"Erro ao descompactar: {e}. Verifique
+                    st.error(f"Erro ao descompactar: {e}. Verifique se o arquivo não está corrompido.")
+                    shutil.rmtree(temp_dir)
+                    st.stop()
+
+                # --- 3. Processa a Planilha ---
+                dados_excel = ler_planilha_e_consolidar(up_planilha)
+                if not dados_excel:
+                    st.error("Erro ao ler a planilha Excel. Verifique o formato.")
+                    shutil.rmtree(temp_dir)
+                    st.stop()
+
+                # --- 4. Executa o Cruzamento (V32) ---
+                df_final = processar_confronto(temp_dir, dados_excel)
+
+                # --- 5. Gera Saída Excel ---
+                if not df_final.empty:
+                    
+                    # Ordenação para o Excel
+                    def ordenar(df):
+                        df['is_nd'] = df['UG'] == 'N/D'
+                        df_sorted = df.sort_values(by=['is_nd', 'UG', 'CÓDIGO'])
+                        return df_sorted.drop(columns=['is_nd'])
+
+                    cols_view = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA", "ARQUIVO_ORIGEM"]
+                    cols_validas = [c for c in cols_view if c in df_final.columns]
+
+                    df_app = df_final[df_final['GRUPO'] == 'APLICACAO'][cols_validas]
+                    df_app = ordenar(df_app)
+                    df_mov = df_final[df_final['GRUPO'] == 'MOVIMENTO'][cols_validas]
+                    df_mov = ordenar(df_mov)
+
+                    # Gera o Excel em memória
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        wb = writer.book
+                        ws = wb.add_worksheet('Conciliacao')
+                        writer.sheets['Conciliacao'] = ws
+                        
+                        row = 0
+                        if not df_app.empty:
+                            ws.write(row, 0, "--- CONTAS APLICAÇÃO ---", wb.add_format({'bold':True, 'font_color':'blue'}))
+                            row+=1
+                            df_app.to_excel(writer, sheet_name='Conciliacao', startrow=row, index=False)
+                            aplicar_estilo_excel(ws, wb, df_app, row, cols_validas)
+                            row += len(df_app) + 2
+                        
+                        row += 1
+                        if not df_mov.empty:
+                            ws.write(row, 0, "--- CONTAS MOVIMENTO ---", wb.add_format({'bold':True, 'font_color':'blue'}))
+                            row+=1
+                            df_mov.to_excel(writer, sheet_name='Conciliacao', startrow=row, index=False)
+                            aplicar_estilo_excel(ws, wb, df_mov, row, cols_validas)
+
+                    output.seek(0)
+                    
+                    # --- 6. Exibe Preview Simplificado ---
+                    st.success("Conciliação Finalizada com Sucesso!")
+                    
+                    # Mostra um resumo em HTML (Estilo Visual Solicitado)
+                    html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
+                    html += "<h4 style='color:black; margin-top:0;'>Resumo do Processamento</h4>"
+                    html += f"<p style='color:black;'>Total de Contas Analisadas: <b>{len(df_final)}</b></p>"
+                    html += f"<p style='color:black;'>Total de Diferenças Encontradas: <b style='color:red;'>{len(df_final[df_final['DIFERENÇA'] != 0])}</b></p>"
+                    html += "</div>"
+                    st.markdown(html, unsafe_allow_html=True)
+                    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+
+                    # --- 7. Botão de Download ---
+                    st.download_button(
+                        label="BAIXAR RELATÓRIO EXCEL V32",
+                        data=output,
+                        file_name="Relatorio_Conciliacao_V32_Final.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("O processamento não gerou dados. Verifique os arquivos.")
+            
+            except Exception as e:
+                st.error(f"Erro fatal: {e}")
+            finally:
+                # Limpa arquivos temporários
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+    else:
+        st.warning("⚠️ Selecione o arquivo ZIP/RAR e a Planilha Excel primeiro.")
