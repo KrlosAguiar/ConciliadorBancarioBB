@@ -5,16 +5,16 @@ import re
 import io
 import os
 import datetime
-import xlsxwriter  # Importante para gerar o Excel formatado
+import xlsxwriter  # Obrigatório estar no requirements.txt
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import mm
 from PIL import Image
-import fitz  # Importante: Requer pymupdf no requirements.txt
+import fitz  # Requer pymupdf no requirements.txt
 
-# --- CONFIGURAÇÃO DA PÁGINA (Unificada) ---
+# --- CONFIGURAÇÃO DA PÁGINA ---
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
 try:
     icon_image = Image.open(icon_path)
@@ -65,7 +65,6 @@ def parse_br_date(date_val):
 def processar_pdf(file_bytes):
     rows_debitos = []
     rows_devolucoes = []
-    coords_map = [] 
     
     try:
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
@@ -211,7 +210,6 @@ def gerar_pdf_final(df_f, titulo_completo):
     headers = ['Data', 'Documento', 'Vlr. Extrato', 'Vlr. Razão', 'Diferença']
     data = [headers]
     
-    # Estilo de tabela base
     table_style = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.black),
@@ -223,18 +221,10 @@ def gerar_pdf_final(df_f, titulo_completo):
 
     for i, r in df_f.iterrows():
         diff = r['Diferença']
-        row_data = [
-            r['Data'], 
-            str(r['Documento']), 
-            formatar_moeda_br(r['Valor_Extrato']), 
-            formatar_moeda_br(r['Valor_Razao']), 
-            formatar_moeda_br(diff) if abs(diff) >= 0.01 else "-"
-        ]
-        data.append(row_data)
+        data.append([r['Data'], str(r['Documento']), formatar_moeda_br(r['Valor_Extrato']), formatar_moeda_br(r['Valor_Razao']), formatar_moeda_br(diff) if abs(diff) >= 0.01 else "-"] )
         
-        # Se houver diferença, pinta a célula de vermelho no PDF também
+        # Pinta de vermelho no PDF se houver diferença
         if abs(diff) >= 0.01:
-            # i + 1 porque a linha 0 é o cabeçalho
             table_style.append(('TEXTCOLOR', (4, i+1), (4, i+1), colors.red))
             table_style.append(('FONTNAME', (4, i+1), (4, i+1), 'Helvetica-Bold'))
 
@@ -247,9 +237,10 @@ def gerar_pdf_final(df_f, titulo_completo):
     return buffer.getvalue()
 
 def gerar_excel_final(df_f):
+    """Gera um arquivo Excel binário (.xlsx) com formatação correta"""
     output = io.BytesIO()
+    # Engine xlsxwriter é crucial para formatação
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        # Escreve os dados (sem o total por enquanto)
         df_f.to_excel(writer, sheet_name='Conciliacao', index=False)
         
         workbook = writer.book
@@ -262,22 +253,22 @@ def gerar_excel_final(df_f):
         fmt_total = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'num_format': '#,##0.00', 'border': 1})
         fmt_total_label = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center'})
 
-        # Aplica formato de cabeçalho
+        # Formata o cabeçalho
         for col_num, value in enumerate(df_f.columns.values):
             worksheet.write(0, col_num, value, fmt_header)
 
-        # Ajusta largura das colunas e formatação numérica
+        # Largura das colunas e formato de moeda
         worksheet.set_column('A:A', 12) # Data
         worksheet.set_column('B:B', 40) # Histórico
         worksheet.set_column('C:C', 15) # Documento
-        worksheet.set_column('D:E', 18, fmt_currency) # Valores
+        worksheet.set_column('D:E', 18, fmt_currency) # Vlr Extrato e Razão
         
-        # Formatação Condicional para Diferença (Coluna F, índice 5) - Vermelho e Negrito
+        # Coluna F (Diferença) - Aplica Vermelho/Negrito se != 0
         worksheet.set_column('F:F', 18, fmt_currency)
         worksheet.conditional_format(1, 5, len(df_f), 5, 
             {'type': 'cell', 'criteria': '!=', 'value': 0, 'format': fmt_red_bold})
 
-        # Adiciona Linha de Total
+        # Linha de TOTAL no final
         last_row = len(df_f) + 1
         worksheet.merge_range(last_row, 0, last_row, 2, "TOTAL", fmt_total_label)
         worksheet.write(last_row, 3, df_f['Valor_Extrato'].sum(), fmt_total)
@@ -334,7 +325,7 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             
             df_f = executar_conciliacao_inteligente(df_p, df_e)
             
-            # --- TABELA HTML (Com Destaque Negrito e Vermelho) ---
+            # --- TABELA HTML (VISUAL) ---
             html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
             html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important;'>"
             html += "<tr style='background-color: black; color: white !important;'>"
@@ -343,19 +334,16 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             html += "<th style='padding: 8px; border: 1px solid #000;'>Vlr. Razão</th><th style='padding: 8px; border: 1px solid #000;'>Diferença</th></tr>"
             
             for _, r in df_f.iterrows():
-                # Estilo condicional: Vermelho E Negrito
-                if abs(r['Diferença']) >= 0.01:
-                    style_diff = "color: red; font-weight: bold;"
-                else:
-                    style_diff = "color: black;"
-
+                # Lógica Visual: Vermelho e Negrito se houver diferença
+                estilo_dif = "color: red; font-weight: bold;" if abs(r['Diferença']) >= 0.01 else "color: black;"
+                
                 html += f"<tr style='background-color: white;'>"
                 html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Data']}</td>"
                 html += f"<td style='text-align: left; border: 1px solid #000; color: black;'>{r['Histórico']}</td>"
                 html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Documento']}</td>"
                 html += f"<td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Extrato'])}</td>"
                 html += f"<td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Razao'])}</td>"
-                html += f"<td style='text-align: right; {style_diff} border: 1px solid #000;'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td></tr>"
+                html += f"<td style='text-align: right; border: 1px solid #000; {estilo_dif}'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td></tr>"
             
             html += f"<tr style='font-weight: bold; background-color: lightgrey; color: black;'><td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>"
             html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td>"
@@ -363,34 +351,36 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Diferença'].sum())}</td></tr></table></div>"
             st.markdown(html, unsafe_allow_html=True)
             
-            # --- GERAÇÃO DE ARQUIVOS ---
-            nome_original_base = os.path.splitext(up_pdf.name)[0]
+            # --- GERAÇÃO DOS ARQUIVOS (Binários) ---
+            nome_base = os.path.splitext(up_pdf.name)[0]
             
-            # 1. Relatório PDF
-            pdf_relatorio = gerar_pdf_final(df_f, f"Conciliação {nome_original_base}")
+            # 1. Gera PDF
+            pdf_bytes_final = gerar_pdf_final(df_f, f"Conciliação {nome_base}")
             
-            # 2. Relatório Excel (Novo)
-            excel_relatorio = gerar_excel_final(df_f)
-
-            # 3. Extrato Marcado
-            pdf_marcado = gerar_extrato_marcado(pdf_bytes, df_f, coords_ref, nome_original_base)
+            # 2. Gera Excel (CORRIGIDO)
+            excel_bytes_final = gerar_excel_final(df_f)
+            
+            # 3. Gera PDF Marcado
+            pdf_marcado_final = gerar_extrato_marcado(pdf_bytes, df_f, coords_ref, nome_base)
             
             st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
+            
+            # --- BOTÕES DE DOWNLOAD ---
             
             # Botão 1: Relatório PDF
             st.download_button(
                 label="BAIXAR RELATÓRIO DE CONCILIAÇÃO EM PDF",
-                data=pdf_relatorio,
-                file_name=f"Conciliação {nome_original_base}.pdf",
+                data=pdf_bytes_final,
+                file_name=f"Conciliação {nome_base}.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
-
-            # Botão 2: Relatório Excel (NOVO)
+            
+            # Botão 2: Relatório Excel (Agora funciona corretamente)
             st.download_button(
-                label="GERAR RELATÓRIO EM EXCEL",
-                data=excel_relatorio,
-                file_name=f"Conciliação {nome_original_base}.xlsx",
+                label="BAIXAR RELATÓRIO EM EXCEL",
+                data=excel_bytes_final,
+                file_name=f"Conciliação {nome_base}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
@@ -398,8 +388,8 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             # Botão 3: Extrato Marcado
             st.download_button(
                 label="BAIXAR EXTRATO BANCÁRIO COM MARCAÇÕES",
-                data=pdf_marcado,
-                file_name=f"{nome_original_base} Marcado.pdf",
+                data=pdf_marcado_final,
+                file_name=f"{nome_base} Marcado.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
