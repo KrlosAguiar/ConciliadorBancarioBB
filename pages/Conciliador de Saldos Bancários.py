@@ -110,8 +110,18 @@ def encontrar_saldo_pdf(caminho_pdf):
             nome_arquivo = os.path.basename(caminho_pdf).lower()
 
             if banco == "ITAU":
-                matches = re.findall(r"(?:Saldo Líquido|TOTAL LIQUIDO P/RESGATE).*?([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
-                if matches: saldo = limpar_numero(matches[-1])
+                # Padrão 1: Contas de Investimento/Aplicação
+                matches_invest = re.findall(r"(?:Saldo Líquido|TOTAL LIQUIDO P/RESGATE).*?([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
+                
+                # Padrão 2: Contas Movimento (Atualizado para ler o formato: 31/10 SALDO 150,00)
+                # Procura por Data + Espaço + SALDO + Espaço + Valor
+                matches_mov = re.findall(r"\d{2}/\d{2}\s+SALDO\s+.*?([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
+
+                if matches_invest:
+                    saldo = limpar_numero(matches_invest[-1])
+                elif matches_mov:
+                    # Pega a última ocorrência de "SALDO", que geralmente é o saldo final do período
+                    saldo = limpar_numero(matches_mov[-1])
 
             elif banco == "SANTANDER":
                 linhas = texto_completo.split('\n')
