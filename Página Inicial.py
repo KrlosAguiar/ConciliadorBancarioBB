@@ -52,6 +52,8 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
 * **Conciliador Bancário:** Cruza os dados do Extrato Bancário com o Razão da Contabilidade.
 
+* **Conciliador de Saldos Bancários:** Cruza os saldos de vários extratos com os saldos do relatório da GovBr.
+
 * **Tarifas Bancárias:** Extrai os lançamentos das tarifas do Extrato Bancário para empenho, liquidação e pagamento.
 
 * **Projeção de FOPAG:** Calcula a projeção da Folha de Pagamento para os meses restantes.
@@ -64,5 +66,6 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 ---
 **Status do Sistema:** ✅ Online
 """)
+
 
 
