@@ -371,16 +371,18 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             st.download_button(
                 label="BAIXAR RELATÓRIO DE CONCILIAÇÃO EM PDF",
                 data=pdf_bytes_final,
-                file_name=f"Conciliação {nome_base}.pdf",
+                file_name=f"Conciliacao_{nome_base}.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
             
-            # Botão 2: Relatório Excel (Agora funciona corretamente)
+            # Botão 2: Relatório Excel (CORRIGIDO)
             st.download_button(
-                label="BAIXAR RELATÓRIO EM EXCEL",
+                label="GERAR RELATÓRIO EM EXCEL",
                 data=excel_bytes_final,
-                file_name=f"Conciliação {nome_base}.xlsx",
+                # AQUI É O PULO DO GATO: Nome sem espaços e COM a extensão .xlsx
+                file_name=f"Conciliacao_{nome_base}.xlsx", 
+                # MIME TYPE ESPECÍFICO PARA EXCEL XLSX
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
@@ -389,7 +391,7 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             st.download_button(
                 label="BAIXAR EXTRATO BANCÁRIO COM MARCAÇÕES",
                 data=pdf_marcado_final,
-                file_name=f"{nome_base} Marcado.pdf",
+                file_name=f"{nome_base}_Marcado.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
