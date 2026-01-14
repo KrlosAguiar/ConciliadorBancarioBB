@@ -381,18 +381,18 @@ def aplicar_estilo_excel(ws, wb, df, start_row, cols):
 # 3. INTERFACE STREAMLIT
 # ==============================================================================
 
-st.markdown("<h1 style='text-align: center;'>Conciliador Bancário V32 (Banco x GovBr)</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>Conciliador de Saldos Bancários</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
 c1, c2 = st.columns(2)
 with c1: 
-    st.markdown('<p class="big-label">Upload Compactado (.zip/.rar) com PDFs</p>', unsafe_allow_html=True)
+    st.markdown('<p class="big-label">Selecione o arquivo os extratos compactados</p>', unsafe_allow_html=True)
     up_extratos = st.file_uploader("", type=["zip", "rar"], key="up_pdf", label_visibility="collapsed")
 with c2: 
-    st.markdown('<p class="big-label">Upload Planilha Comparação (.xlsx/.csv)</p>', unsafe_allow_html=True)
+    st.markdown('<p class="big-label">Selecione o relatório de saldos bancários</p>', unsafe_allow_html=True)
     up_planilha = st.file_uploader("", type=["xlsx", "csv"], key="up_xlsx", label_visibility="collapsed")
 
-if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
+if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width=True):
     if up_extratos and up_planilha:
         with st.spinner("Descompactando arquivos e analisando PDFs..."):
             
