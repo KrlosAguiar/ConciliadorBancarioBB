@@ -14,15 +14,15 @@ from PIL import Image
 # Configuração do executável UNRAR (Necessário para o Cloud Run/Linux)
 rarfile.UNRAR_TOOL = "unrar"
 
-# --- CONFIGURAÇÃO DA PÁGINA (VISUAL IDÊNTICO AO EXEMPLO) ---
-icon_path = "Barcarena.png" # Certifique-se de ter essa imagem na pasta ou remova o try/except
+# --- CONFIGURAÇÃO DA PÁGINA ---
+icon_path = "Barcarena.png" 
 try:
     icon_image = Image.open(icon_path)
     st.set_page_config(page_title="Conciliador de Saldos Bancários", page_icon=icon_image, layout="wide")
 except:
     st.set_page_config(page_title="Conciliador de Saldos Bancários", layout="wide")
 
-# --- CSS PERSONALIZADO (MANTIDO DO SEU EXEMPLO) ---
+# --- CSS PERSONALIZADO ---
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
@@ -38,7 +38,6 @@ st.markdown("""
     div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
     .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
     
-    /* Estilo para a tabela de preview */
     .preview-table {
         width: 100%;
         border-collapse: collapse;
@@ -61,7 +60,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. FUNÇÕES DA LÓGICA V32 (MOTOR DE PROCESSAMENTO)
+# 2. FUNÇÕES DA LÓGICA V33 (MOTOR DE PROCESSAMENTO)
 # ==============================================================================
 
 def limpar_numero(valor):
@@ -114,7 +113,6 @@ def encontrar_saldo_pdf(caminho_pdf):
                 matches_invest = re.findall(r"(?:Saldo Líquido|TOTAL LIQUIDO P/RESGATE).*?([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
                 
                 # Padrão 2: Contas Movimento (Atualizado para ler o formato: 31/10 SALDO 150,00)
-                # Procura por Data + Espaço + SALDO + Espaço + Valor
                 matches_mov = re.findall(r"\d{2}/\d{2}\s+SALDO\s+.*?([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
 
                 if matches_invest:
@@ -304,35 +302,24 @@ def processar_confronto(pasta_extratos, dados_dict):
                 if "aplic" in file.lower(): arquivos_aplicacao.append(item)
                 else: arquivos_movimento.append(item)
 
-    # 1. APLICAÇÃO (Sem misturar)
-    for pdf in arquivos_aplicacao:
-        saldo_extrato, _ = encontrar_saldo_pdf(pdf['caminho'])
-        pdf['saldo'] = saldo_extrato
-        for (conta_excel, grupo_excel) in chaves_existentes:
-            if grupo_excel == "APLICACAO":
-                match_key = dados_dict[(conta_excel, grupo_excel)]['MATCH_KEY']
-                if len(pdf['numeros']) >= 4 and (pdf['numeros'] in match_key or match_key in pdf['numeros']):
-                    dados_dict[(conta_excel, grupo_excel)]['EXTRATO'] = pdf['saldo']
-                    dados_dict[(conta_excel, grupo_excel)]['ARQUIVO_ORIGEM'] = pdf['nome']
-                    dados_dict[(conta_excel, grupo_excel)]['UG'] = pdf['ug']
-                    dados_dict[(conta_excel, grupo_excel)]['TEM_PDF'] = True
-                    pdf['processado'] = True
-                    break
-
-    # 2. MOVIMENTO (Sem misturar)
-    for pdf in arquivos_movimento:
-        saldo_extrato, _ = encontrar_saldo_pdf(pdf['caminho'])
-        pdf['saldo'] = saldo_extrato
-        for (conta_excel, grupo_excel) in chaves_existentes:
-            if grupo_excel == "MOVIMENTO":
-                match_key = dados_dict[(conta_excel, grupo_excel)]['MATCH_KEY']
-                if len(pdf['numeros']) >= 4 and (pdf['numeros'] in match_key or match_key in pdf['numeros']):
-                    dados_dict[(conta_excel, grupo_excel)]['EXTRATO'] = pdf['saldo']
-                    dados_dict[(conta_excel, grupo_excel)]['ARQUIVO_ORIGEM'] = pdf['nome']
-                    dados_dict[(conta_excel, grupo_excel)]['UG'] = pdf['ug']
-                    dados_dict[(conta_excel, grupo_excel)]['TEM_PDF'] = True
-                    pdf['processado'] = True
-                    break
+    # Função auxiliar para processar
+    def match_pdf(pdf_list, grupo_alvo):
+        for pdf in pdf_list:
+            saldo_extrato, _ = encontrar_saldo_pdf(pdf['caminho'])
+            pdf['saldo'] = saldo_extrato
+            for (conta_excel, grupo_excel) in chaves_existentes:
+                if grupo_excel == grupo_alvo:
+                    match_key = dados_dict[(conta_excel, grupo_excel)]['MATCH_KEY']
+                    if len(pdf['numeros']) >= 4 and (pdf['numeros'] in match_key or match_key in pdf['numeros']):
+                        dados_dict[(conta_excel, grupo_excel)]['EXTRATO'] = pdf['saldo']
+                        dados_dict[(conta_excel, grupo_excel)]['ARQUIVO_ORIGEM'] = pdf['nome']
+                        dados_dict[(conta_excel, grupo_excel)]['UG'] = pdf['ug']
+                        dados_dict[(conta_excel, grupo_excel)]['TEM_PDF'] = True
+                        pdf['processado'] = True
+                        break
+    
+    match_pdf(arquivos_aplicacao, "APLICACAO")
+    match_pdf(arquivos_movimento, "MOVIMENTO")
 
     # 3. REPESCAGEM RIGIDA
     for pdf in arquivos_aplicacao + arquivos_movimento:
@@ -352,16 +339,18 @@ def processar_confronto(pasta_extratos, dados_dict):
     lista_final = []
     for chave, dados in dados_dict.items():
         if not dados.get('TEM_PDF'): dados['UG'] = 'N/D'
-        dados['DIFERENÇA'] = dados['RAZÃO'] - dados['EXTRATO']
+        # CORREÇÃO DE PRECISÃO: Arredonda a diferença para 2 casas decimais
+        dados['DIFERENÇA'] = round(dados['RAZÃO'] - dados['EXTRATO'], 2)
         lista_final.append(dados)
     
     for pdf in arquivos_aplicacao + arquivos_movimento:
         if not pdf['processado']:
             grupo_pdf = "APLICACAO" if "aplic" in pdf['nome'].lower() else "MOVIMENTO"
+            # CORREÇÃO DE PRECISÃO: Arredonda diferença aqui também
             lista_final.append({
                 "UG": pdf['ug'], "CÓDIGO": "N/A", "DESCRIÇÃO": "PDF sem conta no Excel",
                 "CONTA": pdf['nome'], "RAZÃO": 0.0, "GRUPO": grupo_pdf,
-                "EXTRATO": pdf['saldo'], "DIFERENÇA": 0.0 - pdf['saldo'], "ARQUIVO_ORIGEM": pdf['nome']
+                "EXTRATO": pdf['saldo'], "DIFERENÇA": round(0.0 - pdf['saldo'], 2), "ARQUIVO_ORIGEM": pdf['nome']
             })
 
     return pd.DataFrame(lista_final)
@@ -373,12 +362,16 @@ def aplicar_estilo_excel(ws, wb, df, start_row, cols):
     
     for i, col in enumerate(cols):
         ws.write(start_row, i, col, fmt_header)
+    
+    # CORREÇÃO DE FORMATAÇÃO: Só pinta se diferença for SIGNIFICATIVA (evita 0,00001)
     try:
         idx_dif = cols.index("DIFERENÇA")
         letra = chr(65 + idx_dif) 
+        # Critério: "Not Between" -0.009 e 0.009 (ou seja, só pinta se for maior que quase 1 centavo)
         ws.conditional_format(f'{letra}{start_row+2}:{letra}{start_row+1+len(df)}', 
-                              {'type': 'cell', 'criteria': '!=', 'value': 0, 'format': fmt_red})
+                              {'type': 'cell', 'criteria': 'not between', 'minimum': -0.009, 'maximum': 0.009, 'format': fmt_red})
     except: pass
+    
     for i, col in enumerate(cols):
         max_len = max(df[col].astype(str).map(len).max() if not df[col].empty else 0, len(col))
         largura_final = min(max_len + 3, 60) 
@@ -406,10 +399,9 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
     if up_extratos and up_planilha:
         with st.spinner("Descompactando arquivos e analisando PDFs..."):
             
-            # --- 1. Preparação do Ambiente Temporário ---
             temp_dir = tempfile.mkdtemp()
             try:
-                # --- 2. Salva e Extrai o Arquivo Compactado ---
+                # --- Preparação ---
                 path_zip = os.path.join(temp_dir, up_extratos.name)
                 with open(path_zip, "wb") as f:
                     f.write(up_extratos.getbuffer())
@@ -424,20 +416,18 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                     shutil.rmtree(temp_dir)
                     st.stop()
 
-                # --- 3. Processa a Planilha ---
+                # --- Leitura da Planilha ---
                 dados_excel = ler_planilha_e_consolidar(up_planilha)
                 if not dados_excel:
                     st.error("Erro ao ler a planilha Excel. Verifique o formato.")
                     shutil.rmtree(temp_dir)
                     st.stop()
 
-                # --- 4. Executa o Cruzamento (V32) ---
+                # --- Processamento ---
                 df_final = processar_confronto(temp_dir, dados_excel)
 
-                # --- 5. Gera Saída Excel ---
                 if not df_final.empty:
-                    
-                    # Ordenação para o Excel
+                    # Ordenação
                     def ordenar(df):
                         df['is_nd'] = df['UG'] == 'N/D'
                         df_sorted = df.sort_values(by=['is_nd', 'UG', 'CÓDIGO'])
@@ -451,8 +441,9 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                     df_mov = df_final[df_final['GRUPO'] == 'MOVIMENTO'][cols_validas]
                     df_mov = ordenar(df_mov)
 
-                    # Gera o Excel em memória
+                    # --- Geração Excel Binário ---
                     output = io.BytesIO()
+                    # Garante que usamos o engine xlsxwriter para formatação
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                         wb = writer.book
                         ws = wb.add_worksheet('Conciliacao')
@@ -475,19 +466,20 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
 
                     output.seek(0)
                     
-                    # --- 6. Exibe Preview Simplificado ---
                     st.success("Conciliação Finalizada com Sucesso!")
                     
-                    # Mostra um resumo em HTML (Estilo Visual Solicitado)
+                    # --- Preview HTML (Com correção visual de arredondamento) ---
+                    count_diffs = len(df_final[abs(df_final['DIFERENÇA']) > 0.01])
+                    
                     html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
                     html += "<h4 style='color:black; margin-top:0;'>Resumo do Processamento</h4>"
                     html += f"<p style='color:black;'>Total de Contas Analisadas: <b>{len(df_final)}</b></p>"
-                    html += f"<p style='color:black;'>Total de Diferenças Encontradas: <b style='color:red;'>{len(df_final[df_final['DIFERENÇA'] != 0])}</b></p>"
+                    html += f"<p style='color:black;'>Total de Diferenças Encontradas: <b style='color:red;'>{count_diffs}</b></p>"
                     html += "</div>"
                     st.markdown(html, unsafe_allow_html=True)
                     st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
 
-                    # --- 7. Botão de Download ---
+                    # --- Botão de Download (Corrigido para evitar HTML) ---
                     st.download_button(
                         label="BAIXAR RELATÓRIO DE CONCILIAÇÃO EM EXCEL",
                         data=output,
@@ -501,7 +493,6 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
             except Exception as e:
                 st.error(f"Erro fatal: {e}")
             finally:
-                # Limpa arquivos temporários
                 if os.path.exists(temp_dir):
                     shutil.rmtree(temp_dir)
     else:
