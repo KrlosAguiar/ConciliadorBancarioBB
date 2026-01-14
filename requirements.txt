@@ -8,3 +8,5 @@ ftfy
 pillow
 numpy
 pymupdf
+xlsxwriter
+rarfile
