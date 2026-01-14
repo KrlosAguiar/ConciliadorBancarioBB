@@ -11,7 +11,7 @@ import shutil
 import tempfile
 from PIL import Image
 
-# Configuração do executável UNRAR (Necessário para o Cloud Run/Linux)
+# Configuração do executável UNRAR
 rarfile.UNRAR_TOOL = "unrar"
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -60,7 +60,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. FUNÇÕES DA LÓGICA V33 (MOTOR DE PROCESSAMENTO)
+# 2. FUNÇÕES DA LÓGICA V35 (MOTOR DE PROCESSAMENTO)
 # ==============================================================================
 
 def limpar_numero(valor):
@@ -107,18 +107,15 @@ def encontrar_saldo_pdf(caminho_pdf):
             banco = identificar_banco(texto_completo)
             saldo = 0.0
             nome_arquivo = os.path.basename(caminho_pdf).lower()
+            eh_aplicacao = "aplic" in nome_arquivo
 
             if banco == "ITAU":
-                # Padrão 1: Contas de Investimento/Aplicação
                 matches_invest = re.findall(r"(?:Saldo Líquido|TOTAL LIQUIDO P/RESGATE).*?([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
-                
-                # Padrão 2: Contas Movimento (Atualizado para ler o formato: 31/10 SALDO 150,00)
                 matches_mov = re.findall(r"\d{2}/\d{2}\s+SALDO\s+.*?([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
 
                 if matches_invest:
                     saldo = limpar_numero(matches_invest[-1])
                 elif matches_mov:
-                    # Pega a última ocorrência de "SALDO", que geralmente é o saldo final do período
                     saldo = limpar_numero(matches_mov[-1])
 
             elif banco == "SANTANDER":
@@ -143,27 +140,45 @@ def encontrar_saldo_pdf(caminho_pdf):
 
             elif banco == "BB":
                 texto_sem_aspas = texto_completo.replace('"', '').replace("'", "")
-                matches_invest = re.findall(r"SALDO ATUAL.*?([\d\.]+,\d{2})", texto_sem_aspas, re.IGNORECASE | re.DOTALL)
-                matches_resumo = re.findall(r"SALDO ATUAL[\s\n]*=[\s\n]*([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
+                
+                # --- LÓGICA REFINADA ---
+                saldo_encontrado = False
 
-                if matches_resumo: saldo = sum(limpar_numero(v) for v in matches_resumo)
-                elif matches_invest: saldo = limpar_numero(matches_invest[-1])
-                else:
-                    linhas = texto_completo.split('\n')
-                    saldo_encontrado_bb = None
-                    padrao_data = r"^\s*\d{2}/\d{2}/\d{4}"
-                    padrao_saldo_final = r"S\s+A\s+L\s+D\s+O"
-                    for linha in linhas:
-                        if re.search(padrao_saldo_final, linha, re.IGNORECASE):
-                             valores = re.findall(r"([\d\.]+,\d{2})[CD]?", linha)
-                             if valores: saldo_encontrado_bb = limpar_numero(valores[-1])
-                        elif re.match(padrao_data, linha):
-                            valores = re.findall(r"([\d\.]+,\d{2})[CD]?", linha)
-                            if valores: saldo_encontrado_bb = limpar_numero(valores[-1])
-                    if saldo_encontrado_bb is not None: saldo = saldo_encontrado_bb
+                # 1. Se NÃO for Aplicação (Conta Movimento), prioriza "S A L D O" espaçado
+                if not eh_aplicacao:
+                    matches_saldo_espacado = re.findall(r"S\s+A\s+L\s+D\s+O.*?([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
+                    if matches_saldo_espacado:
+                        saldo = limpar_numero(matches_saldo_espacado[-1])
+                        saldo_encontrado = True
+
+                # 2. Se não achou acima (ou se for Aplicação), tenta os padrões comuns
+                if not saldo_encontrado:
+                    # Busca "SALDO ATUAL =" (Comum em resumos)
+                    matches_resumo = re.findall(r"SALDO ATUAL[\s\n]*=[\s\n]*([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
+                    
+                    # Busca "SALDO ATUAL" simples (Investimento/Aplicação)
+                    matches_invest = re.findall(r"SALDO ATUAL\s+([\d\.]+,\d{2})", texto_sem_aspas, re.IGNORECASE)
+
+                    if matches_resumo:
+                        saldo = sum(limpar_numero(v) for v in matches_resumo)
+                    elif matches_invest:
+                        saldo = limpar_numero(matches_invest[-1])
                     else:
-                        matches_res = re.findall(r"SALDO ATUAL.*?([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
-                        if matches_res: saldo = limpar_numero(matches_res[-1])
+                        # 3. Fallback: Linha a Linha
+                        linhas = texto_completo.split('\n')
+                        saldo_encontrado_bb = None
+                        padrao_data = r"^\s*\d{2}/\d{2}/\d{4}"
+                        
+                        for linha in linhas:
+                            if re.match(padrao_data, linha):
+                                valores = re.findall(r"([\d\.]+,\d{2})[CD]?", linha)
+                                if valores: saldo_encontrado_bb = limpar_numero(valores[-1])
+                        
+                        if saldo_encontrado_bb is not None: 
+                            saldo = saldo_encontrado_bb
+                        else:
+                            matches_res = re.findall(r"SALDO ATUAL.*?([\d\.]+,\d{2})", texto_completo, re.IGNORECASE)
+                            if matches_res: saldo = limpar_numero(matches_res[-1])
 
             elif banco == "BANPARA":
                 texto_limpo = texto_completo.upper().replace("Ã", "A").replace("Ç", "C")
@@ -339,14 +354,12 @@ def processar_confronto(pasta_extratos, dados_dict):
     lista_final = []
     for chave, dados in dados_dict.items():
         if not dados.get('TEM_PDF'): dados['UG'] = 'N/D'
-        # CORREÇÃO DE PRECISÃO: Arredonda a diferença para 2 casas decimais
         dados['DIFERENÇA'] = round(dados['RAZÃO'] - dados['EXTRATO'], 2)
         lista_final.append(dados)
     
     for pdf in arquivos_aplicacao + arquivos_movimento:
         if not pdf['processado']:
             grupo_pdf = "APLICACAO" if "aplic" in pdf['nome'].lower() else "MOVIMENTO"
-            # CORREÇÃO DE PRECISÃO: Arredonda diferença aqui também
             lista_final.append({
                 "UG": pdf['ug'], "CÓDIGO": "N/A", "DESCRIÇÃO": "PDF sem conta no Excel",
                 "CONTA": pdf['nome'], "RAZÃO": 0.0, "GRUPO": grupo_pdf,
@@ -363,11 +376,9 @@ def aplicar_estilo_excel(ws, wb, df, start_row, cols):
     for i, col in enumerate(cols):
         ws.write(start_row, i, col, fmt_header)
     
-    # CORREÇÃO DE FORMATAÇÃO: Só pinta se diferença for SIGNIFICATIVA (evita 0,00001)
     try:
         idx_dif = cols.index("DIFERENÇA")
         letra = chr(65 + idx_dif) 
-        # Critério: "Not Between" -0.009 e 0.009 (ou seja, só pinta se for maior que quase 1 centavo)
         ws.conditional_format(f'{letra}{start_row+2}:{letra}{start_row+1+len(df)}', 
                               {'type': 'cell', 'criteria': 'not between', 'minimum': -0.009, 'maximum': 0.009, 'format': fmt_red})
     except: pass
@@ -443,7 +454,6 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
 
                     # --- Geração Excel Binário ---
                     output = io.BytesIO()
-                    # Garante que usamos o engine xlsxwriter para formatação
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                         wb = writer.book
                         ws = wb.add_worksheet('Conciliacao')
@@ -468,7 +478,6 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                     
                     st.success("Conciliação Finalizada com Sucesso!")
                     
-                    # --- Preview HTML (Com correção visual de arredondamento) ---
                     count_diffs = len(df_final[abs(df_final['DIFERENÇA']) > 0.01])
                     
                     html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
@@ -479,7 +488,6 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                     st.markdown(html, unsafe_allow_html=True)
                     st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
 
-                    # --- Botão de Download (Corrigido para evitar HTML) ---
                     st.download_button(
                         label="BAIXAR RELATÓRIO DE CONCILIAÇÃO EM EXCEL",
                         data=output,
