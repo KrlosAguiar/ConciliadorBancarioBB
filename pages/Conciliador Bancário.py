@@ -250,7 +250,9 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             return "NÃO LOCALIZADO"
             
         df_final['Documento'] = df_final.apply(find_doc, axis=1)
-        return df_final[['Data', 'Documento', 'Valor_Razao']]
+        
+        # CORREÇÃO CRÍTICA DO ERRO DE ÍNDICE: Resetar índice antes de retornar
+        return df_final.reset_index(drop=True)[['Data', 'Documento', 'Valor_Razao']]
         
     except Exception as e:
         return pd.DataFrame()
@@ -268,7 +270,6 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
     # ==========================================================================
     # 1. MATCH PERFEITO DE VALOR (Data, Documento e Valor Exato)
     # ==========================================================================
-    # Esta é a etapa crucial para corrigir o problema dos valores duplicados.
     
     for idx_p, row_p in df_pdf.iterrows():
         # Filtra candidatos no Excel que tenham: Mesma Data, Mesmo Documento, NÃO usados
@@ -302,12 +303,12 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
     # ==========================================================================
     # 2. MATCH POR SOMA (Para itens agrupados no Excel mas unicos no PDF)
     # ==========================================================================
-    # Ex: No Excel o FUNDEB está quebrado em 5 linhas, no PDF é uma só.
     
     # Agrupa o Excel restante por Data e Documento
     excel_restante = df_excel[~df_excel.index.isin(idx_e_u)].copy()
     if not excel_restante.empty:
-        grupos_excel = excel_restante.groupby(['Data', 'Documento']).indices
+        # CORREÇÃO CRÍTICA: Usar .groups (rótulos) em vez de .indices (posição) para evitar KeyError
+        grupos_excel = excel_restante.groupby(['Data', 'Documento']).groups
         
         for idx_p, row_p in df_pdf.iterrows():
             if idx_p in idx_p_u: continue # Já foi resolvido na etapa anterior
@@ -316,11 +317,12 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
             
             if chave in grupos_excel:
                 indices_grupo = grupos_excel[chave]
-                # Filtra apenas os que ainda não foram usados
+                # Filtra apenas os que ainda não foram usados (embora excel_restante já filtre, é segurança extra)
                 indices_disponiveis = [i for i in indices_grupo if i not in idx_e_u]
                 
                 if not indices_disponiveis: continue
                 
+                # Agora .loc funcionará pois indices_disponiveis contem rótulos do index
                 soma_excel = df_excel.loc[indices_disponiveis, 'Valor_Razao'].sum()
                 
                 # Se a soma bater com o valor do PDF (margem de R$ 1,00 para arredondamentos)
@@ -336,15 +338,13 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
                     idx_p_u.add(idx_p)
                     idx_e_u.update(indices_disponiveis)
                 else:
-                    # Se a soma não bater (ex: PDF pede 625k, Excel tem 30k sobrando), NÃO força match
-                    # Deixa cair na "Diferença" para ficar claro o erro
                     pass
 
     # ==========================================================================
     # 3. ITENS NÃO CONCILIADOS (Sobras)
     # ==========================================================================
     
-    # Sobras do PDF (Aparecem como Documento, Valor Extrato, Valor Razão 0, Diferença Total)
+    # Sobras do PDF
     for idx_p, row_p in df_pdf.iterrows():
         if idx_p not in idx_p_u:
              res.append({
@@ -356,10 +356,9 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
                 'Diferença': row_p['Valor_Extrato']
             })
              
-    # Sobras do Excel (Aparecem como Documento, Valor Extrato 0, Valor Razão, Diferença Negativa)
+    # Sobras do Excel
     excel_sobra = df_excel[~df_excel.index.isin(idx_e_u)]
     if not excel_sobra.empty:
-        # Agrupa para não poluir o relatório com mil linhas pequenas
         agg_sobra = excel_sobra.groupby(['Data', 'Documento'])['Valor_Razao'].sum().reset_index()
         for _, row_e in agg_sobra.iterrows():
              res.append({
@@ -375,7 +374,6 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
     if df_f.empty: return pd.DataFrame(columns=['Data', 'Histórico', 'Documento', 'Valor_Extrato', 'Valor_Razao', 'Diferença'])
     
     df_f['dt'] = pd.to_datetime(df_f['Data'], format='%d/%m/%Y', errors='coerce')
-    # Ordena mantendo a lógica de data e depois documento
     return df_f.sort_values(by=['dt', 'Documento']).drop(columns=['dt'])
 
 # ==============================================================================
