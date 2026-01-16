@@ -170,6 +170,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
         
         # C) Novos códigos na coluna Z (266, 264, 268)
+        # Regex busca esses números exatos
         mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268", case=False, regex=True, na=False)
         
         # D) Código 250 na coluna Z (SOMENTE SE tiver o texto específico em AB)
@@ -177,70 +178,63 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         cond_ab_text = df['Info_AB'].astype(str).str.contains("transferência financeira concedida|repasse financeiro concedido", case=False, na=False)
         mask_250_restrict = cond_250_z & cond_ab_text
         
-        # E) Filtro Especial AA: "Ded.FUNDEB"
-        mask_aa_fundeb = df['Info_AA'].astype(str).str.contains("Ded.FUNDEB", case=False, na=False)
-        
         # Aplica filtros de INCLUSÃO
-        df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_fundeb].copy()
+        df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict].copy()
         
         # ======================================================================
-        # 2. PROCESSO DE EXCLUSÃO DE ESTORNOS
+        # 2. PROCESSO DE EXCLUSÃO DE ESTORNOS (Matching e Remoção do Par)
         # ======================================================================
         
         # Identifica linhas que são estornos na coluna AA
         termos_estorno = r"Est Pgto Ext|Est Pagto"
         mask_eh_estorno = df_filtered['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
         
+        # Divide em dois grupos: Os Estornos e os "Candidatos a Validos"
         df_estornos = df_filtered[mask_eh_estorno].copy()
         df_validos = df_filtered[~mask_eh_estorno].copy()
         
         indices_para_remover = []
         indices_usados_validos = set()
         
+        # Para cada estorno, tenta achar o pagamento original para matar os dois
         for idx_est, row_est in df_estornos.iterrows():
             valor_est = row_est['Valor_Razao']
+            
+            # Procura um item válido com mesmo valor (margem de 1 centavo) que ainda não foi removido
             candidatos = df_validos[
                 (abs(df_validos['Valor_Razao'] - valor_est) < 0.01) & 
                 (~df_validos.index.isin(indices_usados_validos))
             ]
+            
             if not candidatos.empty:
+                # Encontrou o par!
                 idx_par = candidatos.index[0]
+                
+                # Marca o pagamento original para remoção
                 indices_para_remover.append(idx_par)
                 indices_usados_validos.add(idx_par)
+                
+                # Marca o estorno para remoção
                 indices_para_remover.append(idx_est)
             else:
+                # Se não achou par (estorno avulso), remove apenas o estorno para não abater indevidamente
                 indices_para_remover.append(idx_est)
 
+        # Remove as linhas identificadas (Estornos + Pagamentos Estornados)
         df_final = df_filtered.drop(indices_para_remover, errors='ignore').copy()
         
         # ======================================================================
-        # 3. FINALIZAÇÃO E MATCHING INTELIGENTE
+        # 3. FINALIZAÇÃO
         # ======================================================================
         
         df_final['Data_dt'] = df_final['Data'].apply(parse_br_date)
         df_final = df_final.dropna(subset=['Data_dt'])
         df_final['Data'] = df_final['Data_dt'].dt.strftime('%d/%m/%Y')
         
-        # Lookup padrão (Data -> {DocNumber: DocOriginal})
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
-        
-        # --- NOVO: Lookup específico para FUNDEB ---
-        # Cria um dicionário Data -> Documento para itens do extrato que sejam FUNDEB
-        lookup_fundeb = {}
-        if not df_pdf_ref.empty:
-            mask_pdf_fundeb = df_pdf_ref['Histórico'].astype(str).str.contains("FUNDEB", case=False, na=False)
-            for idx, row in df_pdf_ref[mask_pdf_fundeb].iterrows():
-                lookup_fundeb[row['Data']] = row['Documento']
         
         def find_doc(row):
             txt, dt = str(row['Info_AB']).upper(), row['Data']
-            info_aa = str(row['Info_AA']).upper()
-
-            # LÓGICA ESPECIAL: Se for Ded.FUNDEB, força o documento do extrato
-            if "DED.FUNDEB" in info_aa:
-                if dt in lookup_fundeb:
-                    return lookup_fundeb[dt]
-            
             if dt not in lookup: return "S/D"
             if "TARIFA" in txt and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
             for n in re.findall(r'\d+', txt):
