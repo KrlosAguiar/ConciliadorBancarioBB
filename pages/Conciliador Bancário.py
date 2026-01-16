@@ -154,16 +154,21 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         
         df.columns = ['Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
         
-        # 1. Filtros Originais (na coluna Z)
+        # 1. Regras de INCLUSÃO (Mantidas)
+        # Pega "Pagamento" na coluna Z
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
+        # Pega "TRANSFERENCIA..." na coluna Z (se for Crédito)
         mask_transf_z = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
+        # Pega "Transf" na coluna AA
+        mask_aa_inclusao = df['Info_AA'].astype(str).str.contains("Transf", case=False, na=False)
         
-        # 2. Novo Filtro (na coluna AA)
-        # Adiciona linhas onde a coluna AA contém "Transf" (captura "Transf", "Transf.", "Transferencia")
-        mask_aa = df['Info_AA'].astype(str).str.contains("Transf", case=False, na=False)
+        # 2. Regra de EXCLUSÃO (Aplicada na coluna AA conforme solicitado)
+        # Remove se na coluna AA tiver "Est Pgto", "Estorno" ou "Est"
+        termos_proibidos = "Est Pgto|Estorno|Est"
+        mask_aa_exclusao = df['Info_AA'].astype(str).str.contains(termos_proibidos, case=False, na=False)
         
-        # Combina tudo: Pagamento (Z) OU Transferencia (Z) OU Transf (AA)
-        df = df[mask_pagto | mask_transf_z | mask_aa].copy()
+        # Lógica Final: (Qualquer Inclusão Verdadeira) E (Exclusão Falsa)
+        df = df[(mask_pagto | mask_transf_z | mask_aa_inclusao) & (~mask_aa_exclusao)].copy()
         
         df['Data_dt'] = df['Data'].apply(parse_br_date); df = df.dropna(subset=['Data_dt'])
         df['Data'] = df['Data_dt'].dt.strftime('%d/%m/%Y')
