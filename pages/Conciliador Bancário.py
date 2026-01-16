@@ -147,16 +147,30 @@ def processar_pdf(file_bytes):
 def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
     try:
         df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
+        
+        # Mapeamento de colunas: 25=Z, 26=AA, 27=AB
         try: df = df.iloc[:, [4, 5, 8, 25, 26, 27]].copy()
         except: df = df.iloc[:, [4, 5, 8, -4, -2, -1]].copy()
+        
         df.columns = ['Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
+        
+        # 1. Filtros Originais (na coluna Z)
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
-        mask_transf = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
-        df = df[mask_pagto | mask_transf].copy()
+        mask_transf_z = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
+        
+        # 2. Novo Filtro (na coluna AA)
+        # Adiciona linhas onde a coluna AA contém "Transf" (captura "Transf", "Transf.", "Transferencia")
+        mask_aa = df['Info_AA'].astype(str).str.contains("Transf", case=False, na=False)
+        
+        # Combina tudo: Pagamento (Z) OU Transferencia (Z) OU Transf (AA)
+        df = df[mask_pagto | mask_transf_z | mask_aa].copy()
+        
         df['Data_dt'] = df['Data'].apply(parse_br_date); df = df.dropna(subset=['Data_dt'])
         df['Data'] = df['Data_dt'].dt.strftime('%d/%m/%Y')
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
+        
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
+        
         def find_doc(row):
             txt, dt = str(row['Info_AB']).upper(), row['Data']
             if dt not in lookup: return "S/D"
@@ -164,6 +178,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             for n in re.findall(r'\d+', txt):
                 if n.lstrip('0') in lookup[dt]: return lookup[dt][n.lstrip('0')]
             return "NÃO LOCALIZADO"
+            
         df['Documento'] = df.apply(find_doc, axis=1)
         return df[['Data', 'Documento', 'Valor_Razao']]
     except: return pd.DataFrame()
