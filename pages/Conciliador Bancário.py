@@ -150,7 +150,6 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
         
         # Mapeamento de colunas
-        # 4=Data, 5=DC, 8=Valor, 25=Z, 26=AA, 27=AB
         try: df = df.iloc[:, [4, 5, 8, 25, 26, 27]].copy()
         except: df = df.iloc[:, [4, 5, 8, -4, -2, -1]].copy()
         
@@ -159,41 +158,48 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         # Tratamento de valores numéricos
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
         
+        # --- CORREÇÃO ESTRATÉGICA: Diferenciação de FUNDEB/PASEP no PDF (Em Memória) ---
+        # Isso resolve o problema de "Replicar valor" quando o banco usa o mesmo Doc para coisas diferentes
+        if not df_pdf_ref.empty:
+            # Adiciona sufixo -FUNDEB nos documentos do PDF que são do FUNDEB
+            mask_pdf_fundeb = (df_pdf_ref['Histórico'].astype(str).str.contains("FUNDEB", case=False, na=False)) & \
+                              (~df_pdf_ref['Documento'].astype(str).str.endswith("-FUNDEB"))
+            if mask_pdf_fundeb.any():
+                df_pdf_ref.loc[mask_pdf_fundeb, 'Documento'] = df_pdf_ref.loc[mask_pdf_fundeb, 'Documento'].astype(str) + "-FUNDEB"
+            
+            # Adiciona sufixo -PASEP nos documentos do PDF que são do PASEP
+            mask_pdf_pasep = (df_pdf_ref['Histórico'].astype(str).str.contains("PASEP", case=False, na=False)) & \
+                             (~df_pdf_ref['Documento'].astype(str).str.endswith("-PASEP"))
+            if mask_pdf_pasep.any():
+                df_pdf_ref.loc[mask_pdf_pasep, 'Documento'] = df_pdf_ref.loc[mask_pdf_pasep, 'Documento'].astype(str) + "-PASEP"
+
         # ======================================================================
-        # 1. REGRAS DE INCLUSÃO (ESTRITAS)
+        # 1. REGRAS DE INCLUSÃO
         # ======================================================================
         
-        # A) Padrão: "Pagamento" na coluna Z
+        # Filtros Padrão
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
-        
-        # B) Padrão: "Transferência" com texto longo na coluna Z (apenas Crédito)
         mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
-        
-        # C) Novos códigos na coluna Z (266, 264, 268)
         mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268", case=False, regex=True, na=False)
-        
-        # D) Código 250 na coluna Z (SOMENTE SE tiver o texto específico em AB)
         cond_250_z = df['Info_Z'].astype(str).str.contains("250", case=False, na=False)
         cond_ab_text = df['Info_AB'].astype(str).str.contains("transferência financeira concedida|repasse financeiro concedido", case=False, na=False)
         mask_250_restrict = cond_250_z & cond_ab_text
         
-        # E) Filtro Especial AA: "Ded.FUNDEB"
-        mask_aa_fundeb = df['Info_AA'].astype(str).str.contains("Ded.FUNDEB", case=False, na=False)
+        # Filtro de Deduções (FUNDEB, PASEP, etc) na Coluna AA
+        # O uso de "Ded." captura "Ded.FUNDEB", "Ded.PASEP", etc.
+        mask_aa_ded = df['Info_AA'].astype(str).str.contains(r"Ded\.", case=False, regex=True, na=False)
         
-        # Aplica filtros de INCLUSÃO
-        df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_fundeb].copy()
+        # Aplica filtros
+        df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_ded].copy()
         
         # ======================================================================
         # 2. PROCESSO DE EXCLUSÃO DE ESTORNOS
         # ======================================================================
         
-        # Identifica linhas que são estornos na coluna AA
         termos_estorno = r"Est Pgto Ext|Est Pagto"
         mask_eh_estorno = df_filtered['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
-        
         df_estornos = df_filtered[mask_eh_estorno].copy()
         df_validos = df_filtered[~mask_eh_estorno].copy()
-        
         indices_para_remover = []
         indices_usados_validos = set()
         
@@ -214,33 +220,44 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         df_final = df_filtered.drop(indices_para_remover, errors='ignore').copy()
         
         # ======================================================================
-        # 3. FINALIZAÇÃO E MATCHING INTELIGENTE
+        # 3. FINALIZAÇÃO E ATRIBUIÇÃO DE DOCUMENTOS (COM SUFIXOS)
         # ======================================================================
         
         df_final['Data_dt'] = df_final['Data'].apply(parse_br_date)
         df_final = df_final.dropna(subset=['Data_dt'])
         df_final['Data'] = df_final['Data_dt'].dt.strftime('%d/%m/%Y')
         
-        # Lookup padrão (Data -> {DocNumber: DocOriginal})
+        # Lookup Padrão (Numérico) para pagamentos comuns
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
         
-        # --- NOVO: Lookup específico para FUNDEB ---
-        # Cria um dicionário Data -> Documento para itens do extrato que sejam FUNDEB
+        # Lookups Específicos para Deduções (usando os sufixos criados)
         lookup_fundeb = {}
+        lookup_pasep = {}
+        
         if not df_pdf_ref.empty:
-            mask_pdf_fundeb = df_pdf_ref['Histórico'].astype(str).str.contains("FUNDEB", case=False, na=False)
-            for idx, row in df_pdf_ref[mask_pdf_fundeb].iterrows():
+            # Mapeia Data -> Documento com sufixo -FUNDEB
+            mask_pdf_f = df_pdf_ref['Documento'].astype(str).str.endswith("-FUNDEB")
+            for idx, row in df_pdf_ref[mask_pdf_f].iterrows():
                 lookup_fundeb[row['Data']] = row['Documento']
+                
+            # Mapeia Data -> Documento com sufixo -PASEP
+            mask_pdf_p = df_pdf_ref['Documento'].astype(str).str.endswith("-PASEP")
+            for idx, row in df_pdf_ref[mask_pdf_p].iterrows():
+                lookup_pasep[row['Data']] = row['Documento']
         
         def find_doc(row):
-            txt, dt = str(row['Info_AB']).upper(), row['Data']
+            txt = str(row['Info_AB']).upper()
+            dt = row['Data']
             info_aa = str(row['Info_AA']).upper()
 
-            # LÓGICA ESPECIAL: Se for Ded.FUNDEB, força o documento do extrato
+            # LÓGICA ESPECIAL PARA DEDUÇÕES
             if "DED.FUNDEB" in info_aa:
-                if dt in lookup_fundeb:
-                    return lookup_fundeb[dt]
+                if dt in lookup_fundeb: return lookup_fundeb[dt]
             
+            if "DED.PASEP" in info_aa:
+                if dt in lookup_pasep: return lookup_pasep[dt]
+
+            # Lógica Padrão para os demais
             if dt not in lookup: return "S/D"
             if "TARIFA" in txt and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
             for n in re.findall(r'\d+', txt):
