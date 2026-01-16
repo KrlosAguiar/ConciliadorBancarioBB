@@ -155,21 +155,22 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         df.columns = ['Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
         
         # 1. Regras de INCLUSÃO (Trazem os dados para o relatório)
-        # Pega "Pagamento" na coluna Z
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
-        # Pega "TRANSFERENCIA..." na coluna Z (somente Crédito 'C')
         mask_transf_z = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
-        # Pega "Transf" na coluna AA (Isso incluiu também os estornos de transferência anteriormente)
         mask_aa_inclusao = df['Info_AA'].astype(str).str.contains("Transf", case=False, na=False)
         
-        # 2. Regra de EXCLUSÃO (CORRIGIDO: Agora verifica na coluna AA)
-        # Remove se na coluna AA tiver "Est Pgto", "Estorno" ou a palavra exata "Est"
-        # O uso de \bEst\b garante que pegue "Est" ou "Est." mas não "Prestação" ou "Restos"
-        termos_proibidos = r"Est Pgto|Estorno|\bEst\b"
-        mask_aa_exclusao = df['Info_AA'].astype(str).str.contains(termos_proibidos, case=False, regex=True, na=False)
+        # 2. Regras de EXCLUSÃO
         
-        # Lógica Final: (Atende a qualquer inclusão) E (NÃO é estorno)
-        df = df[(mask_pagto | mask_transf_z | mask_aa_inclusao) & (~mask_aa_exclusao)].copy()
+        # 2.1 Exclui Estornos na coluna AA (Est Pgto, Estorno, Est)
+        termos_estorno = r"Est Pgto|Estorno|\bEst\b"
+        mask_aa_exclusao = df['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
+        
+        # 2.2 NOVO: Exclui códigos 250 e 251 na coluna Z
+        # O regex busca "250 -" ou "251 -" para garantir que é o código da operação
+        mask_z_exclusao = df['Info_Z'].astype(str).str.contains(r"250\s-|251\s-", case=False, regex=True, na=False)
+        
+        # Lógica Final: (Inclusão) E (NÃO Estorno AA) E (NÃO Código 250/251 Z)
+        df = df[(mask_pagto | mask_transf_z | mask_aa_inclusao) & (~mask_aa_exclusao) & (~mask_z_exclusao)].copy()
         
         df['Data_dt'] = df['Data'].apply(parse_br_date); df = df.dropna(subset=['Data_dt'])
         df['Data'] = df['Data_dt'].dt.strftime('%d/%m/%Y')
