@@ -170,7 +170,6 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
         
         # C) Novos códigos na coluna Z (266, 264, 268)
-        # Regex busca esses números exatos
         mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268", case=False, regex=True, na=False)
         
         # D) Código 250 na coluna Z (SOMENTE SE tiver o texto específico em AB)
@@ -178,8 +177,13 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         cond_ab_text = df['Info_AB'].astype(str).str.contains("transferência financeira concedida|repasse financeiro concedido", case=False, na=False)
         mask_250_restrict = cond_250_z & cond_ab_text
         
+        # E) Novo Filtro AA: "Ded.FUNDEB" (Adicionado conforme solicitado)
+        # Nota: O filtro antigo de "Transf" na AA foi removido anteriormente para evitar duplicidade.
+        # Agora estamos adicionando explicitamente apenas o Ded.FUNDEB na AA.
+        mask_aa_fundeb = df['Info_AA'].astype(str).str.contains("Ded.FUNDEB", case=False, na=False)
+        
         # Aplica filtros de INCLUSÃO
-        df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict].copy()
+        df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_fundeb].copy()
         
         # ======================================================================
         # 2. PROCESSO DE EXCLUSÃO DE ESTORNOS (Matching e Remoção do Par)
