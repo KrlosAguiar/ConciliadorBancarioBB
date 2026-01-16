@@ -63,7 +63,6 @@ def parse_br_date(date_val):
     except: return pd.to_datetime(date_val, errors='coerce')
 
 def processar_pdf(file_bytes):
-    # LÓGICA ORIGINAL RESTAURADA COM AGRUPAMENTO DE TARIFAS (13113)
     rows_debitos = []
     rows_devolucoes = []
     
@@ -135,7 +134,6 @@ def processar_pdf(file_bytes):
     termos_excluir = "SALDO|S A L D O|Resgate|BB-APLIC C\.PRZ-APL\.AUT|1\.972"
     df = df_debitos[~df_debitos['Histórico'].astype(str).str.contains(termos_excluir, case=False, na=False)].copy()
     
-    # Agrupamento de Tarifas (13113)
     df['Data_dt'] = pd.to_datetime(df['Data'], format='%d/%m/%Y', errors='coerce')
     mask_13113 = df['Histórico'].astype(str).str.contains("13113", na=False)
     if any(mask_13113):
@@ -156,7 +154,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         df.columns = ['Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
         
-        # Filtros
+        # Filtros de Inclusão
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
         mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
         mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268", case=False, regex=True, na=False)
@@ -167,14 +165,13 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         
         df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_ded].copy()
         
-        # Exclusão Estornos
+        # Estornos
         termos_estorno = r"Est Pgto Ext|Est Pagto"
         mask_eh_estorno = df_filtered['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
         df_estornos = df_filtered[mask_eh_estorno].copy()
         df_validos = df_filtered[~mask_eh_estorno].copy()
         indices_para_remover = []
         indices_usados_validos = set()
-        
         for idx_est, row_est in df_estornos.iterrows():
             valor_est = row_est['Valor_Razao']
             candidatos = df_validos[(abs(df_validos['Valor_Razao'] - valor_est) < 0.01) & (~df_validos.index.isin(indices_usados_validos))]
@@ -184,9 +181,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             else: indices_para_remover.append(idx_est)
 
         df_final = df_filtered.drop(indices_para_remover, errors='ignore').copy()
-        
-        df_final['Data_dt'] = df_final['Data'].apply(parse_br_date)
-        df_final = df_final.dropna(subset=['Data_dt'])
+        df_final['Data_dt'] = df_final['Data'].apply(parse_br_date); df_final = df_final.dropna(subset=['Data_dt'])
         df_final['Data'] = df_final['Data_dt'].dt.strftime('%d/%m/%Y')
         
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
@@ -197,7 +192,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
                 if row['Data'] not in lookup_ded: lookup_ded[row['Data']] = row['Documento']
         
         def find_doc(row):
-            txt = str(row['Info_AB']).upper(); dt = row['Data']; info_aa = str(row['Info_AA']).upper()
+            txt, dt, info_aa = str(row['Info_AB']).upper(), row['Data'], str(row['Info_AA']).upper()
             if "DED." in info_aa and dt in lookup_ded: return lookup_ded[dt]
             if dt not in lookup: return "S/D"
             if "TARIFA" in txt and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
@@ -206,7 +201,6 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             return "NÃO LOCALIZADO"
             
         df_final['Documento'] = df_final.apply(find_doc, axis=1)
-        # Importante: Preservamos a descrição para identificar o FUNDEB
         df_final['Descricao_Excel'] = df_final['Info_AA']
         
         return df_final.reset_index(drop=True)[['Data', 'Documento', 'Valor_Razao', 'Descricao_Excel']]
@@ -214,110 +208,103 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
 
 def executar_conciliacao_inteligente(df_pdf, df_excel):
     """
-    Algoritmo Híbrido:
-    1. Match Exato (1-para-1) para tudo (PASEP, Transferências, etc).
-    2. Agrupamento EXCLUSIVO para FUNDEB (Soma múltiplos FUNDEB Excel x FUNDEB PDF).
+    Algoritmo com Consolidação Forçada para Categorias Especiais.
     """
     res = []
     idx_p_u = set()
     idx_e_u = set()
 
+    # Normalização de Documentos para comparação
+    df_pdf['Doc_Clean'] = df_pdf['Documento'].apply(lambda x: str(x).lstrip('0').split('.')[0])
+    df_excel['Doc_Clean'] = df_excel['Documento'].apply(lambda x: str(x).lstrip('0').split('.')[0])
+
     # ==========================================================================
-    # 1. MATCH EXATO (Prioridade para PASEP e Itens Únicos)
+    # 0. CONSOLIDAÇÃO FUNDEB E PASEP (SOMA TOTAL POR DIA/DOC)
+    # ==========================================================================
+    for cat in ["FUNDEB", "PASEP"]:
+        mask_p = df_pdf['Histórico'].astype(str).str.contains(cat, case=False, na=False)
+        mask_e = df_excel['Descricao_Excel'].astype(str).str.contains(cat, case=False, na=False)
+        
+        # Filtra apenas o que não foi usado
+        p_cat = df_pdf[mask_p]
+        e_cat = df_excel[mask_e]
+        
+        # Agrupa ambos os lados por Data e Doc_Clean
+        p_agg = p_cat.groupby(['Data', 'Doc_Clean'])
+        e_agg = e_cat.groupby(['Data', 'Doc_Clean'])
+        
+        todas_chaves = set(p_agg.groups.keys()) | set(e_agg.groups.keys())
+        
+        for chave in todas_chaves:
+            indices_p = p_agg.groups.get(chave, [])
+            indices_e = e_agg.groups.get(chave, [])
+            
+            soma_p = df_pdf.loc[indices_p, 'Valor_Extrato'].sum() if len(indices_p) > 0 else 0.0
+            soma_e = df_excel.loc[indices_e, 'Valor_Razao'].sum() if len(indices_e) > 0 else 0.0
+            
+            if soma_p > 0 or soma_e > 0:
+                # Pegamos o documento original do PDF se existir, senão do Excel
+                doc_orig = df_pdf.loc[indices_p[0], 'Documento'] if len(indices_p) > 0 else df_excel.loc[indices_e[0], 'Documento']
+                
+                res.append({
+                    'Data': chave[0],
+                    'Histórico': f"Dedução {cat} (Consolidado)",
+                    'Documento': doc_orig,
+                    'Valor_Extrato': soma_p,
+                    'Valor_Razao': soma_e,
+                    'Diferença': round(soma_p - soma_e, 2)
+                })
+                idx_p_u.update(indices_p)
+                idx_e_u.update(indices_e)
+
+    # ==========================================================================
+    # 1. MATCH EXATO (Saúde e outros)
     # ==========================================================================
     for idx_p, row_p in df_pdf.iterrows():
+        if idx_p in idx_p_u: continue
         cand = df_excel[
             (df_excel['Data'] == row_p['Data']) & 
-            (df_excel['Documento'] == row_p['Documento']) & 
+            (df_excel['Doc_Clean'] == row_p['Doc_Clean']) & 
             (~df_excel.index.isin(idx_e_u))
         ]
-        match_valor = cand[abs(cand['Valor_Razao'] - row_p['Valor_Extrato']) < 0.01]
-        
-        if not match_valor.empty:
-            idx_e = match_valor.index[0]
-            val_excel = match_valor.loc[idx_e]['Valor_Razao']
+        match = cand[abs(cand['Valor_Razao'] - row_p['Valor_Extrato']) < 0.01]
+        if not match.empty:
+            idx_e = match.index[0]
             res.append({
                 'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': row_p['Documento'],
-                'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': val_excel, 'Diferença': 0.0
+                'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': match.loc[idx_e]['Valor_Razao'], 'Diferença': 0.0
             })
-            idx_p_u.add(idx_p)
-            idx_e_u.add(idx_e)
+            idx_p_u.add(idx_p); idx_e_u.add(idx_e)
 
     # ==========================================================================
-    # 2. REGRA ESPECIAL: SOMA APENAS DE "DED. FUNDEB"
-    # ==========================================================================
-    # Filtra sobras que contenham "FUNDEB"
-    mask_pdf_fundeb = df_pdf['Histórico'].astype(str).str.contains("FUNDEB", case=False, na=False)
-    mask_excel_fundeb = df_excel['Descricao_Excel'].astype(str).str.contains("FUNDEB", case=False, na=False)
-    
-    # Itera sobre itens de FUNDEB do PDF ainda não conciliados
-    for idx_p, row_p in df_pdf[mask_pdf_fundeb].iterrows():
-        if idx_p in idx_p_u: continue
-        
-        # Busca itens de FUNDEB no Excel (Mesma Data e Documento)
-        candidatos_excel = df_excel[
-            mask_excel_fundeb &
-            (df_excel['Data'] == row_p['Data']) &
-            (df_excel['Documento'] == row_p['Documento']) &
-            (~df_excel.index.isin(idx_e_u))
-        ]
-        
-        if not candidatos_excel.empty:
-            soma_excel = candidatos_excel['Valor_Razao'].sum()
-            
-            # Se a soma bate (com margem de 1 real para arredondamentos)
-            if abs(soma_excel - row_p['Valor_Extrato']) < 1.00:
-                res.append({
-                    'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': row_p['Documento'],
-                    'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': soma_excel, 
-                    'Diferença': row_p['Valor_Extrato'] - soma_excel
-                })
-                idx_p_u.add(idx_p)
-                idx_e_u.update(candidatos_excel.index)
-
-    # ==========================================================================
-    # 3. MATCH FLEXÍVEL (Transferências sem Doc)
+    # 2. MATCH FLEXÍVEL (Data + Valor)
     # ==========================================================================
     for idx_p, row_p in df_pdf.iterrows():
         if idx_p in idx_p_u: continue
-        
-        cand_flex = df_excel[
-            (df_excel['Data'] == row_p['Data']) &
-            (abs(df_excel['Valor_Razao'] - row_p['Valor_Extrato']) < 0.01) &
-            (~df_excel.index.isin(idx_e_u))
-        ]
-        if not cand_flex.empty:
-            idx_e = cand_flex.index[0]
-            val_excel = cand_flex.loc[idx_e]['Valor_Razao']
+        cand = df_excel[(df_excel['Data'] == row_p['Data']) & (abs(df_excel['Valor_Razao'] - row_p['Valor_Extrato']) < 0.01) & (~df_excel.index.isin(idx_e_u))]
+        if not cand.empty:
+            idx_e = cand.index[0]
             res.append({
-                'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': row_p['Documento'],
-                'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': val_excel, 'Diferença': 0.0
+                'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': "Docs dif.",
+                'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': cand.loc[idx_e]['Valor_Razao'], 'Diferença': 0.0
             })
-            idx_p_u.add(idx_p)
-            idx_e_u.add(idx_e)
+            idx_p_u.add(idx_p); idx_e_u.add(idx_e)
 
     # ==========================================================================
-    # 4. SOBRAS
+    # 3. SOBRAS
     # ==========================================================================
     for idx_p, row_p in df_pdf.iterrows():
         if idx_p not in idx_p_u:
-             res.append({
-                'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': row_p['Documento'],
-                'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': 0.0, 'Diferença': row_p['Valor_Extrato']
-            })
+             res.append({'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': row_p['Documento'], 'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': 0.0, 'Diferença': row_p['Valor_Extrato']})
              
     excel_sobra = df_excel[~df_excel.index.isin(idx_e_u)]
     if not excel_sobra.empty:
+        # Agrupa sobras do excel por dia/doc para limpar a visualização
         agg_sobra = excel_sobra.groupby(['Data', 'Documento'])['Valor_Razao'].sum().reset_index()
         for _, row_e in agg_sobra.iterrows():
-             res.append({
-                'Data': row_e['Data'], 'Histórico': "Não Conciliado (Razão)", 'Documento': row_e['Documento'],
-                'Valor_Extrato': 0.0, 'Valor_Razao': row_e['Valor_Razao'], 'Diferença': -row_e['Valor_Razao']
-            })
+             res.append({'Data': row_e['Data'], 'Histórico': "Não Conciliado (Razão)", 'Documento': row_e['Documento'], 'Valor_Extrato': 0.0, 'Valor_Razao': row_e['Valor_Razao'], 'Diferença': -row_e['Valor_Razao']})
 
     df_f = pd.DataFrame(res)
-    if df_f.empty: return pd.DataFrame(columns=['Data', 'Histórico', 'Documento', 'Valor_Extrato', 'Valor_Razao', 'Diferença'])
-    
     df_f['dt'] = pd.to_datetime(df_f['Data'], format='%d/%m/%Y', errors='coerce')
     return df_f.sort_values(by=['dt', 'Documento']).drop(columns=['dt'])
 
@@ -401,8 +388,7 @@ with c2:
 if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
     if up_pdf and up_xlsx:
         with st.spinner("Processando..."):
-            pdf_bytes = up_pdf.read()
-            xlsx_bytes = up_xlsx.read()
+            pdf_bytes, xlsx_bytes = up_pdf.read(), up_xlsx.read()
             df_p, coords_ref = processar_pdf(pdf_bytes)
             df_e = processar_excel_detalhado(xlsx_bytes, df_p, is_csv=up_xlsx.name.endswith('csv'))
             if df_p.empty or df_e.empty: st.error("Erro no processamento."); st.stop()
