@@ -146,35 +146,97 @@ def processar_pdf(file_bytes):
 
 def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
     try:
+        # Carregamento do arquivo
         df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
         
-        # Mapeamento de colunas: 25=Z, 26=AA, 27=AB
+        # Mapeamento de colunas (ajustar conforme índices do Excel original)
+        # 4=Data, 5=DC, 8=Valor, 25=Z, 26=AA, 27=AB
         try: df = df.iloc[:, [4, 5, 8, 25, 26, 27]].copy()
         except: df = df.iloc[:, [4, 5, 8, -4, -2, -1]].copy()
         
         df.columns = ['Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
         
-        # 1. Regras de INCLUSÃO (Trazem os dados para o relatório)
-        mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
-        mask_transf_z = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
-        mask_aa_inclusao = df['Info_AA'].astype(str).str.contains("Transf", case=False, na=False)
-        
-        # 2. Regras de EXCLUSÃO
-        
-        # 2.1 Exclui Estornos na coluna AA (Est Pgto, Estorno, Est)
-        termos_estorno = r"Est Pgto|Estorno|\bEst\b"
-        mask_aa_exclusao = df['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
-        
-        # 2.2 NOVO: Exclui códigos 250 e 251 na coluna Z
-        # O regex busca "250 -" ou "251 -" para garantir que é o código da operação
-        mask_z_exclusao = df['Info_Z'].astype(str).str.contains(r"250\s-|251\s-", case=False, regex=True, na=False)
-        
-        # Lógica Final: (Inclusão) E (NÃO Estorno AA) E (NÃO Código 250/251 Z)
-        df = df[(mask_pagto | mask_transf_z | mask_aa_inclusao) & (~mask_aa_exclusao) & (~mask_z_exclusao)].copy()
-        
-        df['Data_dt'] = df['Data'].apply(parse_br_date); df = df.dropna(subset=['Data_dt'])
-        df['Data'] = df['Data_dt'].dt.strftime('%d/%m/%Y')
+        # Tratamento inicial de valores para garantir comparação numérica correta
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
+        
+        # ======================================================================
+        # 1. REGRAS DE INCLUSÃO (Filtros positivos)
+        # ======================================================================
+        
+        # A) Pagamento na coluna Z
+        mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
+        
+        # B) Transferência antiga na coluna Z (apenas Crédito)
+        mask_transf_z = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
+        
+        # C) Transf na coluna AA
+        mask_transf_aa = df['Info_AA'].astype(str).str.contains("Transf", case=False, na=False)
+        
+        # D) Novos códigos na coluna Z (266, 264, 268)
+        # Regex busca o número seguido de espaço ou traço para evitar falsos positivos
+        mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268", case=False, regex=True, na=False)
+        
+        # E) Código 250 na coluna Z COM Condição na coluna AB
+        cond_250 = df['Info_Z'].astype(str).str.contains("250", case=False, na=False)
+        cond_ab_text = df['Info_AB'].astype(str).str.contains("transferência financeira concedida|repasse financeiro concedido", case=False, na=False)
+        mask_250_cond = cond_250 & cond_ab_text
+        
+        # Aplica filtros de INCLUSÃO
+        df_filtered = df[mask_pagto | mask_transf_z | mask_transf_aa | mask_codes_z | mask_250_cond].copy()
+        
+        # ======================================================================
+        # 2. PROCESSO DE EXCLUSÃO DE ESTORNOS (Matching)
+        # ======================================================================
+        
+        # Identifica linhas que são estornos na coluna AA
+        termos_estorno = r"Est Pgto Ext|Est Pagto"
+        mask_eh_estorno = df_filtered['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
+        
+        # Separa os estornos dos demais itens
+        df_estornos = df_filtered[mask_eh_estorno].copy()
+        df_validos = df_filtered[~mask_eh_estorno].copy()
+        
+        indices_para_remover = []
+        indices_usados_validos = set()
+        
+        # Para cada estorno, tenta encontrar um par no grupo de válidos (mesmo valor)
+        for idx_est, row_est in df_estornos.iterrows():
+            valor_est = row_est['Valor_Razao']
+            
+            # Procura um item válido com mesmo valor e que ainda não foi removido
+            # (Poderíamos adicionar filtro de Data próxima aqui se necessário)
+            candidatos = df_validos[
+                (abs(df_validos['Valor_Razao'] - valor_est) < 0.01) & 
+                (~df_validos.index.isin(indices_usados_validos))
+            ]
+            
+            if not candidatos.empty:
+                # Encontrou par!
+                idx_par = candidatos.index[0]
+                
+                # Marca AMBOS para remoção (o estorno e o pagamento original)
+                indices_para_remover.append(idx_est)
+                indices_para_remover.append(idx_par)
+                
+                # Registra que esse pagamento já foi "anulado"
+                indices_usados_validos.add(idx_par)
+            else:
+                # Se não achou par, decide se remove apenas o estorno ou mantém.
+                # A regra diz "desconsiderar valores de pagamentos", o que implica anulação mútua.
+                # Se sobrar um estorno sozinho, geralmente ele também deve sair pois suja a conciliação.
+                # Vou remover o estorno "órfão" também para não aparecer como despesa negativa.
+                indices_para_remover.append(idx_est)
+
+        # Remove as linhas identificadas
+        df_final = df_filtered.drop(indices_para_remover, errors='ignore').copy()
+        
+        # ======================================================================
+        # 3. FINALIZAÇÃO
+        # ======================================================================
+        
+        df_final['Data_dt'] = df_final['Data'].apply(parse_br_date)
+        df_final = df_final.dropna(subset=['Data_dt'])
+        df_final['Data'] = df_final['Data_dt'].dt.strftime('%d/%m/%Y')
         
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
         
@@ -186,9 +248,12 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
                 if n.lstrip('0') in lookup[dt]: return lookup[dt][n.lstrip('0')]
             return "NÃO LOCALIZADO"
             
-        df['Documento'] = df.apply(find_doc, axis=1)
-        return df[['Data', 'Documento', 'Valor_Razao']]
-    except: return pd.DataFrame()
+        df_final['Documento'] = df_final.apply(find_doc, axis=1)
+        return df_final[['Data', 'Documento', 'Valor_Razao']]
+        
+    except Exception as e:
+        # Debug (opcional): st.error(f"Erro: {e}")
+        return pd.DataFrame()
 
 def executar_conciliacao_inteligente(df_pdf, df_excel):
     res, idx_p_u, idx_e_u = [], set(), set()
