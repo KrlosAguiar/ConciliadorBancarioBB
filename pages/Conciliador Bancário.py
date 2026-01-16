@@ -5,14 +5,14 @@ import re
 import io
 import os
 import datetime
-import xlsxwriter  # Obrigatório estar no requirements.txt
+import xlsxwriter
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import mm
 from PIL import Image
-import fitz  # Requer pymupdf no requirements.txt
+import fitz
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
@@ -146,46 +146,23 @@ def processar_pdf(file_bytes):
 
 def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
     try:
-        # Carregamento do arquivo
         df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
         
-        # Mapeamento de colunas
         try: df = df.iloc[:, [4, 5, 8, 25, 26, 27]].copy()
         except: df = df.iloc[:, [4, 5, 8, -4, -2, -1]].copy()
         
         df.columns = ['Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
-        
-        # Tratamento de valores numéricos
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
         
-        # ======================================================================
-        # 1. REGRAS DE INCLUSÃO
-        # ======================================================================
-        
-        # A) Padrão: "Pagamento" na coluna Z
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
-        
-        # B) Padrão: "Transferência"
         mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
-        
-        # C) Novos códigos na coluna Z (266, 264, 268)
         mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268", case=False, regex=True, na=False)
-        
-        # D) Código 250 condicional
         cond_250_z = df['Info_Z'].astype(str).str.contains("250", case=False, na=False)
         cond_ab_text = df['Info_AB'].astype(str).str.contains("transferência financeira concedida|repasse financeiro concedido", case=False, na=False)
         mask_250_restrict = cond_250_z & cond_ab_text
-        
-        # E) Filtro de Deduções (FUNDEB, PASEP, etc) na Coluna AA
-        # Usamos "Ded." para pegar todas as variações
         mask_aa_ded = df['Info_AA'].astype(str).str.contains(r"Ded\.", case=False, regex=True, na=False)
         
-        # Aplica filtros de INCLUSÃO
         df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_ded].copy()
-        
-        # ======================================================================
-        # 2. PROCESSO DE EXCLUSÃO DE ESTORNOS
-        # ======================================================================
         
         termos_estorno = r"Est Pgto Ext|Est Pagto"
         mask_eh_estorno = df_filtered['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
@@ -198,10 +175,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         
         for idx_est, row_est in df_estornos.iterrows():
             valor_est = row_est['Valor_Razao']
-            candidatos = df_validos[
-                (abs(df_validos['Valor_Razao'] - valor_est) < 0.01) & 
-                (~df_validos.index.isin(indices_usados_validos))
-            ]
+            candidatos = df_validos[(abs(df_validos['Valor_Razao'] - valor_est) < 0.01) & (~df_validos.index.isin(indices_usados_validos))]
             if not candidatos.empty:
                 idx_par = candidatos.index[0]
                 indices_para_remover.append(idx_par)
@@ -212,19 +186,11 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
 
         df_final = df_filtered.drop(indices_para_remover, errors='ignore').copy()
         
-        # ======================================================================
-        # 3. FINALIZAÇÃO E ATRIBUIÇÃO DE DOCUMENTOS
-        # ======================================================================
-        
         df_final['Data_dt'] = df_final['Data'].apply(parse_br_date)
         df_final = df_final.dropna(subset=['Data_dt'])
         df_final['Data'] = df_final['Data_dt'].dt.strftime('%d/%m/%Y')
         
-        # Lookup Padrão (Numérico)
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
-        
-        # Lookup Especial para Deduções:
-        # Pega o documento do banco (ex: 011350) para aplicar nas linhas do Excel
         lookup_ded = {}
         if not df_pdf_ref.empty:
             mask_pdf_ded = df_pdf_ref['Histórico'].astype(str).str.contains(r"Dedução|Ded\.|FUNDEB|PASEP", case=False, regex=True, na=False)
@@ -236,13 +202,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             txt = str(row['Info_AB']).upper()
             dt = row['Data']
             info_aa = str(row['Info_AA']).upper()
-
-            # Se for Dedução no Excel ("Ded." na coluna AA), pega o Doc do Banco
-            if "DED." in info_aa:
-                if dt in lookup_ded:
-                    return lookup_ded[dt]
-            
-            # Lógica Padrão
+            if "DED." in info_aa and dt in lookup_ded: return lookup_ded[dt]
             if dt not in lookup: return "S/D"
             if "TARIFA" in txt and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
             for n in re.findall(r'\d+', txt):
@@ -251,7 +211,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             
         df_final['Documento'] = df_final.apply(find_doc, axis=1)
         
-        # CORREÇÃO CRÍTICA DO ERRO DE ÍNDICE: Resetar índice antes de retornar
+        # --- CORREÇÃO IMPORTANTE: Resetar índice para evitar KeyError posterior ---
         return df_final.reset_index(drop=True)[['Data', 'Documento', 'Valor_Razao']]
         
     except Exception as e:
@@ -259,115 +219,97 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
 
 def executar_conciliacao_inteligente(df_pdf, df_excel):
     """
-    Nova lógica de conciliação com prioridade para MATCH POR VALOR EXATO.
-    Isso evita que um valor grande do Excel (ex: FUNDEB) seja conciliado
-    com um valor pequeno do PDF (ex: PASEP) só porque compartilham o mesmo documento.
+    Algoritmo de Conciliação em 3 Etapas (Hierárquico):
+    1. Match Exato (Data + Doc + Valor): Para itens perfeitos (ex: PASEP).
+    2. Match Grupo (Data + Doc + Soma): Para itens fragmentados (ex: FUNDEB).
+    3. Match Flexível (Data + Valor): Para itens onde o Doc não bate (ex: Transferências).
     """
     res = []
-    idx_p_u = set() # Indices PDF Usados
-    idx_e_u = set() # Indices Excel Usados
+    idx_p_u = set()
+    idx_e_u = set()
 
-    # ==========================================================================
-    # 1. MATCH PERFEITO DE VALOR (Data, Documento e Valor Exato)
-    # ==========================================================================
-    
+    # 1. MATCH EXATO (Prioridade Máxima)
     for idx_p, row_p in df_pdf.iterrows():
-        # Filtra candidatos no Excel que tenham: Mesma Data, Mesmo Documento, NÃO usados
         cand = df_excel[
             (df_excel['Data'] == row_p['Data']) & 
             (df_excel['Documento'] == row_p['Documento']) & 
             (~df_excel.index.isin(idx_e_u))
         ]
-        
-        # Procura um match EXATO de valor (diferença < 0.01 centavo)
         match_valor = cand[abs(cand['Valor_Razao'] - row_p['Valor_Extrato']) < 0.01]
-        
         if not match_valor.empty:
-            # Encontrou correspondência exata! Usa o primeiro encontrado.
             idx_e = match_valor.index[0]
             val_excel = match_valor.loc[idx_e]['Valor_Razao']
-            
             res.append({
-                'Data': row_p['Data'], 
-                'Histórico': row_p['Histórico'], 
-                'Documento': row_p['Documento'], 
-                'Valor_Extrato': row_p['Valor_Extrato'], 
-                'Valor_Razao': val_excel, 
-                'Diferença': 0.0
+                'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': row_p['Documento'],
+                'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': val_excel, 'Diferença': 0.0
             })
-            
-            # Marca como resolvido
             idx_p_u.add(idx_p)
             idx_e_u.add(idx_e)
 
-    # ==========================================================================
-    # 2. MATCH POR SOMA (Para itens agrupados no Excel mas unicos no PDF)
-    # ==========================================================================
-    
-    # Agrupa o Excel restante por Data e Documento
+    # 2. MATCH POR GRUPO (Soma) - Para FUNDEB
     excel_restante = df_excel[~df_excel.index.isin(idx_e_u)].copy()
     if not excel_restante.empty:
-        # CORREÇÃO CRÍTICA: Usar .groups (rótulos) em vez de .indices (posição) para evitar KeyError
-        grupos_excel = excel_restante.groupby(['Data', 'Documento']).groups
+        # Cria mapa de índices para evitar erros de busca
+        mapa_grupos = {k: v.index.tolist() for k, v in excel_restante.groupby(['Data', 'Documento'])}
         
         for idx_p, row_p in df_pdf.iterrows():
-            if idx_p in idx_p_u: continue # Já foi resolvido na etapa anterior
+            if idx_p in idx_p_u: continue
             
             chave = (row_p['Data'], row_p['Documento'])
-            
-            if chave in grupos_excel:
-                indices_grupo = grupos_excel[chave]
-                # Filtra apenas os que ainda não foram usados (embora excel_restante já filtre, é segurança extra)
+            if chave in mapa_grupos:
+                indices_grupo = mapa_grupos[chave]
                 indices_disponiveis = [i for i in indices_grupo if i not in idx_e_u]
                 
                 if not indices_disponiveis: continue
                 
-                # Agora .loc funcionará pois indices_disponiveis contem rótulos do index
                 soma_excel = df_excel.loc[indices_disponiveis, 'Valor_Razao'].sum()
                 
-                # Se a soma bater com o valor do PDF (margem de R$ 1,00 para arredondamentos)
                 if abs(soma_excel - row_p['Valor_Extrato']) < 1.00:
                     res.append({
-                        'Data': row_p['Data'], 
-                        'Histórico': row_p['Histórico'], 
-                        'Documento': row_p['Documento'], 
-                        'Valor_Extrato': row_p['Valor_Extrato'], 
-                        'Valor_Razao': soma_excel, 
+                        'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': row_p['Documento'],
+                        'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': soma_excel,
                         'Diferença': row_p['Valor_Extrato'] - soma_excel
                     })
                     idx_p_u.add(idx_p)
                     idx_e_u.update(indices_disponiveis)
-                else:
-                    pass
 
-    # ==========================================================================
-    # 3. ITENS NÃO CONCILIADOS (Sobras)
-    # ==========================================================================
-    
-    # Sobras do PDF
+    # 3. MATCH FLEXÍVEL (Apenas Valor) - Para Transferências com Doc diferente
+    # Varre o que sobrou do PDF
+    for idx_p, row_p in df_pdf.iterrows():
+        if idx_p in idx_p_u: continue
+        
+        # Procura no Excel items com MESMA DATA e MESMO VALOR, ignorando Documento
+        cand_flex = df_excel[
+            (df_excel['Data'] == row_p['Data']) &
+            (abs(df_excel['Valor_Razao'] - row_p['Valor_Extrato']) < 0.01) &
+            (~df_excel.index.isin(idx_e_u))
+        ]
+        
+        if not cand_flex.empty:
+            idx_e = cand_flex.index[0]
+            val_excel = cand_flex.loc[idx_e]['Valor_Razao']
+            res.append({
+                'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': row_p['Documento'],
+                'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': val_excel, 'Diferença': 0.0
+            })
+            idx_p_u.add(idx_p)
+            idx_e_u.add(idx_e)
+
+    # 4. SOBRAS
     for idx_p, row_p in df_pdf.iterrows():
         if idx_p not in idx_p_u:
              res.append({
-                'Data': row_p['Data'], 
-                'Histórico': row_p['Histórico'], 
-                'Documento': row_p['Documento'], 
-                'Valor_Extrato': row_p['Valor_Extrato'], 
-                'Valor_Razao': 0.0, 
-                'Diferença': row_p['Valor_Extrato']
+                'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': row_p['Documento'],
+                'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': 0.0, 'Diferença': row_p['Valor_Extrato']
             })
              
-    # Sobras do Excel
     excel_sobra = df_excel[~df_excel.index.isin(idx_e_u)]
     if not excel_sobra.empty:
         agg_sobra = excel_sobra.groupby(['Data', 'Documento'])['Valor_Razao'].sum().reset_index()
         for _, row_e in agg_sobra.iterrows():
              res.append({
-                'Data': row_e['Data'], 
-                'Histórico': "Não Conciliado (Razão)", 
-                'Documento': row_e['Documento'], 
-                'Valor_Extrato': 0.0, 
-                'Valor_Razao': row_e['Valor_Razao'], 
-                'Diferença': -row_e['Valor_Razao']
+                'Data': row_e['Data'], 'Histórico': "Não Conciliado (Razão)", 'Documento': row_e['Documento'],
+                'Valor_Extrato': 0.0, 'Valor_Razao': row_e['Valor_Razao'], 'Diferença': -row_e['Valor_Razao']
             })
 
     df_f = pd.DataFrame(res)
@@ -377,9 +319,8 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
     return df_f.sort_values(by=['dt', 'Documento']).drop(columns=['dt'])
 
 # ==============================================================================
-# 2. GERAÇÃO DE SAÍDAS (PDF, EXCEL E MARCAÇÃO)
+# 2. GERAÇÃO DE SAÍDAS
 # ==============================================================================
-
 def gerar_pdf_final(df_f, titulo_completo):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=10*mm, leftMargin=10*mm, topMargin=15*mm, bottomMargin=15*mm, title=titulo_completo)
@@ -391,27 +332,14 @@ def gerar_pdf_final(df_f, titulo_completo):
     story.append(Spacer(1, 15))
     headers = ['Data', 'Documento', 'Vlr. Extrato', 'Vlr. Razão', 'Diferença']
     data = [headers]
-    
-    table_style = [
-        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-        ('BACKGROUND', (0,0), (-1,0), colors.black),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (0,0), (0,-1), 'CENTER'), ('ALIGN', (1,0), (1,-1), 'CENTER'), ('ALIGN', (2,0), (-1,-1), 'RIGHT'),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey),
-        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), ('SPAN', (0,-1), (1,-1))
-    ]
-
+    table_style = [('GRID', (0,0), (-1,-1), 0.5, colors.black), ('BACKGROUND', (0,0), (-1,0), colors.black), ('TEXTCOLOR', (0,0), (-1,0), colors.white), ('ALIGN', (0,0), (0,-1), 'CENTER'), ('ALIGN', (1,0), (1,-1), 'CENTER'), ('ALIGN', (2,0), (-1,-1), 'RIGHT'), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey), ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), ('SPAN', (0,-1), (1,-1))]
     for i, (_, r) in enumerate(df_f.iterrows()):
         diff = r['Diferença']
         data.append([r['Data'], str(r['Documento']), formatar_moeda_br(r['Valor_Extrato']), formatar_moeda_br(r['Valor_Razao']), formatar_moeda_br(diff) if abs(diff) >= 0.01 else "-"] )
-        
-        # Pinta de vermelho no PDF se houver diferença
         if abs(diff) >= 0.01:
             table_style.append(('TEXTCOLOR', (4, i+1), (4, i+1), colors.red))
             table_style.append(('FONTNAME', (4, i+1), (4, i+1), 'Helvetica-Bold'))
-
     data.append(['TOTAL', '', formatar_moeda_br(df_f['Valor_Extrato'].sum()), formatar_moeda_br(df_f['Valor_Razao'].sum()), formatar_moeda_br(df_f['Diferença'].sum())])
-    
     t = Table(data, colWidths=[25*mm, 65*mm, 33*mm, 33*mm, 33*mm])
     t.setStyle(TableStyle(table_style))
     story.append(t)
@@ -419,68 +347,39 @@ def gerar_pdf_final(df_f, titulo_completo):
     return buffer.getvalue()
 
 def gerar_excel_final(df_f):
-    """Gera um arquivo Excel binário (.xlsx) com formatação correta"""
     output = io.BytesIO()
-    
     df_export = df_f.copy()
     df_export['Diferença'] = df_export['Diferença'].round(2)
-    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_export.to_excel(writer, sheet_name='Conciliacao', index=False)
-        
-        workbook = writer.book
-        worksheet = writer.sheets['Conciliacao']
-        
-        # Formatos
+        workbook = writer.book; worksheet = writer.sheets['Conciliacao']
         fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         fmt_currency = workbook.add_format({'num_format': '#,##0.00'})
         fmt_red_bold = workbook.add_format({'font_color': '#FF0000', 'bold': True, 'num_format': '#,##0.00'})
         fmt_total = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'num_format': '#,##0.00', 'border': 1})
         fmt_total_label = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center'})
-
-        # Formata o cabeçalho
-        for col_num, value in enumerate(df_export.columns.values):
-            worksheet.write(0, col_num, value, fmt_header)
-
-        # Largura das colunas e formato de moeda
-        worksheet.set_column('A:A', 12) # Data
-        worksheet.set_column('B:B', 40) # Histórico
-        worksheet.set_column('C:C', 15) # Documento
-        worksheet.set_column('D:E', 18, fmt_currency) # Vlr Extrato e Razão
-        
-        # Coluna F (Diferença) - Aplica Vermelho/Negrito se != 0
+        for col_num, value in enumerate(df_export.columns.values): worksheet.write(0, col_num, value, fmt_header)
+        worksheet.set_column('A:A', 12); worksheet.set_column('B:B', 40); worksheet.set_column('C:C', 15); worksheet.set_column('D:E', 18, fmt_currency)
         worksheet.set_column('F:F', 18, fmt_currency)
-        worksheet.conditional_format(1, 5, len(df_export), 5, 
-            {'type': 'cell', 'criteria': '!=', 'value': 0, 'format': fmt_red_bold})
-
-        # Linha de TOTAL no final
+        worksheet.conditional_format(1, 5, len(df_export), 5, {'type': 'cell', 'criteria': '!=', 'value': 0, 'format': fmt_red_bold})
         last_row = len(df_export) + 1
         worksheet.merge_range(last_row, 0, last_row, 2, "TOTAL", fmt_total_label)
         worksheet.write(last_row, 3, df_export['Valor_Extrato'].sum(), fmt_total)
         worksheet.write(last_row, 4, df_export['Valor_Razao'].sum(), fmt_total)
         worksheet.write(last_row, 5, df_export['Diferença'].sum(), fmt_total)
-
     return output.getvalue()
 
 def gerar_extrato_marcado(pdf_bytes, df_f, coords_referencia, nome_original):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    meta = doc.metadata
-    meta["title"] = f"{nome_original} Marcado"
-    doc.set_metadata(meta)
-    
+    meta = doc.metadata; meta["title"] = f"{nome_original} Marcado"; doc.set_metadata(meta)
     divergencias = df_f[abs(df_f['Diferença']) >= 0.01]
-    
     for _, erro in divergencias.iterrows():
         for item in coords_referencia:
             if item['Data'] == erro['Data'] and abs(item['Valor_Extrato'] - erro['Valor_Extrato']) < 0.01:
                 if item['coords']:
                     pno, x0, top, x1, bottom = item['coords']
-                    page = doc[pno]
-                    rect = fitz.Rect(x0 - 2, top - 2, x1 + 2, bottom + 2)
-                    annot = page.add_highlight_annot(rect)
-                    annot.set_colors(stroke=[1, 1, 0])
-                    annot.update()
-    
+                    page = doc[pno]; rect = fitz.Rect(x0 - 2, top - 2, x1 + 2, bottom + 2)
+                    annot = page.add_highlight_annot(rect); annot.set_colors(stroke=[1, 1, 0]); annot.update()
     return doc.tobytes()
 
 # ==============================================================================
@@ -488,7 +387,6 @@ def gerar_extrato_marcado(pdf_bytes, df_f, coords_referencia, nome_original):
 # ==============================================================================
 st.markdown("<h1 style='text-align: center;'>Conciliador Bancário (Banco x GovBr)</h1>", unsafe_allow_html=True)
 st.markdown("---")
-
 c1, c2 = st.columns(2)
 with c1: 
     st.markdown('<p class="big-label">Selecione o Extrato Bancário em PDF</p>', unsafe_allow_html=True)
@@ -502,81 +400,24 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
         with st.spinner("Processando..."):
             pdf_bytes = up_pdf.read()
             xlsx_bytes = up_xlsx.read()
-            
             df_p, coords_ref = processar_pdf(pdf_bytes)
             df_e = processar_excel_detalhado(xlsx_bytes, df_p, is_csv=up_xlsx.name.endswith('csv'))
-            
             if df_p.empty or df_e.empty: st.error("Erro no processamento."); st.stop()
-            
             df_f = executar_conciliacao_inteligente(df_p, df_e)
             
-            # --- TABELA HTML (VISUAL) ---
             html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
             html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important;'>"
-            html += "<tr style='background-color: black; color: white !important;'>"
-            html += "<th style='padding: 8px; border: 1px solid #000;'>Data</th><th style='padding: 8px; border: 1px solid #000;'>Histórico</th>"
-            html += "<th style='padding: 8px; border: 1px solid #000;'>Documento</th><th style='padding: 8px; border: 1px solid #000;'>Vlr. Extrato</th>"
-            html += "<th style='padding: 8px; border: 1px solid #000;'>Vlr. Razão</th><th style='padding: 8px; border: 1px solid #000;'>Diferença</th></tr>"
-            
+            html += "<tr style='background-color: black; color: white !important;'><th style='padding: 8px; border: 1px solid #000;'>Data</th><th style='padding: 8px; border: 1px solid #000;'>Histórico</th><th style='padding: 8px; border: 1px solid #000;'>Documento</th><th style='padding: 8px; border: 1px solid #000;'>Vlr. Extrato</th><th style='padding: 8px; border: 1px solid #000;'>Vlr. Razão</th><th style='padding: 8px; border: 1px solid #000;'>Diferença</th></tr>"
             for _, r in df_f.iterrows():
-                # Lógica Visual: Vermelho e Negrito se houver diferença
                 estilo_dif = "color: red; font-weight: bold;" if abs(r['Diferença']) >= 0.01 else "color: black;"
-                
-                html += f"<tr style='background-color: white;'>"
-                html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Data']}</td>"
-                html += f"<td style='text-align: left; border: 1px solid #000; color: black;'>{r['Histórico']}</td>"
-                html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Documento']}</td>"
-                html += f"<td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Extrato'])}</td>"
-                html += f"<td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Razao'])}</td>"
-                html += f"<td style='text-align: right; border: 1px solid #000; {estilo_dif}'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td></tr>"
-            
-            html += f"<tr style='font-weight: bold; background-color: lightgrey; color: black;'><td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>"
-            html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td>"
-            html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Razao'].sum())}</td>"
-            html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Diferença'].sum())}</td></tr></table></div>"
+                html += f"<tr style='background-color: white;'><td style='text-align: center; border: 1px solid #000; color: black;'>{r['Data']}</td><td style='text-align: left; border: 1px solid #000; color: black;'>{r['Histórico']}</td><td style='text-align: center; border: 1px solid #000; color: black;'>{r['Documento']}</td><td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Extrato'])}</td><td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Razao'])}</td><td style='text-align: right; border: 1px solid #000; {estilo_dif}'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td></tr>"
+            html += f"<tr style='font-weight: bold; background-color: lightgrey; color: black;'><td colspan='3' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td><td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Extrato'].sum())}</td><td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Valor_Razao'].sum())}</td><td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Diferença'].sum())}</td></tr></table></div>"
             st.markdown(html, unsafe_allow_html=True)
             
-            # --- GERAÇÃO DOS ARQUIVOS (Binários) ---
             nome_base = os.path.splitext(up_pdf.name)[0]
-            
-            # 1. Gera PDF
-            pdf_bytes_final = gerar_pdf_final(df_f, f"Conciliação {nome_base}")
-            
-            # 2. Gera Excel
-            excel_bytes_final = gerar_excel_final(df_f)
-            
-            # 3. Gera PDF Marcado
-            pdf_marcado_final = gerar_extrato_marcado(pdf_bytes, df_f, coords_ref, nome_base)
-            
             st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
-            
-            # --- BOTÕES DE DOWNLOAD ---
-            
-            # Botão 1: Relatório PDF
-            st.download_button(
-                label="BAIXAR RELATÓRIO DE CONCILIAÇÃO EM PDF",
-                data=pdf_bytes_final,
-                file_name=f"Conciliacao_{nome_base}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
-            
-            # Botão 2: Relatório Excel
-            st.download_button(
-                label="GERAR RELATÓRIO EM EXCEL",
-                data=excel_bytes_final,
-                file_name=f"Conciliacao_{nome_base}.xlsx", 
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-            
-            # Botão 3: Extrato Marcado
-            st.download_button(
-                label="BAIXAR EXTRATO BANCÁRIO COM MARCAÇÕES",
-                data=pdf_marcado_final,
-                file_name=f"{nome_base}_Marcado.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+            st.download_button("BAIXAR RELATÓRIO DE CONCILIAÇÃO EM PDF", gerar_pdf_final(df_f, f"Conciliação {nome_base}"), f"Conciliacao_{nome_base}.pdf", "application/pdf", use_container_width=True)
+            st.download_button("GERAR RELATÓRIO EM EXCEL", gerar_excel_final(df_f), f"Conciliacao_{nome_base}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            st.download_button("BAIXAR EXTRATO BANCÁRIO COM MARCAÇÕES", gerar_extrato_marcado(pdf_bytes, df_f, coords_ref, nome_base), f"{nome_base}_Marcado.pdf", "application/pdf", use_container_width=True)
     else:
         st.warning("⚠️ Selecione os dois arquivos primeiro.")
