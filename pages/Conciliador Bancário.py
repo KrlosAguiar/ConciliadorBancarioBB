@@ -150,6 +150,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
         
         # Mapeamento de colunas
+        # 4=Data, 5=DC, 8=Valor, 25=Z, 26=AA, 27=AB
         try: df = df.iloc[:, [4, 5, 8, 25, 26, 27]].copy()
         except: df = df.iloc[:, [4, 5, 8, -4, -2, -1]].copy()
         
@@ -159,64 +160,69 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
         
         # ======================================================================
-        # 1. REGRAS DE INCLUSÃO (Filtros positivos)
+        # 1. REGRAS DE INCLUSÃO (ESTRITAS)
         # ======================================================================
         
-        # A) "Pagamento" na coluna Z
+        # A) Padrão: "Pagamento" na coluna Z
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
         
-        # B) "Transferência" antiga na coluna Z (apenas Crédito)
-        mask_transf_z = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
+        # B) Padrão: "Transferência" com texto longo na coluna Z (apenas Crédito)
+        mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
         
-        # C) "Transf" na coluna AA - AJUSTADO
-        # Pega "Transf" em AA, MAS EXCLUI se for código 250 ou 251 na coluna Z.
-        # Isso impede que o 250 entre por aqui (ele deve entrar só pela regra E).
-        has_transf_aa = df['Info_AA'].astype(str).str.contains("Transf", case=False, na=False)
-        is_code_250_251 = df['Info_Z'].astype(str).str.contains(r"250|251", case=False, regex=True, na=False)
-        mask_transf_aa = has_transf_aa & (~is_code_250_251)
-        
-        # D) Novos códigos na coluna Z (266, 264, 268)
+        # C) Novos códigos na coluna Z (266, 264, 268)
+        # Regex busca esses números exatos
         mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268", case=False, regex=True, na=False)
         
-        # E) Código 250 na coluna Z COM Condição restritiva na coluna AB
-        cond_250 = df['Info_Z'].astype(str).str.contains("250", case=False, na=False)
+        # D) Código 250 na coluna Z (SOMENTE SE tiver o texto específico em AB)
+        cond_250_z = df['Info_Z'].astype(str).str.contains("250", case=False, na=False)
         cond_ab_text = df['Info_AB'].astype(str).str.contains("transferência financeira concedida|repasse financeiro concedido", case=False, na=False)
-        mask_250_cond = cond_250 & cond_ab_text
+        mask_250_restrict = cond_250_z & cond_ab_text
         
-        # Aplica filtros de INCLUSÃO (Une tudo com OU)
-        df_filtered = df[mask_pagto | mask_transf_z | mask_transf_aa | mask_codes_z | mask_250_cond].copy()
+        # --- NOTA: O filtro genérico de "Transf" na coluna AA foi REMOVIDO aqui ---
+        
+        # Aplica filtros de INCLUSÃO
+        df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict].copy()
         
         # ======================================================================
-        # 2. PROCESSO DE EXCLUSÃO DE ESTORNOS (Matching Inteligente)
+        # 2. PROCESSO DE EXCLUSÃO DE ESTORNOS (Matching e Remoção do Par)
         # ======================================================================
         
         # Identifica linhas que são estornos na coluna AA
         termos_estorno = r"Est Pgto Ext|Est Pagto"
         mask_eh_estorno = df_filtered['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
         
-        # Separa os estornos dos demais itens
+        # Divide em dois grupos: Os Estornos e os "Candidatos a Validos"
         df_estornos = df_filtered[mask_eh_estorno].copy()
         df_validos = df_filtered[~mask_eh_estorno].copy()
         
         indices_para_remover = []
         indices_usados_validos = set()
         
+        # Para cada estorno, tenta achar o pagamento original para matar os dois
         for idx_est, row_est in df_estornos.iterrows():
             valor_est = row_est['Valor_Razao']
             
+            # Procura um item válido com mesmo valor (margem de 1 centavo) que ainda não foi removido
             candidatos = df_validos[
-                (abs(df_validos['Valor_Razao'] - valor_est) < 0.001) & 
+                (abs(df_validos['Valor_Razao'] - valor_est) < 0.01) & 
                 (~df_validos.index.isin(indices_usados_validos))
             ]
             
             if not candidatos.empty:
+                # Encontrou o par!
                 idx_par = candidatos.index[0]
+                
+                # Marca o pagamento original para remoção
                 indices_para_remover.append(idx_par)
                 indices_usados_validos.add(idx_par)
+                
+                # Marca o estorno para remoção
                 indices_para_remover.append(idx_est)
             else:
+                # Se não achou par (estorno avulso), remove apenas o estorno para não abater indevidamente
                 indices_para_remover.append(idx_est)
 
+        # Remove as linhas identificadas (Estornos + Pagamentos Estornados)
         df_final = df_filtered.drop(indices_para_remover, errors='ignore').copy()
         
         # ======================================================================
