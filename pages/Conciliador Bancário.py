@@ -178,8 +178,6 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         cond_ab_text = df['Info_AB'].astype(str).str.contains("transferência financeira concedida|repasse financeiro concedido", case=False, na=False)
         mask_250_restrict = cond_250_z & cond_ab_text
         
-        # --- NOTA: O filtro genérico de "Transf" na coluna AA foi REMOVIDO aqui ---
-        
         # Aplica filtros de INCLUSÃO
         df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict].copy()
         
@@ -300,11 +298,15 @@ def gerar_pdf_final(df_f, titulo_completo):
         ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), ('SPAN', (0,-1), (1,-1))
     ]
 
-    for i, r in df_f.iterrows():
+    # --- CORREÇÃO AQUI ---
+    # Usamos enumerate para garantir que 'i' seja sequencial visualmente (0, 1, 2...)
+    # pois o DataFrame df_f tem índice bagunçado devido ao sort_values.
+    for i, (_, r) in enumerate(df_f.iterrows()):
         diff = r['Diferença']
         data.append([r['Data'], str(r['Documento']), formatar_moeda_br(r['Valor_Extrato']), formatar_moeda_br(r['Valor_Razao']), formatar_moeda_br(diff) if abs(diff) >= 0.01 else "-"] )
         
         # Pinta de vermelho no PDF se houver diferença
+        # O índice da linha no TableStyle é (i + 1) porque a linha 0 é o cabeçalho
         if abs(diff) >= 0.01:
             table_style.append(('TEXTCOLOR', (4, i+1), (4, i+1), colors.red))
             table_style.append(('FONTNAME', (4, i+1), (4, i+1), 'Helvetica-Bold'))
@@ -320,9 +322,15 @@ def gerar_pdf_final(df_f, titulo_completo):
 def gerar_excel_final(df_f):
     """Gera um arquivo Excel binário (.xlsx) com formatação correta"""
     output = io.BytesIO()
-    # Engine xlsxwriter é crucial para formatação
+    
+    # --- CORREÇÃO AQUI ---
+    # Arredonda a diferença para evitar que erros de ponto flutuante (0.00000001)
+    # sejam marcados como erro no Excel.
+    df_export = df_f.copy()
+    df_export['Diferença'] = df_export['Diferença'].round(2)
+    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_f.to_excel(writer, sheet_name='Conciliacao', index=False)
+        df_export.to_excel(writer, sheet_name='Conciliacao', index=False)
         
         workbook = writer.book
         worksheet = writer.sheets['Conciliacao']
@@ -335,7 +343,7 @@ def gerar_excel_final(df_f):
         fmt_total_label = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center'})
 
         # Formata o cabeçalho
-        for col_num, value in enumerate(df_f.columns.values):
+        for col_num, value in enumerate(df_export.columns.values):
             worksheet.write(0, col_num, value, fmt_header)
 
         # Largura das colunas e formato de moeda
@@ -345,16 +353,17 @@ def gerar_excel_final(df_f):
         worksheet.set_column('D:E', 18, fmt_currency) # Vlr Extrato e Razão
         
         # Coluna F (Diferença) - Aplica Vermelho/Negrito se != 0
+        # Como arredondamos antes, agora o 0.00 real não será pintado.
         worksheet.set_column('F:F', 18, fmt_currency)
-        worksheet.conditional_format(1, 5, len(df_f), 5, 
+        worksheet.conditional_format(1, 5, len(df_export), 5, 
             {'type': 'cell', 'criteria': '!=', 'value': 0, 'format': fmt_red_bold})
 
         # Linha de TOTAL no final
-        last_row = len(df_f) + 1
+        last_row = len(df_export) + 1
         worksheet.merge_range(last_row, 0, last_row, 2, "TOTAL", fmt_total_label)
-        worksheet.write(last_row, 3, df_f['Valor_Extrato'].sum(), fmt_total)
-        worksheet.write(last_row, 4, df_f['Valor_Razao'].sum(), fmt_total)
-        worksheet.write(last_row, 5, df_f['Diferença'].sum(), fmt_total)
+        worksheet.write(last_row, 3, df_export['Valor_Extrato'].sum(), fmt_total)
+        worksheet.write(last_row, 4, df_export['Valor_Razao'].sum(), fmt_total)
+        worksheet.write(last_row, 5, df_export['Diferença'].sum(), fmt_total)
 
     return output.getvalue()
 
