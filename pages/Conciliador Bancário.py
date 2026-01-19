@@ -131,6 +131,19 @@ def processar_pdf(file_bytes):
             if not m.empty: idx_rem.append(m.index[0])
         df_debitos = df_debitos.drop(idx_rem).reset_index(drop=True)
 
+    # --- AJUSTE CRÍTICO: SEPARAÇÃO DE IMPOSTOS POR SUFIXO ---
+    # Isso garante que FUNDEB, PASEP e RFB tenham IDs únicos, evitando soma indevida.
+    if not df_debitos.empty:
+        def refinar_doc(r):
+            doc = str(r['Documento'])
+            hist = str(r['Histórico']).upper()
+            if "FUNDEB" in hist: return f"{doc}-FUNDEB"
+            if "PASEP" in hist: return f"{doc}-PASEP"
+            if "RETENÇÃO RFB" in hist or "RETENCAO RFB" in hist: return f"{doc}-RFB"
+            return doc
+        df_debitos['Documento'] = df_debitos.apply(refinar_doc, axis=1)
+    # -------------------------------------------------------
+
     termos_excluir = "SALDO|S A L D O|Resgate|BB-APLIC C\.PRZ-APL\.AUT|1\.972"
     df = df_debitos[~df_debitos['Histórico'].astype(str).str.contains(termos_excluir, case=False, na=False)].copy()
     
@@ -235,7 +248,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
                 doc = row['Documento']
                 hist = str(row['Histórico']).upper()
                 
-                # Mapeia documentos baseados na descrição do extrato
+                # AQUI O 'doc' JÁ VIRÁ COM SUFIXO (EX: 011350-FUNDEB) DO processar_pdf
                 if "FUNDEB" in hist:
                     lookup_fundeb[dt] = doc
                 if "PASEP" in hist:
@@ -243,7 +256,6 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
                 if "RETENÇÃO RFB" in hist or "RETENCAO RFB" in hist:
                     lookup_rfb[dt] = doc
                 
-                # Fallback para qualquer outro tipo de "Dedução" (regra original)
                 if "DEDUÇÃO" in hist or "DED." in hist:
                     if dt not in lookup_ded_geral:
                         lookup_ded_geral[dt] = doc
@@ -270,13 +282,10 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
                 return lookup_rfb.get(dt, "NÃO LOCALIZADO")
 
             # --- REGRAS ORIGINAIS (FALLBACK) ---
-
-            # Regra Original para Deduções Genéricas (mantida para não quebrar outros casos)
             if "DED." in info_aa:
                 if dt in lookup_ded_geral:
                     return lookup_ded_geral[dt]
             
-            # Regras Padrão Numéricas
             if dt not in lookup: return "S/D"
             if "TARIFA" in txt_ab and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
             
