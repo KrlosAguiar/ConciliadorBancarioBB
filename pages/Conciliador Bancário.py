@@ -5,14 +5,14 @@ import re
 import io
 import os
 import datetime
-import xlsxwriter  # Obrigatório estar no requirements.txt
+import xlsxwriter
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import mm
 from PIL import Image
-import fitz  # Requer pymupdf no requirements.txt
+import fitz
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
@@ -131,7 +131,7 @@ def processar_pdf(file_bytes):
             if not m.empty: idx_rem.append(m.index[0])
         df_debitos = df_debitos.drop(idx_rem).reset_index(drop=True)
 
-    # --- TAGGING: Adiciona sufixos para diferenciar os impostos no Extrato ---
+    # --- ETIQUETAGEM DO EXTRATO (CRUCIAL PARA O AGRUPAMENTO) ---
     if not df_debitos.empty:
         def refinar_doc(r):
             doc = str(r['Documento'])
@@ -203,51 +203,60 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         df_final = df_final.dropna(subset=['Data_dt'])
         df_final['Data'] = df_final['Data_dt'].dt.strftime('%d/%m/%Y')
         
-        lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
-        
-        lookup_fundeb = {}
-        lookup_pasep = {}
-        lookup_rfb = {}
-        lookup_ded_geral = {}
-        
-        if not df_pdf_ref.empty:
-            for _, row in df_pdf_ref.iterrows():
-                dt = row['Data']
-                doc = row['Documento']
-                hist = str(row['Histórico']).upper()
-                
-                if "FUNDEB" in hist: lookup_fundeb[dt] = doc
-                if "PASEP" in hist: lookup_pasep[dt] = doc
-                if "RETENÇÃO RFB" in hist or "RETENCAO RFB" in hist: lookup_rfb[dt] = doc
-                if "DEDUÇÃO" in hist or "DED." in hist:
-                    if dt not in lookup_ded_geral: lookup_ded_geral[dt] = doc
+        # --- LOOKUP: Mapeia [Data][Num_Doc] -> ID_Completo (com sufixo) do PDF ---
+        # Ex: lookup['10/12/2025']['011350'] = '011350-PASEP'
+        # Isso permite que, se o Excel tiver '011350' e a flag PASEP, saibamos exatamente qual ID buscar.
+        lookup = {dt: {str(doc).split('-')[0].lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
         
         def find_doc(row):
             dt = row['Data']
             info_aa = str(row['Info_AA']).upper()
             info_ab = str(row['Info_AB']).upper()
             txt_ab = info_ab
+            
+            # Tenta extrair o número base do documento da descrição
+            numeros = re.findall(r'\d+', txt_ab)
+            doc_base = numeros[0].lstrip('0') if numeros else ""
+            
+            # Se não achou número no texto, tenta usar o que estiver no PDF se houver match único
+            if not doc_base and dt in lookup and len(lookup[dt]) == 1:
+                doc_base = list(lookup[dt].keys())[0]
 
+            # --- APLICAÇÃO RÍGIDA DOS PARÂMETROS DE CONSOLIDAÇÃO ---
+            
+            # 1. Ded.FUNDEB (AA) -> Busca ID com sufixo -FUNDEB
             if "DED.FUNDEB" in info_aa:
-                return lookup_fundeb.get(dt, "NÃO LOCALIZADO")
+                if dt in lookup:
+                    # Tenta achar o doc base com o sufixo
+                    for k, v in lookup[dt].items():
+                        if "-FUNDEB" in str(v): return v
+                return "NÃO LOCALIZADO"
 
-            # --- PARÂMETRO SOLICITADO ---
-            # Se tiver PASEP na coluna AB do Excel, busca o ID que recebeu a tag PASEP no PDF.
-            # Se não achar o ID, retorna NÃO LOCALIZADO (não agrupa).
+            # 2. PASEP (AB) -> Busca ID com sufixo -PASEP
             if "PASEP" in info_ab:
-                return lookup_pasep.get(dt, "NÃO LOCALIZADO")
+                if dt in lookup:
+                    for k, v in lookup[dt].items():
+                        if "-PASEP" in str(v): return v
+                return "NÃO LOCALIZADO"
 
-            if any(t in info_ab for t in ["PARCELAMENTO SIMPLIFICADO", "PARCELAMENTO SIMPLICADO", "PARCELAMENTO EXCEPCIONAL"]):
-                return lookup_rfb.get(dt, "NÃO LOCALIZADO")
+            # 3. Parcelamentos (AB) -> Busca ID com sufixo -RFB
+            termos_rfb = ["PARCELAMENTO SIMPLIFICADO", "PARCELAMENTO SIMPLICADO", "PARCELAMENTO EXCEPCIONAL"]
+            if any(t in info_ab for t in termos_rfb):
+                if dt in lookup:
+                    for k, v in lookup[dt].items():
+                        if "-RFB" in str(v): return v
+                return "NÃO LOCALIZADO"
 
+            # 4. Outros casos (Dedução Saúde, Tarifas, etc)
             if "DED." in info_aa:
-                if dt in lookup_ded_geral: return lookup_ded_geral[dt]
+                 # Lógica genérica para outras deduções se houver
+                 pass 
             
             if dt not in lookup: return "S/D"
-            if "TARIFA" in txt_ab and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
+            if "TARIFA" in txt_ab: return "Tarifas Bancárias"
             
-            for n in re.findall(r'\d+', txt_ab):
-                if n.lstrip('0') in lookup[dt]: return lookup[dt][n.lstrip('0')]
+            # Fallback padrão: busca pelo número do documento
+            if doc_base in lookup[dt]: return lookup[dt][doc_base]
             
             return "NÃO LOCALIZADO"
             
@@ -258,52 +267,33 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         return pd.DataFrame()
 
 def executar_conciliacao_inteligente(df_pdf, df_excel):
-    res, idx_p_u, idx_e_u = [], set(), set()
+    # --- VOLTANDO AO CÓDIGO INICIAL ÓTIMO (COM GROUPBY) ---
     
-    # 1. Match exato (1-para-1)
-    for idx_p, row_p in df_pdf.iterrows():
-        cand = df_excel[(df_excel['Data'] == row_p['Data']) & (df_excel['Documento'] == row_p['Documento']) & (~df_excel.index.isin(idx_e_u))]
-        m = cand[abs(cand['Valor_Razao'] - row_p['Valor_Extrato']) < 0.01]
-        if not m.empty:
-            idx_e = m.index[0]
-            res.append({'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': row_p['Documento'], 'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': m.loc[idx_e]['Valor_Razao'], 'Diferença': 0.0})
-            idx_p_u.add(idx_p); idx_e_u.add(idx_e)
-            
-    # 2. Match de Sobras (Docs Diferentes, mas valor igual)
-    for idx_p, row_p in df_pdf.iterrows():
-        if idx_p in idx_p_u: continue
-        cand = df_excel[(df_excel['Data'] == row_p['Data']) & (~df_excel.index.isin(idx_e_u))]
-        m = cand[abs(cand['Valor_Razao'] - row_p['Valor_Extrato']) < 0.01]
-        if not m.empty:
-            idx_e = m.index[0]
-            res.append({'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': "Docs dif.", 'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': m.loc[idx_e]['Valor_Razao'], 'Diferença': 0.0})
-            idx_p_u.add(idx_p); idx_e_u.add(idx_e)
-            
-    # 3. ITENS NÃO CONCILIADOS (SEM AGRUPAMENTO/SOMA)
-    # Adiciona itens restantes do EXTRATO
-    for idx_p, row_p in df_pdf.iterrows():
-        if idx_p not in idx_p_u:
-            res.append({
-                'Data': row_p['Data'],
-                'Histórico': row_p['Histórico'],
-                'Documento': row_p['Documento'],
-                'Valor_Extrato': row_p['Valor_Extrato'],
-                'Valor_Razao': 0.0,
-                'Diferença': row_p['Valor_Extrato']
-            })
-            
-    # Adiciona itens restantes do RAZÃO
-    for idx_e, row_e in df_excel.iterrows():
-        if idx_e not in idx_e_u:
-            res.append({
-                'Data': row_e['Data'],
-                'Histórico': "Não consta no Extrato",
-                'Documento': row_e['Documento'],
-                'Valor_Extrato': 0.0,
-                'Valor_Razao': row_e['Valor_Razao'],
-                'Diferença': -row_e['Valor_Razao']
-            })
-            
+    # 1. Agrupa PDF por Data e Documento (Soma os valores do Extrato)
+    # Isso garante que se houver 2 PASEP no extrato, eles virem uma linha só de valor total.
+    df_p_agg = df_pdf.groupby(['Data', 'Documento']).agg({
+        'Valor_Extrato': 'sum',
+        'Histórico': lambda x: ' | '.join(x.unique()) # Concatena históricos para referência
+    }).reset_index()
+
+    # 2. Agrupa Excel por Data e Documento (Soma os valores do Razão)
+    # Como etiquetamos o Excel com '-PASEP', '-FUNDEB' etc, eles vão somar no mesmo ID.
+    df_e_agg = df_excel.groupby(['Data', 'Documento'])['Valor_Razao'].sum().reset_index()
+
+    # 3. Consolidação (Merge Simples)
+    df_m = pd.merge(df_p_agg, df_e_agg, on=['Data', 'Documento'], how='outer').fillna(0)
+    
+    res = []
+    for _, row in df_m.iterrows():
+        res.append({
+            'Data': row['Data'], 
+            'Histórico': row.get('Histórico', 'Não consta no Extrato'), 
+            'Documento': row['Documento'], 
+            'Valor_Extrato': row['Valor_Extrato'], 
+            'Valor_Razao': row['Valor_Razao'], 
+            'Diferença': row['Valor_Extrato'] - row['Valor_Razao']
+        })
+        
     df_f = pd.DataFrame(res)
     df_f['dt'] = pd.to_datetime(df_f['Data'], format='%d/%m/%Y', errors='coerce')
     return df_f.sort_values(by=['dt', 'Documento']).drop(columns=['dt'])
