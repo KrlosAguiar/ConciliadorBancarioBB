@@ -131,6 +131,7 @@ def processar_pdf(file_bytes):
             if not m.empty: idx_rem.append(m.index[0])
         df_debitos = df_debitos.drop(idx_rem).reset_index(drop=True)
 
+    # --- TAGGING: Adiciona sufixos para diferenciar os impostos no Extrato ---
     if not df_debitos.empty:
         def refinar_doc(r):
             doc = str(r['Documento'])
@@ -205,27 +206,19 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
         
         lookup_fundeb = {}
+        lookup_pasep = {}
         lookup_rfb = {}
         lookup_ded_geral = {}
         
-        # Estrutura para busca exata de PASEP
-        pasep_candidates = {}
-
         if not df_pdf_ref.empty:
             for _, row in df_pdf_ref.iterrows():
                 dt = row['Data']
                 doc = row['Documento']
-                val = row['Valor_Extrato']
                 hist = str(row['Histórico']).upper()
                 
                 if "FUNDEB" in hist: lookup_fundeb[dt] = doc
+                if "PASEP" in hist: lookup_pasep[dt] = doc
                 if "RETENÇÃO RFB" in hist or "RETENCAO RFB" in hist: lookup_rfb[dt] = doc
-                
-                # Armazena candidatos PASEP (Valor -> Doc) para busca exata
-                if "PASEP" in hist: 
-                    if dt not in pasep_candidates: pasep_candidates[dt] = []
-                    pasep_candidates[dt].append((val, doc))
-
                 if "DEDUÇÃO" in hist or "DED." in hist:
                     if dt not in lookup_ded_geral: lookup_ded_geral[dt] = doc
         
@@ -234,20 +227,15 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             info_aa = str(row['Info_AA']).upper()
             info_ab = str(row['Info_AB']).upper()
             txt_ab = info_ab
-            val_razao = row['Valor_Razao']
 
             if "DED.FUNDEB" in info_aa:
                 return lookup_fundeb.get(dt, "NÃO LOCALIZADO")
 
-            # --- CORREÇÃO: PASEP SEM AGRUPAMENTO ---
-            # Se encontrar o valor EXATO no extrato do dia (identificado como PASEP), associa.
-            # Caso contrário, retorna NÃO LOCALIZADO (não agrupa num ID genérico).
+            # --- PARÂMETRO SOLICITADO ---
+            # Se tiver PASEP na coluna AB do Excel, busca o ID que recebeu a tag PASEP no PDF.
+            # Se não achar o ID, retorna NÃO LOCALIZADO (não agrupa).
             if "PASEP" in info_ab:
-                candidatos = pasep_candidates.get(dt, [])
-                for (p_val, p_doc) in candidatos:
-                    if abs(p_val - val_razao) < 0.01:
-                        return p_doc
-                return "NÃO LOCALIZADO"
+                return lookup_pasep.get(dt, "NÃO LOCALIZADO")
 
             if any(t in info_ab for t in ["PARCELAMENTO SIMPLIFICADO", "PARCELAMENTO SIMPLICADO", "PARCELAMENTO EXCEPCIONAL"]):
                 return lookup_rfb.get(dt, "NÃO LOCALIZADO")
@@ -271,6 +259,8 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
 
 def executar_conciliacao_inteligente(df_pdf, df_excel):
     res, idx_p_u, idx_e_u = [], set(), set()
+    
+    # 1. Match exato (1-para-1)
     for idx_p, row_p in df_pdf.iterrows():
         cand = df_excel[(df_excel['Data'] == row_p['Data']) & (df_excel['Documento'] == row_p['Documento']) & (~df_excel.index.isin(idx_e_u))]
         m = cand[abs(cand['Valor_Razao'] - row_p['Valor_Extrato']) < 0.01]
@@ -278,6 +268,8 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
             idx_e = m.index[0]
             res.append({'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': row_p['Documento'], 'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': m.loc[idx_e]['Valor_Razao'], 'Diferença': 0.0})
             idx_p_u.add(idx_p); idx_e_u.add(idx_e)
+            
+    # 2. Match de Sobras (Docs Diferentes, mas valor igual)
     for idx_p, row_p in df_pdf.iterrows():
         if idx_p in idx_p_u: continue
         cand = df_excel[(df_excel['Data'] == row_p['Data']) & (~df_excel.index.isin(idx_e_u))]
@@ -286,11 +278,32 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
             idx_e = m.index[0]
             res.append({'Data': row_p['Data'], 'Histórico': row_p['Histórico'], 'Documento': "Docs dif.", 'Valor_Extrato': row_p['Valor_Extrato'], 'Valor_Razao': m.loc[idx_e]['Valor_Razao'], 'Diferença': 0.0})
             idx_p_u.add(idx_p); idx_e_u.add(idx_e)
-    df_e_s = df_excel[~df_excel.index.isin(idx_e_u)].groupby(['Data', 'Documento'])['Valor_Razao'].sum().reset_index()
-    df_p_s = df_pdf[~df_pdf.index.isin(idx_p_u)].groupby(['Data', 'Documento', 'Histórico'])['Valor_Extrato'].sum().reset_index()
-    df_m = pd.merge(df_p_s, df_e_s, on=['Data', 'Documento'], how='outer').fillna(0)
-    for _, row in df_m.iterrows():
-        res.append({'Data': row['Data'], 'Histórico': row.get('Histórico', 'S/H'), 'Documento': row['Documento'], 'Valor_Extrato': row['Valor_Extrato'], 'Valor_Razao': row['Valor_Razao'], 'Diferença': row['Valor_Extrato'] - row['Valor_Razao']})
+            
+    # 3. ITENS NÃO CONCILIADOS (SEM AGRUPAMENTO/SOMA)
+    # Adiciona itens restantes do EXTRATO
+    for idx_p, row_p in df_pdf.iterrows():
+        if idx_p not in idx_p_u:
+            res.append({
+                'Data': row_p['Data'],
+                'Histórico': row_p['Histórico'],
+                'Documento': row_p['Documento'],
+                'Valor_Extrato': row_p['Valor_Extrato'],
+                'Valor_Razao': 0.0,
+                'Diferença': row_p['Valor_Extrato']
+            })
+            
+    # Adiciona itens restantes do RAZÃO
+    for idx_e, row_e in df_excel.iterrows():
+        if idx_e not in idx_e_u:
+            res.append({
+                'Data': row_e['Data'],
+                'Histórico': "Não consta no Extrato",
+                'Documento': row_e['Documento'],
+                'Valor_Extrato': 0.0,
+                'Valor_Razao': row_e['Valor_Razao'],
+                'Diferença': -row_e['Valor_Razao']
+            })
+            
     df_f = pd.DataFrame(res)
     df_f['dt'] = pd.to_datetime(df_f['Data'], format='%d/%m/%Y', errors='coerce')
     return df_f.sort_values(by=['dt', 'Documento']).drop(columns=['dt'])
