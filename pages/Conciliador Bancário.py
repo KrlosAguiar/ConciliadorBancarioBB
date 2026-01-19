@@ -168,8 +168,8 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         # B) Padrão: "Transferência" com texto longo (apenas Crédito)
         mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
         
-        # C) Códigos numéricos específicos
-        mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268", case=False, regex=True, na=False)
+        # C) Códigos numéricos específicos (ADICIONADO O 262 AQUI ABAIXO)
+        mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268|262", case=False, regex=True, na=False)
         
         # D) Código 250 condicional
         cond_250_z = df['Info_Z'].astype(str).str.contains("250", case=False, na=False)
