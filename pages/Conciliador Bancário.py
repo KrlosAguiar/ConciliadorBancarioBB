@@ -131,8 +131,6 @@ def processar_pdf(file_bytes):
             if not m.empty: idx_rem.append(m.index[0])
         df_debitos = df_debitos.drop(idx_rem).reset_index(drop=True)
 
-    # --- AJUSTE CRÍTICO: SEPARAÇÃO DE IMPOSTOS POR SUFIXO ---
-    # Isso garante que FUNDEB, PASEP e RFB tenham IDs únicos, evitando soma indevida.
     if not df_debitos.empty:
         def refinar_doc(r):
             doc = str(r['Documento'])
@@ -142,7 +140,6 @@ def processar_pdf(file_bytes):
             if "RETENÇÃO RFB" in hist or "RETENCAO RFB" in hist: return f"{doc}-RFB"
             return doc
         df_debitos['Documento'] = df_debitos.apply(refinar_doc, axis=1)
-    # -------------------------------------------------------
 
     termos_excluir = "SALDO|S A L D O|Resgate|BB-APLIC C\.PRZ-APL\.AUT|1\.972"
     df = df_debitos[~df_debitos['Histórico'].astype(str).str.contains(termos_excluir, case=False, na=False)].copy()
@@ -159,49 +156,26 @@ def processar_pdf(file_bytes):
 
 def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
     try:
-        # Carregamento do arquivo
         df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
         
-        # Mapeamento de colunas
         try: df = df.iloc[:, [4, 5, 8, 25, 26, 27]].copy()
         except: df = df.iloc[:, [4, 5, 8, -4, -2, -1]].copy()
         
         df.columns = ['Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
-        
-        # Tratamento de valores numéricos
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
         
-        # ======================================================================
-        # 1. REGRAS DE INCLUSÃO
-        # ======================================================================
-        
-        # A) Padrão: "Pagamento" na coluna Z
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
-        
-        # B) Padrão: "Transferência" com texto longo (apenas Crédito)
         mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
-        
-        # C) Códigos numéricos específicos (ADICIONADO O 262 AQUI ABAIXO)
         mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268|262", case=False, regex=True, na=False)
-        
-        # D) Código 250 condicional
         cond_250_z = df['Info_Z'].astype(str).str.contains("250", case=False, na=False)
         cond_ab_text = df['Info_AB'].astype(str).str.contains("transferência financeira concedida|repasse financeiro concedido", case=False, na=False)
         mask_250_restrict = cond_250_z & cond_ab_text
-        
-        # E) Filtro de Deduções (Captura Ded.FUNDEB, Ded.PASEP, etc)
         mask_aa_ded = df['Info_AA'].astype(str).str.contains(r"Ded\.", case=False, regex=True, na=False)
         
-        # Aplica filtros de INCLUSÃO
         df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_ded].copy()
-        
-        # ======================================================================
-        # 2. PROCESSO DE EXCLUSÃO DE ESTORNOS
-        # ======================================================================
         
         termos_estorno = r"Est Pgto Ext|Est Pagto"
         mask_eh_estorno = df_filtered['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
-        
         df_estornos = df_filtered[mask_eh_estorno].copy()
         df_validos = df_filtered[~mask_eh_estorno].copy()
         
@@ -210,7 +184,6 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         
         for idx_est, row_est in df_estornos.iterrows():
             valor_est = row_est['Valor_Razao']
-            # Busca par válido com mesmo valor
             candidatos = df_validos[
                 (abs(df_validos['Valor_Razao'] - valor_est) < 0.01) & 
                 (~df_validos.index.isin(indices_usados_validos))
@@ -225,66 +198,70 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
 
         df_final = df_filtered.drop(indices_para_remover, errors='ignore').copy()
         
-        # ======================================================================
-        # 3. FINALIZAÇÃO E MATCHING INTELIGENTE
-        # ======================================================================
-        
         df_final['Data_dt'] = df_final['Data'].apply(parse_br_date)
         df_final = df_final.dropna(subset=['Data_dt'])
         df_final['Data'] = df_final['Data_dt'].dt.strftime('%d/%m/%Y')
         
-        # Dicionário de Lookup Padrão (Numérico)
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
         
-        # --- LOOKUPS ESPECÍFICOS PARA O EXTRATO ---
         lookup_fundeb = {}
         lookup_pasep = {}
         lookup_rfb = {}
         lookup_ded_geral = {}
+        
+        # --- NOVO: ÍNDICE DE VALORES PARA BUSCA REVERSA ---
+        pdf_vals = {}
 
         if not df_pdf_ref.empty:
             for _, row in df_pdf_ref.iterrows():
                 dt = row['Data']
                 doc = row['Documento']
+                val = row['Valor_Extrato']
                 hist = str(row['Histórico']).upper()
                 
-                # AQUI O 'doc' JÁ VIRÁ COM SUFIXO (EX: 011350-FUNDEB) DO processar_pdf
-                if "FUNDEB" in hist:
-                    lookup_fundeb[dt] = doc
-                if "PASEP" in hist:
-                    lookup_pasep[dt] = doc
-                if "RETENÇÃO RFB" in hist or "RETENCAO RFB" in hist:
-                    lookup_rfb[dt] = doc
-                
+                # Popula índices de ID
+                if "FUNDEB" in hist: lookup_fundeb[dt] = doc
+                if "PASEP" in hist: lookup_pasep[dt] = doc
+                if "RETENÇÃO RFB" in hist or "RETENCAO RFB" in hist: lookup_rfb[dt] = doc
                 if "DEDUÇÃO" in hist or "DED." in hist:
-                    if dt not in lookup_ded_geral:
-                        lookup_ded_geral[dt] = doc
+                    if dt not in lookup_ded_geral: lookup_ded_geral[dt] = doc
+                
+                # Popula índice de VALORES (Data -> Lista de (Valor, Doc))
+                pdf_vals.setdefault(dt, []).append((val, doc))
         
         def find_doc(row):
             dt = row['Data']
             info_aa = str(row['Info_AA']).upper()
             info_ab = str(row['Info_AB']).upper()
             txt_ab = info_ab
+            val_razao = row['Valor_Razao']
 
-            # --- NOVAS REGRAS PRIORITÁRIAS ---
-
-            # 1. Ded.FUNDEB (Info_AA) -> Busca "FUNDEB" no extrato
             if "DED.FUNDEB" in info_aa:
                 return lookup_fundeb.get(dt, "NÃO LOCALIZADO")
 
-            # 2. PASEP (Info_AB) -> Busca "PASEP" no extrato
+            # --- AJUSTE PASEP: Busca por valor individual ANTES do grupo ---
             if "PASEP" in info_ab:
-                return lookup_pasep.get(dt, "NÃO LOCALIZADO")
+                target_doc = lookup_pasep.get(dt) # ID esperado (ex: 011350-PASEP)
+                
+                # 1. Tenta achar match exato de valor no PDF deste dia
+                candidates = pdf_vals.get(dt, [])
+                matches = [p_doc for (p_val, p_doc) in candidates if abs(p_val - val_razao) < 0.01]
+                
+                if matches:
+                    # Se achar o ID oficial do PASEP entre os matches, usa ele (match perfeito)
+                    if target_doc and target_doc in matches:
+                        return target_doc
+                    # Se não, usa o primeiro ID que achou (resgata item não etiquetado no PDF)
+                    return matches[0]
+                
+                # 2. Fallback: Se não achou valor, usa o ID agrupador para somar tudo depois
+                return target_doc if target_doc else "NÃO LOCALIZADO"
 
-            # 3. Parcelamentos RFB (Info_AB) -> Busca "Retenção RFB" no extrato
-            termos_rfb = ["PARCELAMENTO SIMPLIFICADO", "PARCELAMENTO SIMPLICADO", "PARCELAMENTO EXCEPCIONAL"]
-            if any(t in info_ab for t in termos_rfb):
+            if any(t in info_ab for t in ["PARCELAMENTO SIMPLIFICADO", "PARCELAMENTO SIMPLICADO", "PARCELAMENTO EXCEPCIONAL"]):
                 return lookup_rfb.get(dt, "NÃO LOCALIZADO")
 
-            # --- REGRAS ORIGINAIS (FALLBACK) ---
             if "DED." in info_aa:
-                if dt in lookup_ded_geral:
-                    return lookup_ded_geral[dt]
+                if dt in lookup_ded_geral: return lookup_ded_geral[dt]
             
             if dt not in lookup: return "S/D"
             if "TARIFA" in txt_ab and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
