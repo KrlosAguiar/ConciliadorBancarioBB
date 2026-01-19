@@ -223,32 +223,66 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         # Dicionário de Lookup Padrão (Numérico)
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
         
-        # Dicionário Especial para Deduções
-        # Procura no extrato qualquer item que seja "Dedução" e guarda o documento dele (ex: 011350)
-        lookup_ded = {}
+        # --- LOOKUPS ESPECÍFICOS PARA O EXTRATO ---
+        lookup_fundeb = {}
+        lookup_pasep = {}
+        lookup_rfb = {}
+        lookup_ded_geral = {}
+
         if not df_pdf_ref.empty:
-            mask_pdf_ded = df_pdf_ref['Histórico'].astype(str).str.contains(r"Dedução|Ded\.", case=False, regex=True, na=False)
-            for idx, row in df_pdf_ref[mask_pdf_ded].iterrows():
-                # Guarda o documento encontrado para aquela data
-                if row['Data'] not in lookup_ded:
-                    lookup_ded[row['Data']] = row['Documento']
+            for _, row in df_pdf_ref.iterrows():
+                dt = row['Data']
+                doc = row['Documento']
+                hist = str(row['Histórico']).upper()
+                
+                # Mapeia documentos baseados na descrição do extrato
+                if "FUNDEB" in hist:
+                    lookup_fundeb[dt] = doc
+                if "PASEP" in hist:
+                    lookup_pasep[dt] = doc
+                if "RETENÇÃO RFB" in hist or "RETENCAO RFB" in hist:
+                    lookup_rfb[dt] = doc
+                
+                # Fallback para qualquer outro tipo de "Dedução" (regra original)
+                if "DEDUÇÃO" in hist or "DED." in hist:
+                    if dt not in lookup_ded_geral:
+                        lookup_ded_geral[dt] = doc
         
         def find_doc(row):
-            txt = str(row['Info_AB']).upper()
             dt = row['Data']
             info_aa = str(row['Info_AA']).upper()
+            info_ab = str(row['Info_AB']).upper()
+            txt_ab = info_ab
 
-            # REGRA DE OURO: Se for "Ded." no Razão, usa o doc de Dedução do Extrato.
-            # Isso agrupa Ded.FUNDEB, Ded.PASEP, etc., tudo no mesmo documento (011350).
+            # --- NOVAS REGRAS PRIORITÁRIAS ---
+
+            # 1. Ded.FUNDEB (Info_AA) -> Busca "FUNDEB" no extrato
+            if "DED.FUNDEB" in info_aa:
+                return lookup_fundeb.get(dt, "NÃO LOCALIZADO")
+
+            # 2. PASEP (Info_AB) -> Busca "PASEP" no extrato
+            if "PASEP" in info_ab:
+                return lookup_pasep.get(dt, "NÃO LOCALIZADO")
+
+            # 3. Parcelamentos RFB (Info_AB) -> Busca "Retenção RFB" no extrato
+            termos_rfb = ["PARCELAMENTO SIMPLIFICADO", "PARCELAMENTO SIMPLICADO", "PARCELAMENTO EXCEPCIONAL"]
+            if any(t in info_ab for t in termos_rfb):
+                return lookup_rfb.get(dt, "NÃO LOCALIZADO")
+
+            # --- REGRAS ORIGINAIS (FALLBACK) ---
+
+            # Regra Original para Deduções Genéricas (mantida para não quebrar outros casos)
             if "DED." in info_aa:
-                if dt in lookup_ded:
-                    return lookup_ded[dt]
+                if dt in lookup_ded_geral:
+                    return lookup_ded_geral[dt]
             
-            # Regras Padrão
+            # Regras Padrão Numéricas
             if dt not in lookup: return "S/D"
-            if "TARIFA" in txt and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
-            for n in re.findall(r'\d+', txt):
+            if "TARIFA" in txt_ab and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
+            
+            for n in re.findall(r'\d+', txt_ab):
                 if n.lstrip('0') in lookup[dt]: return lookup[dt][n.lstrip('0')]
+            
             return "NÃO LOCALIZADO"
             
         df_final['Documento'] = df_final.apply(find_doc, axis=1)
@@ -308,15 +342,10 @@ def gerar_pdf_final(df_f, titulo_completo):
         ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), ('SPAN', (0,-1), (1,-1))
     ]
 
-    # --- CORREÇÃO AQUI ---
-    # Usamos enumerate para garantir que 'i' seja sequencial visualmente (0, 1, 2...)
-    # pois o DataFrame df_f tem índice bagunçado devido ao sort_values.
     for i, (_, r) in enumerate(df_f.iterrows()):
         diff = r['Diferença']
         data.append([r['Data'], str(r['Documento']), formatar_moeda_br(r['Valor_Extrato']), formatar_moeda_br(r['Valor_Razao']), formatar_moeda_br(diff) if abs(diff) >= 0.01 else "-"] )
         
-        # Pinta de vermelho no PDF se houver diferença
-        # O índice da linha no TableStyle é (i + 1) porque a linha 0 é o cabeçalho
         if abs(diff) >= 0.01:
             table_style.append(('TEXTCOLOR', (4, i+1), (4, i+1), colors.red))
             table_style.append(('FONTNAME', (4, i+1), (4, i+1), 'Helvetica-Bold'))
@@ -330,12 +359,8 @@ def gerar_pdf_final(df_f, titulo_completo):
     return buffer.getvalue()
 
 def gerar_excel_final(df_f):
-    """Gera um arquivo Excel binário (.xlsx) com formatação correta"""
     output = io.BytesIO()
     
-    # --- CORREÇÃO AQUI ---
-    # Arredonda a diferença para evitar que erros de ponto flutuante (0.00000001)
-    # sejam marcados como erro no Excel.
     df_export = df_f.copy()
     df_export['Diferença'] = df_export['Diferença'].round(2)
     
@@ -345,30 +370,24 @@ def gerar_excel_final(df_f):
         workbook = writer.book
         worksheet = writer.sheets['Conciliacao']
         
-        # Formatos
         fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         fmt_currency = workbook.add_format({'num_format': '#,##0.00'})
         fmt_red_bold = workbook.add_format({'font_color': '#FF0000', 'bold': True, 'num_format': '#,##0.00'})
         fmt_total = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'num_format': '#,##0.00', 'border': 1})
         fmt_total_label = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center'})
 
-        # Formata o cabeçalho
         for col_num, value in enumerate(df_export.columns.values):
             worksheet.write(0, col_num, value, fmt_header)
 
-        # Largura das colunas e formato de moeda
-        worksheet.set_column('A:A', 12) # Data
-        worksheet.set_column('B:B', 40) # Histórico
-        worksheet.set_column('C:C', 15) # Documento
-        worksheet.set_column('D:E', 18, fmt_currency) # Vlr Extrato e Razão
+        worksheet.set_column('A:A', 12)
+        worksheet.set_column('B:B', 40)
+        worksheet.set_column('C:C', 15)
+        worksheet.set_column('D:E', 18, fmt_currency)
         
-        # Coluna F (Diferença) - Aplica Vermelho/Negrito se != 0
-        # Como arredondamos antes, agora o 0.00 real não será pintado.
         worksheet.set_column('F:F', 18, fmt_currency)
         worksheet.conditional_format(1, 5, len(df_export), 5, 
             {'type': 'cell', 'criteria': '!=', 'value': 0, 'format': fmt_red_bold})
 
-        # Linha de TOTAL no final
         last_row = len(df_export) + 1
         worksheet.merge_range(last_row, 0, last_row, 2, "TOTAL", fmt_total_label)
         worksheet.write(last_row, 3, df_export['Valor_Extrato'].sum(), fmt_total)
@@ -434,7 +453,6 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             html += "<th style='padding: 8px; border: 1px solid #000;'>Vlr. Razão</th><th style='padding: 8px; border: 1px solid #000;'>Diferença</th></tr>"
             
             for _, r in df_f.iterrows():
-                # Lógica Visual: Vermelho e Negrito se houver diferença
                 estilo_dif = "color: red; font-weight: bold;" if abs(r['Diferença']) >= 0.01 else "color: black;"
                 
                 html += f"<tr style='background-color: white;'>"
@@ -451,23 +469,14 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_f['Diferença'].sum())}</td></tr></table></div>"
             st.markdown(html, unsafe_allow_html=True)
             
-            # --- GERAÇÃO DOS ARQUIVOS (Binários) ---
             nome_base = os.path.splitext(up_pdf.name)[0]
             
-            # 1. Gera PDF
             pdf_bytes_final = gerar_pdf_final(df_f, f"Conciliação {nome_base}")
-            
-            # 2. Gera Excel (CORRIGIDO)
             excel_bytes_final = gerar_excel_final(df_f)
-            
-            # 3. Gera PDF Marcado
             pdf_marcado_final = gerar_extrato_marcado(pdf_bytes, df_f, coords_ref, nome_base)
             
             st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
             
-            # --- BOTÕES DE DOWNLOAD ---
-            
-            # Botão 1: Relatório PDF
             st.download_button(
                 label="BAIXAR RELATÓRIO DE CONCILIAÇÃO EM PDF",
                 data=pdf_bytes_final,
@@ -476,18 +485,14 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
                 use_container_width=True
             )
             
-            # Botão 2: Relatório Excel (CORRIGIDO)
             st.download_button(
                 label="GERAR RELATÓRIO EM EXCEL",
                 data=excel_bytes_final,
-                # AQUI É O PULO DO GATO: Nome sem espaços e COM a extensão .xlsx
                 file_name=f"Conciliacao_{nome_base}.xlsx", 
-                # MIME TYPE ESPECÍFICO PARA EXCEL XLSX
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
             
-            # Botão 3: Extrato Marcado
             st.download_button(
                 label="BAIXAR EXTRATO BANCÁRIO COM MARCAÇÕES",
                 data=pdf_marcado_final,
