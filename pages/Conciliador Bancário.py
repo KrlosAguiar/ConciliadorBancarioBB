@@ -205,12 +205,11 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
         
         lookup_fundeb = {}
-        lookup_pasep = {}
         lookup_rfb = {}
         lookup_ded_geral = {}
         
-        # Índice de VALORES para busca precisa (Data -> Lista de (Valor, Doc))
-        pdf_vals = {}
+        # Estrutura para busca exata de PASEP
+        pasep_candidates = {}
 
         if not df_pdf_ref.empty:
             for _, row in df_pdf_ref.iterrows():
@@ -220,12 +219,15 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
                 hist = str(row['Histórico']).upper()
                 
                 if "FUNDEB" in hist: lookup_fundeb[dt] = doc
-                if "PASEP" in hist: lookup_pasep[dt] = doc
                 if "RETENÇÃO RFB" in hist or "RETENCAO RFB" in hist: lookup_rfb[dt] = doc
+                
+                # Armazena candidatos PASEP (Valor -> Doc) para busca exata
+                if "PASEP" in hist: 
+                    if dt not in pasep_candidates: pasep_candidates[dt] = []
+                    pasep_candidates[dt].append((val, doc))
+
                 if "DEDUÇÃO" in hist or "DED." in hist:
                     if dt not in lookup_ded_geral: lookup_ded_geral[dt] = doc
-                
-                pdf_vals.setdefault(dt, []).append((val, doc))
         
         def find_doc(row):
             dt = row['Data']
@@ -234,31 +236,21 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             txt_ab = info_ab
             val_razao = row['Valor_Razao']
 
-            # Função auxiliar para lógica "Valor Exato OU PENDENTE"
-            def resolver_por_valor(target_doc_group):
-                if not target_doc_group: return "NÃO LOCALIZADO"
-                
-                candidates = pdf_vals.get(dt, [])
-                matches = [p_doc for (p_val, p_doc) in candidates if abs(p_val - val_razao) < 0.01]
-                
-                if matches:
-                    # 1. Se achou valor exato e é do mesmo grupo (PASEP), usa o doc do grupo
-                    if target_doc_group in matches: return target_doc_group
-                    # 2. Se achou valor exato mas com outro Doc (ex: cheque), usa o doc encontrado
-                    return matches[0]
-                
-                # 3. SE NÃO ACHOU VALOR EXATO: 
-                # Retorna um ID diferente para NÃO AGRUPAR com os corretos.
-                return f"{target_doc_group}_PENDENTE"
-
             if "DED.FUNDEB" in info_aa:
-                return resolver_por_valor(lookup_fundeb.get(dt))
+                return lookup_fundeb.get(dt, "NÃO LOCALIZADO")
 
+            # --- CORREÇÃO: PASEP SEM AGRUPAMENTO ---
+            # Se encontrar o valor EXATO no extrato do dia (identificado como PASEP), associa.
+            # Caso contrário, retorna NÃO LOCALIZADO (não agrupa num ID genérico).
             if "PASEP" in info_ab:
-                return resolver_por_valor(lookup_pasep.get(dt))
+                candidatos = pasep_candidates.get(dt, [])
+                for (p_val, p_doc) in candidatos:
+                    if abs(p_val - val_razao) < 0.01:
+                        return p_doc
+                return "NÃO LOCALIZADO"
 
             if any(t in info_ab for t in ["PARCELAMENTO SIMPLIFICADO", "PARCELAMENTO SIMPLICADO", "PARCELAMENTO EXCEPCIONAL"]):
-                return resolver_por_valor(lookup_rfb.get(dt))
+                return lookup_rfb.get(dt, "NÃO LOCALIZADO")
 
             if "DED." in info_aa:
                 if dt in lookup_ded_geral: return lookup_ded_geral[dt]
