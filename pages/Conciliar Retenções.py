@@ -42,7 +42,6 @@ st.markdown("""
         border-radius: 5px;
         font-size: 16px;
         transition: 0.3s;
-        width: 100%;
     }
     div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
     .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
@@ -151,7 +150,7 @@ def processar_conciliacao(df, ug_sel, conta_sel):
     resultados = []
     idx_pag_usado = set()
     
-    # Inicializa Resumo com todas as métricas necessárias
+    # Inicializa Resumo
     resumo = {
         "ret_pendente": 0, "val_ret_pendente": 0.0,
         "pag_sobra": 0,    "val_pag_sobra": 0.0,
@@ -177,11 +176,9 @@ def processar_conciliacao(df, ug_sel, conta_sel):
             match = True
             sort = 2
             
-            # Contabiliza Conciliados
             resumo["ok"] += 1
             resumo["val_ok"] += val_pago
         else:
-            # Contabiliza Pendentes
             resumo["ret_pendente"] += 1
             resumo["val_ret_pendente"] += val
             
@@ -195,7 +192,6 @@ def processar_conciliacao(df, ug_sel, conta_sel):
 
     # Loop Sobras
     for _, r in df_pag[~df_pag.index.isin(idx_pag_usado)].iterrows():
-        # Contabiliza Sobras
         resumo["pag_sobra"] += 1
         resumo["val_pag_sobra"] += r[c_valor]
         
@@ -278,7 +274,8 @@ if arquivo:
         
         st.markdown("<br>", unsafe_allow_html=True)
         
-        if st.button("PROCESSAR CONCILIAÇÃO"):
+        # BOTÃO COM LARGURA TOTAL
+        if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             with st.spinner("Processando..."):
                 df_res, resumo = processar_conciliacao(df_dados, ug_sel, conta_sel)
             
@@ -311,10 +308,8 @@ if arquivo:
                     </div>
                     """, unsafe_allow_html=True)
                 
-                # --- LINHA 2 (NOVA): VALORES ESPECÍFICOS ---
-                # Usamos as mesmas cores da Linha 1 para criar identidade visual
+                # --- LINHA 2: VALORES ESPECÍFICOS ---
                 v1, v2, v3 = st.columns(3)
-                
                 with v1:
                     st.markdown(f"""
                     <div class="metric-card">
@@ -340,7 +335,7 @@ if arquivo:
                     </div>
                     """, unsafe_allow_html=True)
 
-                # --- LINHA 3: VALORES TOTAIS (FINANCEIRO GERAL) ---
+                # --- LINHA 3: TOTAIS GERAIS ---
                 f1, f2, f3 = st.columns(3)
                 cor_saldo = "#ff4b4b" if resumo['saldo'] > 0.01 else ("#28a745" if resumo['saldo'] == 0 else "#007bff")
                 
@@ -368,14 +363,20 @@ if arquivo:
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # --- TABELA HTML ---
+                # --- TABELA HTML (AJUSTE VISUAL: LARGURAS + QUEBRA DE LINHA NO HISTÓRICO) ---
                 html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
-                html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important;'>"
+                html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
                 
                 html += "<tr style='background-color: black; color: white !important;'>"
-                cols = ["Empenho", "Data", "Vlr Retido", "Vlr Pago", "Diferença", "Histórico", "Status"]
-                for c in cols:
-                    html += f"<th style='padding: 8px; border: 1px solid #000; text-align: center;'>{c}</th>"
+                
+                # Definição de Larguras (Total 100%)
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Empenho</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Data</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Retido</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Pago</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Diferença</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 34%;'>Histórico</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Status</th>"
                 html += "</tr>"
                 
                 for _, r in df_res.iterrows():
@@ -389,9 +390,10 @@ if arquivo:
                     html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
                     html += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
                     
+                    # HISTÓRICO: SEM TRUNCAMENTO, FONTE MENOR, QUEBRA DE LINHA
                     hist = str(r['Histórico'])
-                    if len(hist) > 40: hist = hist[:37] + "..."
-                    html += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 12px;'>{hist}</td>"
+                    html += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 11px; word-wrap: break-word; white-space: normal;'>{hist}</td>"
+                    
                     html += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px;'>{r['Status']}</td>"
                     html += "</tr>"
                 
