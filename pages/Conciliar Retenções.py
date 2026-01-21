@@ -8,7 +8,6 @@ from PIL import Image
 # 0. CONFIGURAÇÃO DA PÁGINA E CSS
 # ==============================================================================
 
-# Busca ícone (mesma lógica anterior)
 icon_filename = "Barcarena.png"
 current_dir = os.getcwd()
 possible_paths = [
@@ -61,8 +60,8 @@ st.markdown("""
     }
     .metric-card-green { border-left: 5px solid #28a745; }
     .metric-card-orange { border-left: 5px solid #ffc107; }
-    .metric-card-blue { border-left: 5px solid #007bff; } /* Novo para Totais */
-    .metric-card-dark { border-left: 5px solid #343a40; } /* Novo para Totais */
+    .metric-card-blue { border-left: 5px solid #007bff; }
+    .metric-card-dark { border-left: 5px solid #343a40; }
     
     .metric-value { font-size: 22px; font-weight: bold; }
     .metric-label { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -151,7 +150,14 @@ def processar_conciliacao(df, ug_sel, conta_sel):
     # Conciliação
     resultados = []
     idx_pag_usado = set()
-    resumo = {"ret_pendente": 0, "pag_sobra": 0, "ok": 0, "tot_ret": 0.0, "tot_pag": 0.0, "saldo": 0.0}
+    
+    # Inicializa Resumo com todas as métricas necessárias
+    resumo = {
+        "ret_pendente": 0, "val_ret_pendente": 0.0,
+        "pag_sobra": 0,    "val_pag_sobra": 0.0,
+        "ok": 0,           "val_ok": 0.0,
+        "tot_ret": 0.0, "tot_pag": 0.0, "saldo": 0.0
+    }
 
     # Loop Retenções
     for _, r in df_ret_limpa.iterrows():
@@ -170,9 +176,14 @@ def processar_conciliacao(df, ug_sel, conta_sel):
             idx_pag_usado.add(r_pag.name)
             match = True
             sort = 2
+            
+            # Contabiliza Conciliados
             resumo["ok"] += 1
+            resumo["val_ok"] += val_pago
         else:
+            # Contabiliza Pendentes
             resumo["ret_pendente"] += 1
+            resumo["val_ret_pendente"] += val
             
         resultados.append({
             "Empenho": r[c_empenho], "Data Emp": r[c_data],
@@ -184,7 +195,10 @@ def processar_conciliacao(df, ug_sel, conta_sel):
 
     # Loop Sobras
     for _, r in df_pag[~df_pag.index.isin(idx_pag_usado)].iterrows():
+        # Contabiliza Sobras
         resumo["pag_sobra"] += 1
+        resumo["val_pag_sobra"] += r[c_valor]
+        
         resultados.append({
             "Empenho": r[c_empenho], "Data Emp": "-",
             "Vlr Retido": 0.0, "Vlr Pago": r[c_valor],
@@ -270,7 +284,7 @@ if arquivo:
             
             if not df_res.empty:
                 
-                # --- LINHA 1: CONTAGEM DE ITENS (OPERACIONAL) ---
+                # --- LINHA 1: CONTAGEM DE ITENS ---
                 k1, k2, k3 = st.columns(3)
                 with k1:
                     st.markdown(f"""
@@ -297,23 +311,50 @@ if arquivo:
                     </div>
                     """, unsafe_allow_html=True)
                 
-                # --- LINHA 2: VALORES TOTAIS (FINANCEIRO) ---
-                f1, f2, f3 = st.columns(3)
+                # --- LINHA 2 (NOVA): VALORES ESPECÍFICOS ---
+                # Usamos as mesmas cores da Linha 1 para criar identidade visual
+                v1, v2, v3 = st.columns(3)
                 
-                # Formata cor do saldo
+                with v1:
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <div class="metric-label">Total Retido s/ Pgto</div>
+                        <div class="metric-value" style="color: #ff4b4b;">{formatar_moeda_br(resumo['val_ret_pendente'])}</div>
+                        <div class="metric-sub">Montante Pendente</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with v2:
+                    st.markdown(f"""
+                    <div class="metric-card metric-card-orange">
+                        <div class="metric-label">Total Pago s/ Retenção</div>
+                        <div class="metric-value" style="color: #ffc107;">{formatar_moeda_br(resumo['val_pag_sobra'])}</div>
+                         <div class="metric-sub">Montante Descasado</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with v3:
+                    st.markdown(f"""
+                    <div class="metric-card metric-card-green">
+                        <div class="metric-label">Total Retido e Pago</div>
+                        <div class="metric-value" style="color: #28a745;">{formatar_moeda_br(resumo['val_ok'])}</div>
+                         <div class="metric-sub">Montante Conciliado</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # --- LINHA 3: VALORES TOTAIS (FINANCEIRO GERAL) ---
+                f1, f2, f3 = st.columns(3)
                 cor_saldo = "#ff4b4b" if resumo['saldo'] > 0.01 else ("#28a745" if resumo['saldo'] == 0 else "#007bff")
                 
                 with f1:
                     st.markdown(f"""
                     <div class="metric-card metric-card-blue">
-                        <div class="metric-label">Total Retido</div>
+                        <div class="metric-label">Total Retido (Geral)</div>
                         <div class="metric-value" style="color: #004085;">{formatar_moeda_br(resumo['tot_ret'])}</div>
                     </div>
                     """, unsafe_allow_html=True)
                 with f2:
                     st.markdown(f"""
                     <div class="metric-card metric-card-blue">
-                        <div class="metric-label">Total Pago</div>
+                        <div class="metric-label">Total Pago (Geral)</div>
                         <div class="metric-value" style="color: #004085;">{formatar_moeda_br(resumo['tot_pag'])}</div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -354,7 +395,6 @@ if arquivo:
                     html += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px;'>{r['Status']}</td>"
                     html += "</tr>"
                 
-                # Linha de Total na Tabela também
                 html += f"<tr style='font-weight: bold; background-color: lightgrey; color: black;'>"
                 html += "<td colspan='2' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>"
                 html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['tot_ret'])}</td>"
