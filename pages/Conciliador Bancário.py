@@ -18,9 +18,9 @@ import fitz  # Requer pymupdf no requirements.txt
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
 try:
     icon_image = Image.open(icon_path)
-    st.set_page_config(page_title="Portal Financeiro", page_icon=icon_image, layout="wide")
+    st.set_page_config(page_title="Conciliador Bancário", page_icon=icon_image, layout="wide")
 except:
-    st.set_page_config(page_title="Portal Financeiro", layout="wide")
+    st.set_page_config(page_title="Conciliador Bancário", layout="wide")
 
 # --- CSS PERSONALIZADO ---
 st.markdown("""
