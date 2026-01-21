@@ -26,9 +26,9 @@ for p in possible_paths:
 
 try:
     if icon_image:
-        st.set_page_config(page_title="Portal Financeiro - Retenções", page_icon=icon_image, layout="wide")
+        st.set_page_config(page_title="Conciliador de Retenções", page_icon=icon_image, layout="wide")
     else:
-        st.set_page_config(page_title="Portal Financeiro - Retenções", layout="wide")
+        st.set_page_config(page_title="Conciliador de Retenções", layout="wide")
 except: pass
 
 st.markdown("""
@@ -247,17 +247,17 @@ def gerar_excel(df):
 # 2. INTERFACE GRÁFICA
 # ==============================================================================
 
-st.markdown("<h1 style='text-align: center;'>Conciliação de Retenções (Contábil)</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>Conciliação de Retenções</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
 c1, c2 = st.columns(2)
 
 with c1: 
-    st.markdown('<p class="big-label">1. Upload Razão Geral (.xlsx)</p>', unsafe_allow_html=True)
+    st.markdown('<p class="big-label">1. Faça o upload do Razão Contábil (.xlsx)</p>', unsafe_allow_html=True)
     arquivo = st.file_uploader("", type=["xlsx", "csv"], key="up_razao", label_visibility="collapsed")
 
 with c2:
-    st.markdown('<p class="big-label">2. Configuração dos Filtros</p>', unsafe_allow_html=True)
+    st.markdown('<p class="big-label">2. Selecione os filtros de UG e Retenção</p>', unsafe_allow_html=True)
     placeholder_filtros = st.empty()
 
 if arquivo:
