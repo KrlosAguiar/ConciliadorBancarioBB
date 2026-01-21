@@ -58,6 +58,8 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
 * **Projeção de FOPAG:** Calcula a projeção da Folha de Pagamento para os meses restantes.
 
+* **Conciliar Retenções:** Concilia os valores extraorçamentários retidos e pagos.
+
 * **(Em breve) Novos Módulos:** Outras ferramentas serão adicionadas aqui.
 
 &nbsp;
@@ -66,6 +68,7 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 ---
 **Status do Sistema:** ✅ Online
 """)
+
 
 
 
