@@ -4,6 +4,13 @@ import io
 import os
 from PIL import Image
 
+# Bibliotecas para geração do PDF (ReportLab)
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.units import mm
+
 # ==============================================================================
 # 0. CONFIGURAÇÃO DA PÁGINA E CSS
 # ==============================================================================
@@ -64,8 +71,6 @@ st.markdown("""
     
     .metric-value { font-size: 22px; font-weight: bold; }
     .metric-label { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
-    /* Sub-label removido do HTML, mantido CSS apenas para não quebrar legados se houver */
-    .metric-sub { font-size: 11px; color: #888; margin-top: 5px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -243,6 +248,113 @@ def gerar_excel(df):
         
     return out.getvalue()
 
+def gerar_pdf(df_f, titulo_conta, resumo):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=10*mm, leftMargin=10*mm, topMargin=10*mm, bottomMargin=10*mm)
+    story = []
+    styles = getSampleStyleSheet()
+    
+    # --- TÍTULO ---
+    story.append(Paragraph("Relatório de Conciliação de Retenções", styles["Title"]))
+    story.append(Paragraph(f"<b>Filtro:</b> {titulo_conta}", ParagraphStyle(name='C', alignment=1, spaceAfter=10)))
+    
+    # --- QUADRO DE RESUMO (CARDS NO PDF) ---
+    # Cores Claras para fundo
+    bg_red = colors.Color(1, 0.9, 0.9)   # Vermelho Claro
+    bg_org = colors.Color(1, 0.95, 0.8)  # Laranja Claro
+    bg_grn = colors.Color(0.9, 1, 0.9)   # Verde Claro
+    bg_blu = colors.Color(0.9, 0.95, 1)  # Azul Claro
+    
+    # Dados do Resumo (2 linhas: Labels/Qtd e Valores)
+    data_resumo = [
+        # Linha 1: Títulos
+        ["PENDENTES (RETIDO S/ PGTO)", "SOBRAS (PAGO S/ RETENÇÃO)", "CONCILIADOS"],
+        # Linha 2: Quantidades
+        [f"{resumo['ret_pendente']} itens", f"{resumo['pag_sobra']} itens", f"{resumo['ok']} itens"],
+        # Linha 3: Valores Específicos
+        [formatar_moeda_br(resumo['val_ret_pendente']), formatar_moeda_br(resumo['val_pag_sobra']), formatar_moeda_br(resumo['val_ok'])]
+    ]
+    
+    t_res = Table(data_resumo, colWidths=[63*mm, 63*mm, 63*mm])
+    t_res.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), # Header Bold
+        ('FONTSIZE', (0,0), (-1,0), 9),
+        ('FONTSIZE', (0,1), (-1,2), 11),
+        # Cores de Fundo (Colunas)
+        ('BACKGROUND', (0,0), (0,-1), bg_red),
+        ('BACKGROUND', (1,0), (1,-1), bg_org),
+        ('BACKGROUND', (2,0), (2,-1), bg_grn),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(t_res)
+    story.append(Spacer(1, 3*mm))
+
+    # --- QUADRO DE TOTAIS GERAIS ---
+    data_totais = [
+        ["TOTAL RETIDO (GERAL)", "TOTAL PAGO (GERAL)", "SALDO FINAL"],
+        [formatar_moeda_br(resumo['tot_ret']), formatar_moeda_br(resumo['tot_pag']), formatar_moeda_br(resumo['saldo'])]
+    ]
+    t_tot = Table(data_totais, colWidths=[63*mm, 63*mm, 63*mm])
+    t_tot.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
+        ('BACKGROUND', (0,0), (-1,-1), bg_blu),
+        ('TEXTCOLOR', (2,1), (2,1), colors.red if resumo['saldo'] > 0.01 else (colors.blue if resumo['saldo'] < -0.01 else colors.green)),
+    ]))
+    story.append(t_tot)
+    story.append(Spacer(1, 8*mm))
+    
+    # --- TABELA DE DADOS ---
+    headers = ['Empenho', 'Data', 'Vlr. Retido', 'Vlr. Pago', 'Diferença', 'Histórico', 'Status']
+    data = [headers]
+    
+    table_style = [
+        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+        ('BACKGROUND', (0,0), (-1,0), colors.black),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('ALIGN', (2,0), (4,-1), 'RIGHT'), # Valores direita
+        ('ALIGN', (5,0), (5,-1), 'LEFT'),  # Hist esquerda
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,-1), 8),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]
+    
+    for i, (_, r) in enumerate(df_f.iterrows()):
+        dif = r['Dif']
+        hist = str(r['Histórico'])
+        if len(hist) > 60: hist = hist[:57] + "..."
+        
+        row_data = [
+            str(r['Empenho']), str(r['Data Emp']),
+            formatar_moeda_br(r['Vlr Retido']), formatar_moeda_br(r['Vlr Pago']),
+            formatar_moeda_br(dif) if abs(dif) >= 0.01 else "-",
+            hist, str(r['Status'])
+        ]
+        data.append(row_data)
+        
+        if abs(dif) >= 0.01:
+            table_style.append(('TEXTCOLOR', (4, i+1), (4, i+1), colors.red))
+            table_style.append(('FONTNAME', (4, i+1), (4, i+1), 'Helvetica-Bold'))
+
+    # Linha final totalizadora
+    data.append(['TOTAL', '', formatar_moeda_br(resumo['tot_ret']), formatar_moeda_br(resumo['tot_pag']), formatar_moeda_br(resumo['saldo']), '', ''])
+    last_row_idx = len(data) - 1
+    table_style.append(('BACKGROUND', (0, last_row_idx), (-1, last_row_idx), colors.lightgrey))
+    table_style.append(('FONTNAME', (0, last_row_idx), (-1, last_row_idx), 'Helvetica-Bold'))
+    table_style.append(('SPAN', (0, last_row_idx), (1, last_row_idx)))
+
+    col_widths = [20*mm, 18*mm, 25*mm, 25*mm, 25*mm, 57*mm, 20*mm]
+    t = Table(data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle(table_style))
+    story.append(t)
+    
+    doc.build(story)
+    return buffer.getvalue()
+
 # ==============================================================================
 # 2. INTERFACE GRÁFICA
 # ==============================================================================
@@ -306,7 +418,7 @@ if arquivo:
                     </div>
                     """, unsafe_allow_html=True)
                 
-                # --- LINHA 2: VALORES ESPECÍFICOS (SEM LEGENDAS INFERIORES) ---
+                # --- LINHA 2: VALORES ESPECÍFICOS ---
                 v1, v2, v3 = st.columns(3)
                 with v1:
                     st.markdown(f"""
@@ -358,13 +470,12 @@ if arquivo:
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # --- TABELA HTML (AJUSTE VISUAL: LARGURAS + QUEBRA DE LINHA NO HISTÓRICO) ---
+                # --- TABELA HTML ---
                 html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
                 html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
                 
                 html += "<tr style='background-color: black; color: white !important;'>"
                 
-                # Definição de Larguras (Total 100%)
                 html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Empenho</th>"
                 html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Data</th>"
                 html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Retido</th>"
@@ -385,7 +496,6 @@ if arquivo:
                     html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
                     html += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
                     
-                    # HISTÓRICO: SEM TRUNCAMENTO, FONTE MENOR, QUEBRA DE LINHA
                     hist = str(r['Histórico'])
                     html += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 11px; word-wrap: break-word; white-space: normal;'>{hist}</td>"
                     
@@ -410,6 +520,16 @@ if arquivo:
                     data=excel_bytes,
                     file_name="Conciliacao_Retencoes.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+                
+                # --- BOTÃO PDF ADICIONADO ---
+                pdf_bytes = gerar_pdf(df_res, f"{conta_sel} (UG: {ug_sel})", resumo)
+                st.download_button(
+                    label="BAIXAR RELATÓRIO EM PDF",
+                    data=pdf_bytes,
+                    file_name="Relatorio_Retencoes.pdf",
+                    mime="application/pdf",
                     use_container_width=True
                 )
             else:
