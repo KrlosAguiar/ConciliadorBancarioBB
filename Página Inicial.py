@@ -54,7 +54,7 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
 * **Conciliador de Saldos Bancários:** Cruza os saldos de vários extratos com os saldos do relatório da GovBr.
 
-* **Conciliar Retenções:** Concilia os valores extraorçamentários retidos e pagos.
+* **Conciliador de Retenções:** Concilia os valores extraorçamentários retidos e pagos.
 
 * **Tarifas Bancárias:** Extrai os lançamentos das tarifas do Extrato Bancário para empenho, liquidação e pagamento.
 
@@ -68,6 +68,7 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 ---
 **Status do Sistema:** ✅ Online
 """)
+
 
 
 
