@@ -132,27 +132,56 @@ def processar_conciliacao(df, ug_sel, conta_sel):
 
     df_base['Tipo_Norm'] = df_base[c_tipo].astype(str).str.strip()
 
-    # Separação
+    # --- Separação dos Grupos ---
+    # 1. Retenções (Crédito - C)
     mask_ret = (df_base['Tipo_Norm'].str.contains("Retenção Empenho", case=False)) & (df_base[c_dc] == 'C')
     df_ret = df_base[mask_ret].copy()
     
-    mask_estorno = (df_base['Tipo_Norm'].str.contains("Retenção Empenho", case=False)) & (df_base[c_dc] == 'D')
-    df_est = df_base[mask_estorno].copy()
+    # 2. Estornos de Retenção (Débito - D)
+    mask_estorno_ret = (df_base['Tipo_Norm'].str.contains("Retenção Empenho", case=False)) & (df_base[c_dc] == 'D')
+    df_est_ret = df_base[mask_estorno_ret].copy()
     
+    # 3. Pagamentos (Débito - D)
     mask_pag = (df_base['Tipo_Norm'].str.contains("Pagamento de Documento Extra", case=False)) & (df_base[c_dc] == 'D')
     df_pag = df_base[mask_pag].copy()
 
-    # Limpeza Estornos
-    idx_cancel = set()
-    for _, r_est in df_est.iterrows():
+    # 4. Estornos de Pagamento (Crédito - C) -> NOVO TRATAMENTO
+    # Busca por 'Estorno' no tipo ou histórico, sendo Crédito
+    mask_estorno_pag = (
+        (df_base[c_dc] == 'C') & 
+        (df_base['Tipo_Norm'].str.contains("Estorno", case=False) | 
+         df_base[c_hist].astype(str).str.contains("Estorno", case=False))
+    )
+    df_est_pag = df_base[mask_estorno_pag].copy()
+
+    # --- Limpeza de Estornos de Retenção ---
+    idx_ret_cancel = set()
+    for _, r_est in df_est_ret.iterrows():
         v = r_est[c_valor]
         e = r_est[c_empenho]
-        cand = df_ret[(df_ret[c_empenho] == e) & (df_ret[c_valor] == v) & (~df_ret.index.isin(idx_cancel))]
-        if not cand.empty: idx_cancel.add(cand.index[0])
+        # Remove retenção original compatível
+        cand = df_ret[(df_ret[c_empenho] == e) & (abs(df_ret[c_valor] - v) < 0.01) & (~df_ret.index.isin(idx_ret_cancel))]
+        if not cand.empty: idx_ret_cancel.add(cand.index[0])
     
-    df_ret_limpa = df_ret[~df_ret.index.isin(idx_cancel)]
+    df_ret_limpa = df_ret[~df_ret.index.isin(idx_ret_cancel)]
 
-    # Conciliação
+    # --- Limpeza de Estornos de Pagamento (NOVO) ---
+    idx_pag_cancel = set()
+    for _, r_est in df_est_pag.iterrows():
+        v = r_est[c_valor]
+        e = r_est[c_empenho]
+        # Remove pagamento original compatível
+        cand = df_pag[
+            (df_pag[c_empenho] == e) & 
+            (abs(df_pag[c_valor] - v) < 0.01) & 
+            (~df_pag.index.isin(idx_pag_cancel))
+        ]
+        if not cand.empty: 
+            idx_pag_cancel.add(cand.index[0])
+
+    df_pag_limpa = df_pag[~df_pag.index.isin(idx_pag_cancel)]
+
+    # --- Conciliação ---
     resultados = []
     idx_pag_usado = set()
     
@@ -167,7 +196,8 @@ def processar_conciliacao(df, ug_sel, conta_sel):
     # Loop Retenções
     for _, r in df_ret_limpa.iterrows():
         val = r[c_valor]
-        cand = df_pag[(df_pag[c_valor] == val) & (~df_pag.index.isin(idx_pag_usado))]
+        # Busca match na lista de pagamentos limpa
+        cand = df_pag_limpa[(df_pag_limpa[c_valor] == val) & (~df_pag_limpa.index.isin(idx_pag_usado))]
         
         val_pago = 0.0
         dt_pag = "-"
@@ -189,20 +219,21 @@ def processar_conciliacao(df, ug_sel, conta_sel):
             resumo["val_ret_pendente"] += val
             
         resultados.append({
-            "Empenho": r[c_empenho], "Data Emp": r[c_data],
+            "Empenho": r[c_empenho], "Data Emp": r[c_data], # Data da Retenção
             "Vlr Retido": val, "Vlr Pago": val_pago,
             "Dif": val - val_pago, "Data Pag": dt_pag,
             "Histórico": r[c_hist], "_sort": sort,
             "Status": "Conciliado" if match else "Retido s/ Pagto"
         })
 
-    # Loop Sobras
-    for _, r in df_pag[~df_pag.index.isin(idx_pag_usado)].iterrows():
+    # Loop Sobras (Usando lista limpa)
+    for _, r in df_pag_limpa[~df_pag_limpa.index.isin(idx_pag_usado)].iterrows():
         resumo["pag_sobra"] += 1
         resumo["val_pag_sobra"] += r[c_valor]
         
         resultados.append({
-            "Empenho": r[c_empenho], "Data Emp": "-",
+            "Empenho": r[c_empenho], 
+            "Data Emp": r[c_data], # <--- AJUSTE: Usa Data do Pagamento aqui
             "Vlr Retido": 0.0, "Vlr Pago": r[c_valor],
             "Dif": 0.0 - r[c_valor], "Data Pag": r[c_data],
             "Histórico": r[c_hist], "_sort": 1,
@@ -259,19 +290,14 @@ def gerar_pdf(df_f, titulo_conta, resumo):
     story.append(Paragraph(f"<b>Filtro:</b> {titulo_conta}", ParagraphStyle(name='C', alignment=1, spaceAfter=10)))
     
     # --- QUADRO DE RESUMO (CARDS NO PDF) ---
-    # Cores Claras para fundo
     bg_red = colors.Color(1, 0.9, 0.9)   # Vermelho Claro
     bg_org = colors.Color(1, 0.95, 0.8)  # Laranja Claro
     bg_grn = colors.Color(0.9, 1, 0.9)   # Verde Claro
     bg_blu = colors.Color(0.9, 0.95, 1)  # Azul Claro
     
-    # Dados do Resumo (2 linhas: Labels/Qtd e Valores)
     data_resumo = [
-        # Linha 1: Títulos
         ["PENDENTES (RETIDO S/ PGTO)", "SOBRAS (PAGO S/ RETENÇÃO)", "CONCILIADOS"],
-        # Linha 2: Quantidades
         [f"{resumo['ret_pendente']} itens", f"{resumo['pag_sobra']} itens", f"{resumo['ok']} itens"],
-        # Linha 3: Valores Específicos
         [formatar_moeda_br(resumo['val_ret_pendente']), formatar_moeda_br(resumo['val_pag_sobra']), formatar_moeda_br(resumo['val_ok'])]
     ]
     
@@ -279,10 +305,9 @@ def gerar_pdf(df_f, titulo_conta, resumo):
     t_res.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), # Header Bold
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('FONTSIZE', (0,0), (-1,0), 9),
         ('FONTSIZE', (0,1), (-1,2), 11),
-        # Cores de Fundo (Colunas)
         ('BACKGROUND', (0,0), (0,-1), bg_red),
         ('BACKGROUND', (1,0), (1,-1), bg_org),
         ('BACKGROUND', (2,0), (2,-1), bg_grn),
@@ -316,8 +341,8 @@ def gerar_pdf(df_f, titulo_conta, resumo):
         ('BACKGROUND', (0,0), (-1,0), colors.black),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('ALIGN', (2,0), (4,-1), 'RIGHT'), # Valores direita
-        ('ALIGN', (5,0), (5,-1), 'LEFT'),  # Hist esquerda
+        ('ALIGN', (2,0), (4,-1), 'RIGHT'),
+        ('ALIGN', (5,0), (5,-1), 'LEFT'),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('FONTSIZE', (0,0), (-1,-1), 8),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
@@ -340,7 +365,6 @@ def gerar_pdf(df_f, titulo_conta, resumo):
             table_style.append(('TEXTCOLOR', (4, i+1), (4, i+1), colors.red))
             table_style.append(('FONTNAME', (4, i+1), (4, i+1), 'Helvetica-Bold'))
 
-    # Linha final totalizadora
     data.append(['TOTAL', '', formatar_moeda_br(resumo['tot_ret']), formatar_moeda_br(resumo['tot_pag']), formatar_moeda_br(resumo['saldo']), '', ''])
     last_row_idx = len(data) - 1
     table_style.append(('BACKGROUND', (0, last_row_idx), (-1, last_row_idx), colors.lightgrey))
@@ -387,7 +411,6 @@ if arquivo:
         
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # BOTÃO COM LARGURA TOTAL
         if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             with st.spinner("Processando..."):
                 df_res, resumo = processar_conciliacao(df_dados, ug_sel, conta_sel)
@@ -523,7 +546,6 @@ if arquivo:
                     use_container_width=True
                 )
                 
-                # --- BOTÃO PDF ADICIONADO ---
                 pdf_bytes = gerar_pdf(df_res, f"{conta_sel} (UG: {ug_sel})", resumo)
                 st.download_button(
                     label="BAIXAR RELATÓRIO EM PDF",
