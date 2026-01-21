@@ -64,6 +64,7 @@ st.markdown("""
     
     .metric-value { font-size: 22px; font-weight: bold; }
     .metric-label { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
+    /* Sub-label removido do HTML, mantido CSS apenas para não quebrar legados se houver */
     .metric-sub { font-size: 11px; color: #888; margin-top: 5px;}
 </style>
 """, unsafe_allow_html=True)
@@ -288,7 +289,6 @@ if arquivo:
                     <div class="metric-card">
                         <div class="metric-label">Retido e Não Pago</div>
                         <div class="metric-value" style="color: #ff4b4b;">{resumo['ret_pendente']}</div>
-                        <div class="metric-sub">Lançamentos Pendentes</div>
                     </div>
                     """, unsafe_allow_html=True)
                 with k2:
@@ -296,7 +296,6 @@ if arquivo:
                     <div class="metric-card metric-card-orange">
                         <div class="metric-label">Pago sem Retenção</div>
                         <div class="metric-value" style="color: #ffc107;">{resumo['pag_sobra']}</div>
-                        <div class="metric-sub">Lançamentos de Sobra</div>
                     </div>
                     """, unsafe_allow_html=True)
                 with k3:
@@ -304,18 +303,16 @@ if arquivo:
                     <div class="metric-card metric-card-green">
                         <div class="metric-label">Conciliados</div>
                         <div class="metric-value" style="color: #28a745;">{resumo['ok']}</div>
-                        <div class="metric-sub">Lançamentos Baixados</div>
                     </div>
                     """, unsafe_allow_html=True)
                 
-                # --- LINHA 2: VALORES ESPECÍFICOS ---
+                # --- LINHA 2: VALORES ESPECÍFICOS (SEM LEGENDAS INFERIORES) ---
                 v1, v2, v3 = st.columns(3)
                 with v1:
                     st.markdown(f"""
                     <div class="metric-card">
                         <div class="metric-label">Total Retido s/ Pgto</div>
                         <div class="metric-value" style="color: #ff4b4b;">{formatar_moeda_br(resumo['val_ret_pendente'])}</div>
-                        <div class="metric-sub">Montante Pendente</div>
                     </div>
                     """, unsafe_allow_html=True)
                 with v2:
@@ -323,7 +320,6 @@ if arquivo:
                     <div class="metric-card metric-card-orange">
                         <div class="metric-label">Total Pago s/ Retenção</div>
                         <div class="metric-value" style="color: #ffc107;">{formatar_moeda_br(resumo['val_pag_sobra'])}</div>
-                         <div class="metric-sub">Montante Descasado</div>
                     </div>
                     """, unsafe_allow_html=True)
                 with v3:
@@ -331,7 +327,6 @@ if arquivo:
                     <div class="metric-card metric-card-green">
                         <div class="metric-label">Total Retido e Pago</div>
                         <div class="metric-value" style="color: #28a745;">{formatar_moeda_br(resumo['val_ok'])}</div>
-                         <div class="metric-sub">Montante Conciliado</div>
                     </div>
                     """, unsafe_allow_html=True)
 
