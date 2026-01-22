@@ -11,6 +11,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import mm
+from reportlab.pdfbase.pdfmetrics import stringWidth # Necessário para calcular largura do texto
 from PIL import Image
 import fitz  # Requer pymupdf no requirements.txt
 
@@ -168,7 +169,6 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             if n_val_8 == 0 and n_val_9 > 0: col_valor = 9
         except: pass
         
-        # Leitura incluindo coluna B (índice 1) para 'Lancamento'
         try: df = df.iloc[:, [1, 4, 5, col_valor, 25, 26, 27]].copy()
         except: df = df.iloc[:, [1, 4, 5, col_valor, -4, -2, -1]].copy()
         
@@ -318,7 +318,6 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
     df_m = pd.merge(df_p_s, df_e_s, on=['Data', 'Documento'], how='outer')
     
     for _, row in df_m.iterrows():
-        # Recupera listas ou inicializa vazias
         lst_ext = row['Valor_Extrato_List'] if isinstance(row['Valor_Extrato_List'], list) else []
         lst_raz = row['Valor_Razao_List'] if isinstance(row['Valor_Razao_List'], list) else []
         lst_lanc = row['Lancamento_List'] if isinstance(row['Lancamento_List'], list) else []
@@ -328,7 +327,6 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
         
         hist = row['Histórico'] if pd.notna(row['Histórico']) else "S/H"
         
-        # Define se é agrupado para exibir "-" no cabeçalho
         is_grouped = (len(lst_lanc) > 1)
         lanc_mestre = lst_lanc[0] if len(lst_lanc) == 1 else ("-" if is_grouped else "-")
         
@@ -341,22 +339,19 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
             'Sort_Data': row['Data'], 'Sort_Doc': row['Documento'], 'Order_Idx': 0
         })
         
-        # Gera linhas de detalhe se houver mais de um item em qualquer lado
         if len(lst_ext) > 1 or len(lst_raz) > 1:
             order_idx = 1
-            # Detalhes Extrato
             if len(lst_ext) > 1:
                 for val in lst_ext:
                     res.append({
                         'Data': '', 'Histórico': '', 'Documento': '',
-                        'Lancamento': '-', # Extrato não tem lançamento
+                        'Lancamento': '-',
                         'Valor_Extrato': val, 'Valor_Razao': '-',
                         'Diferença': 0.0, 'Tipo': 'Detalhe',
                         'Sort_Data': row['Data'], 'Sort_Doc': row['Documento'], 'Order_Idx': order_idx
                     })
                     order_idx += 1
             
-            # Detalhes Razão
             if len(lst_raz) > 1:
                 for val, lanc in zip(lst_raz, lst_lanc):
                     res.append({
@@ -371,7 +366,6 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
     df_f = pd.DataFrame(res)
     df_f['dt_sort'] = pd.to_datetime(df_f['Sort_Data'], format='%d/%m/%Y', errors='coerce')
     
-    # Ordenação Hierárquica
     df_sorted = df_f.sort_values(by=['dt_sort', 'Sort_Doc', 'Order_Idx']).drop(columns=['Sort_Data', 'Sort_Doc', 'Order_Idx', 'dt_sort'])
     
     return df_sorted
@@ -380,9 +374,18 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
 # 2. GERAÇÃO DE SAÍDAS (PDF, EXCEL E MARCAÇÃO)
 # ==============================================================================
 
+def calcular_tamanho_fonte(text, font_name, max_width_pt, start_size=8, min_size=4):
+    """Calcula o maior tamanho de fonte que faz o texto caber em uma linha, respeitando um mínimo."""
+    size = start_size
+    text = str(text)
+    while size > min_size:
+        if stringWidth(text, font_name, size) <= max_width_pt:
+            return size
+        size -= 0.5
+    return min_size
+
 def gerar_pdf_final(df_f, titulo_completo):
     buffer = io.BytesIO()
-    # Aumentando largura para caber nova coluna
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=5*mm, leftMargin=5*mm, topMargin=15*mm, bottomMargin=15*mm, title=titulo_completo)
     story = []
     styles = getSampleStyleSheet()
@@ -391,8 +394,14 @@ def gerar_pdf_final(df_f, titulo_completo):
     story.append(Paragraph(f"<b>Conta:</b> {nome_conta_interno}", ParagraphStyle(name='C', alignment=1)))
     story.append(Spacer(1, 15))
     
-    # Nova coluna Lançamento (Lanc.)
-    headers = ['Data', 'Lanc.', 'Documento', 'Vlr. Extrato', 'Vlr. Razão', 'Diferença']
+    # NOVAS COLUNAS: Inclusão de Histórico e ajustes de largura
+    # A4 Width = 210mm. Margins 5+5=10mm. Usable = 200mm.
+    # Data(18) + Lanc(14) + Hist(84) + Doc(18) + Ext(22) + Raz(22) + Dif(22) = 200mm
+    headers = ['Data', 'Lanc.', 'Histórico', 'Documento', 'Vlr. Extrato', 'Vlr. Razão', 'Diferença']
+    
+    col_widths = [18*mm, 14*mm, 84*mm, 18*mm, 22*mm, 22*mm, 22*mm]
+    max_hist_width_pt = (84*mm) / 0.352778 # Conversão mm para points (aprox 238 pts)
+    
     data = [headers]
     
     # Estilos Base
@@ -400,23 +409,30 @@ def gerar_pdf_final(df_f, titulo_completo):
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.black),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (0,0), (0,-1), 'CENTER'), # Data
-        ('ALIGN', (1,0), (1,-1), 'CENTER'), # Lanc
-        ('ALIGN', (2,0), (2,-1), 'CENTER'), # Doc
-        ('ALIGN', (3,0), (-1,-1), 'RIGHT'),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'), # Center All Default
+        ('ALIGN', (2,0), (2,-1), 'LEFT'),    # Histórico Left
+        ('ALIGN', (4,0), (-1,-1), 'RIGHT'),  # Values Right
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 9), # Header menor
+        ('FONTSIZE', (0,0), (-1,0), 9),
     ]
 
     row_idx = 1
     for _, r in df_f.iterrows():
         diff = r['Diferença']
         tipo = r['Tipo']
+        hist_text = str(r['Histórico'])
         
-        # Linha de Dados
+        # Cálculo dinâmico da fonte para o Histórico
+        font_size_hist = calcular_tamanho_fonte(hist_text, 'Helvetica', max_hist_width_pt - 6) # -6 padding
+        
+        # Criação do Parágrafo para o Histórico com o tamanho calculado
+        # style_hist = ParagraphStyle(name=f'H_{row_idx}', fontName='Helvetica', fontSize=font_size_hist, leading=font_size_hist+2)
+        p_hist = Paragraph(f'<font size={font_size_hist}>{hist_text}</font>', styles['Normal'])
+
         linha = [
             r['Data'], 
             str(r['Lancamento']), 
+            p_hist, # Objeto Paragraph
             str(r['Documento']), 
             formatar_moeda_br(r['Valor_Extrato']), 
             formatar_moeda_br(r['Valor_Razao']), 
@@ -424,12 +440,11 @@ def gerar_pdf_final(df_f, titulo_completo):
         ]
         data.append(linha)
         
-        # Estilização Condicional
         if tipo == 'Detalhe':
-            # Fundo Cinza Claro, Fonte Menor, Altura Reduzida (via padding)
+            # Fundo Cinza Claro, Fonte MENOR, Fonte PRETA
             table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.whitesmoke))
             table_style.append(('FONTSIZE', (0, row_idx), (-1, row_idx), 7))
-            table_style.append(('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.darkgrey))
+            table_style.append(('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.black))
             table_style.append(('TOPPADDING', (0, row_idx), (-1, row_idx), 0))
             table_style.append(('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 0))
         else:
@@ -439,18 +454,16 @@ def gerar_pdf_final(df_f, titulo_completo):
             table_style.append(('FONTSIZE', (0, row_idx), (-1, row_idx), 8))
             
             if abs(diff) >= 0.01:
-                table_style.append(('TEXTCOLOR', (5, row_idx), (5, row_idx), colors.red))
+                table_style.append(('TEXTCOLOR', (6, row_idx), (6, row_idx), colors.red))
         
         row_idx += 1
 
-    # Linha Total
-    data.append(['TOTAL', '', '', 
+    data.append(['TOTAL', '', '', '',
                  formatar_moeda_br(df_f[df_f['Tipo']=='Mestre']['Valor_Extrato'].sum()), 
                  formatar_moeda_br(df_f[df_f['Tipo']=='Mestre']['Valor_Razao'].sum()), 
                  formatar_moeda_br(df_f[df_f['Tipo']=='Mestre']['Diferença'].sum())])
     
-    # ColWidths ajustados para caber Lancamento
-    t = Table(data, colWidths=[20*mm, 20*mm, 60*mm, 30*mm, 30*mm, 30*mm])
+    t = Table(data, colWidths=col_widths)
     t.setStyle(TableStyle(table_style))
     story.append(t)
     doc.build(story)
@@ -459,7 +472,6 @@ def gerar_pdf_final(df_f, titulo_completo):
 def gerar_excel_final(df_f):
     output = io.BytesIO()
     
-    # Remove coluna auxiliar de tipo para exportação direta, mas usamos no loop
     df_export = df_f.copy()
     
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -472,18 +484,16 @@ def gerar_excel_final(df_f):
         fmt_currency = workbook.add_format({'num_format': '#,##0.00'})
         fmt_red_bold = workbook.add_format({'font_color': '#FF0000', 'bold': True, 'num_format': '#,##0.00'})
         
-        # Estilo para Detalhes
-        fmt_detalhe = workbook.add_format({'font_color': '#555555', 'bg_color': '#F2F2F2', 'italic': True, 'num_format': '#,##0.00', 'font_size': 9})
-        fmt_detalhe_txt = workbook.add_format({'font_color': '#555555', 'bg_color': '#F2F2F2', 'italic': True, 'font_size': 9})
+        # Estilo para Detalhes: Cor Preta e Borda 1
+        fmt_detalhe = workbook.add_format({'font_color': '#000000', 'bg_color': '#F2F2F2', 'italic': True, 'num_format': '#,##0.00', 'font_size': 9, 'border': 1})
+        fmt_detalhe_txt = workbook.add_format({'font_color': '#000000', 'bg_color': '#F2F2F2', 'italic': True, 'font_size': 9, 'border': 1})
         
         fmt_total = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'num_format': '#,##0.00', 'border': 1})
         fmt_total_label = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center'})
 
-        # Formata Header
         for col_num, value in enumerate(df_export.columns.values):
             worksheet.write(0, col_num, value, fmt_header)
 
-        # Ajuste de Largura
         worksheet.set_column('A:A', 12) # Data
         worksheet.set_column('B:B', 30) # Historico
         worksheet.set_column('C:C', 15) # Documento
@@ -491,17 +501,15 @@ def gerar_excel_final(df_f):
         worksheet.set_column('E:F', 18, fmt_currency) # Valores
         worksheet.set_column('G:G', 18, fmt_currency) # Diferenca
         
-        # Loop para aplicar formatação linha a linha
         for i, row in df_export.iterrows():
             excel_row = i + 1
             if row['Tipo'] == 'Detalhe':
-                worksheet.set_row(excel_row, 10) # Altura Reduzida
+                worksheet.set_row(excel_row, 10)
                 worksheet.write(excel_row, 0, row['Data'], fmt_detalhe_txt)
                 worksheet.write(excel_row, 1, row['Histórico'], fmt_detalhe_txt)
                 worksheet.write(excel_row, 2, row['Documento'], fmt_detalhe_txt)
                 worksheet.write(excel_row, 3, row['Lancamento'], fmt_detalhe_txt)
                 
-                # Valores com hifen se for string '-'
                 val_ext = row['Valor_Extrato']
                 val_raz = row['Valor_Razao']
                 
@@ -513,11 +521,9 @@ def gerar_excel_final(df_f):
                 
                 worksheet.write(excel_row, 6, '', fmt_detalhe)
             else:
-                # Formatação condicional para diferença na linha mestre
                 if abs(row['Diferença']) >= 0.01:
                      worksheet.write(excel_row, 6, row['Diferença'], fmt_red_bold)
 
-        # Totais (Filtra apenas Mestres)
         df_mestre = df_export[df_export['Tipo'] == 'Mestre']
         last_row = len(df_export) + 1
         worksheet.merge_range(last_row, 0, last_row, 3, "TOTAL", fmt_total_label)
@@ -533,7 +539,6 @@ def gerar_extrato_marcado(pdf_bytes, df_f, coords_referencia, nome_original):
     meta["title"] = f"{nome_original} Marcado"
     doc.set_metadata(meta)
     
-    # Apenas linhas Mestre com diferença são marcadas
     divergencias = df_f[(df_f['Tipo'] == 'Mestre') & (abs(df_f['Diferença']) >= 0.01)]
     
     for _, erro in divergencias.iterrows():
@@ -590,9 +595,9 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             
             for _, r in df_f.iterrows():
                 if r['Tipo'] == 'Detalhe':
-                    # Linha de Detalhe (Cinza claro, fonte menor, altura reduzida)
-                    style_row = "background-color: #f2f2f2; color: #555; font-size: 11px; line-height: 1.0;"
-                    style_cell = "padding: 2px 8px; border: 1px solid #ddd;"
+                    # Linha de Detalhe: Cor preta (#000) e Borda Preta Sólida (#000)
+                    style_row = "background-color: #f2f2f2; color: #000; font-size: 11px; line-height: 1.0;"
+                    style_cell = "padding: 2px 8px; border: 1px solid #000;"
                     html += f"<tr style='{style_row}'>"
                     html += f"<td style='{style_cell} text-align: center;'></td>" # Data Vazia
                     html += f"<td style='{style_cell} text-align: center;'>{r['Lancamento']}</td>"
@@ -602,7 +607,6 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
                     html += f"<td style='{style_cell} text-align: right;'>{formatar_moeda_br(r['Valor_Razao'])}</td>"
                     html += f"<td style='{style_cell}'></td></tr>"
                 else:
-                    # Linha Mestre
                     estilo_dif = "color: red; font-weight: bold;" if abs(r['Diferença']) >= 0.01 else "color: black;"
                     html += f"<tr style='background-color: white;'>"
                     html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Data']}</td>"
@@ -613,7 +617,6 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
                     html += f"<td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Razao'])}</td>"
                     html += f"<td style='text-align: right; border: 1px solid #000; {estilo_dif}'>{formatar_moeda_br(r['Diferença']) if abs(r['Diferença']) >= 0.01 else '-'}</td></tr>"
             
-            # Totais
             df_mestre = df_f[df_f['Tipo'] == 'Mestre']
             html += f"<tr style='font-weight: bold; background-color: lightgrey; color: black;'><td colspan='4' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL</td>"
             html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(df_mestre['Valor_Extrato'].sum())}</td>"
