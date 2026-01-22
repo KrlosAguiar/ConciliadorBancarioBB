@@ -11,13 +11,20 @@ import shutil
 import tempfile
 from PIL import Image
 
-# Configuração do executável UNRAR (Necessário para arquivos .rar)
+# --- IMPORTAÇÕES PARA PDF (REPORTLAB) ---
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, KeepTogether
+from reportlab.lib.units import mm
+
+# Configuração do executável UNRAR
 rarfile.UNRAR_TOOL = "unrar"
 
 # ==============================================================================
-# 0. CONFIGURAÇÃO DA PÁGINA E CSS (DESIGN REFERÊNCIA)
+# 0. CONFIGURAÇÃO DA PÁGINA E CSS
 # ==============================================================================
-icon_path = "Barcarena.png" 
+icon_path = "Barcarena.png"
 try:
     icon_image = Image.open(icon_path)
     st.set_page_config(page_title="Conciliador de Saldos Bancários", page_icon=icon_image, layout="wide")
@@ -41,27 +48,51 @@ st.markdown("""
     
     .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
     
-    /* ESTILO DOS CARDS DE UG */
-    .metric-card {
-        background-color: #f8f9fa;
-        border-left: 8px solid #ff4b4b; /* Vermelho por padrão */
+    /* --- AJUSTE CSS DOS CARDS --- */
+    .metric-card-base {
+        background-color: white !important; /* Força fundo branco */
         padding: 15px;
         border-radius: 8px;
         color: black;
         border: 1px solid #ddd;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         margin-bottom: 15px;
-        text-align: center;
+        text-align: center !important; /* Força centralização */
+        height: 100%;
     }
+    
+    /* Variação Vermelha (Padrão para pendências) */
+    .metric-card-red {
+        border-left: 8px solid #ff4b4b !important;
+    }
+
+    /* Variação Verde (Sem pendências) */
     .metric-card-green { 
-        border-left: 8px solid #28a745; /* Verde */
+        border-left: 8px solid #28a745 !important;
     }
     
-    .metric-ug-title { font-size: 16px; font-weight: bold; color: #333; margin-bottom: 5px; }
-    .metric-value { font-size: 24px; font-weight: bold; }
-    .metric-label { font-size: 12px; color: #555; text-transform: uppercase; }
+    .metric-ug-title { font-size: 14px; font-weight: bold; color: #555; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .metric-value { font-size: 26px; font-weight: bold; margin: 5px 0; }
+    .metric-label { font-size: 11px; color: #777; text-transform: uppercase; }
     
-    /* ESTILO DA TABELA HTML */
+    /* --- ESTILO DA TABELA HTML EM TELA --- */
+    .section-title {
+        background-color: black !important;
+        color: white !important;
+        padding: 10px 15px;
+        margin-bottom: 0;
+        font-weight: bold;
+        border-top-left-radius: 5px;
+        border-top-right-radius: 5px;
+    }
+
+    .preview-table-container {
+        border: 1px solid #000;
+        border-top: none;
+        margin-bottom: 20px;
+        overflow-x: auto;
+    }
+
     .preview-table {
         width: 100%;
         border-collapse: collapse;
@@ -70,24 +101,19 @@ st.markdown("""
         font-family: Arial, sans-serif;
     }
     .preview-table th {
-        background-color: black;
-        color: white;
+        background-color: #f0f0f0; /* Cinza claro no header interno */
+        color: black;
         padding: 10px;
-        border: 1px solid #000;
+        border: 1px solid #ccc;
         text-align: center;
         font-weight: bold;
+        font-size: 12px;
     }
     .preview-table td {
         padding: 8px;
-        border: 1px solid #000;
+        border: 1px solid #ccc;
         text-align: center;
-        font-size: 13px;
-    }
-    .row-separator {
-        background-color: #f0f0f0;
-        font-weight: bold;
-        text-align: left;
-        padding: 10px;
+        font-size: 12px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -98,7 +124,10 @@ st.markdown("""
 
 def formatar_moeda(valor):
     if pd.isna(valor): return "0,00"
-    return f"{valor:,.2f}".replace(',', '_').replace('.', ',').replace('_', '.')
+    try:
+        valor_float = float(valor)
+    except: return "0,00"
+    return f"{valor_float:,.2f}".replace(',', '_').replace('.', ',').replace('_', '.')
 
 def limpar_numero(valor):
     if pd.isna(valor) or valor == '': return 0.0
@@ -320,7 +349,7 @@ def ler_planilha_e_consolidar(file_obj):
                         "ARQUIVO_ORIGEM": "",
                         "TEM_PDF": False,
                         "MATCH_KEY": numeros_conta_match,
-                        "UG": "N/D" # Inicializa com N/D
+                        "UG": "N/D"
                     }
         except: continue
     return dados_consolidados
@@ -330,12 +359,9 @@ def processar_confronto(pasta_extratos, dados_dict):
     arquivos_aplicacao = []
     arquivos_movimento = []
 
-    # Mapeamento para garantir que pegamos a UG correta da pasta
     for root, dirs, files in os.walk(pasta_extratos):
         if "__MACOSX" in root: continue
         nome_ug = os.path.basename(root)
-        
-        # Se estiver na raiz temporária, não tem nome de UG útil, a menos que os PDFs estejam soltos
         if root == pasta_extratos: nome_ug = "Raiz"
 
         for file in files:
@@ -350,7 +376,6 @@ def processar_confronto(pasta_extratos, dados_dict):
                 if "aplic" in file.lower(): arquivos_aplicacao.append(item)
                 else: arquivos_movimento.append(item)
 
-    # Função auxiliar para processar
     def match_pdf(pdf_list, grupo_alvo):
         for pdf in pdf_list:
             saldo_extrato, _ = encontrar_saldo_pdf(pdf['caminho'])
@@ -400,6 +425,10 @@ def processar_confronto(pasta_extratos, dados_dict):
 
     return pd.DataFrame(lista_final)
 
+# ==============================================================================
+# 4. FUNÇÕES DE GERAÇÃO DE RELATÓRIOS (EXCEL E PDF)
+# ==============================================================================
+
 def aplicar_estilo_excel(ws, wb, df, start_row, cols):
     fmt_moeda = wb.add_format({'num_format': '#,##0.00'})
     fmt_red = wb.add_format({'font_color': '#9C0006', 'bg_color': '#FFC7CE', 'num_format': '#,##0.00'})
@@ -423,8 +452,132 @@ def aplicar_estilo_excel(ws, wb, df, start_row, cols):
         else:
             ws.set_column(i, i, width=largura_final)
 
+def gerar_pdf_conciliacao(df_final):
+    buffer = io.BytesIO()
+    # Usa paisagem (landscape) para caber melhor as colunas
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=10*mm, leftMargin=10*mm, topMargin=15*mm, bottomMargin=15*mm)
+    story = []
+    styles = getSampleStyleSheet()
+    title_style = styles["Title"]
+    title_style.alignment = 1 # Centralizado
+
+    # --- TÍTULO PRINCIPAL ---
+    story.append(Paragraph("Relatório de Conciliação de Saldos Bancários", title_style))
+    story.append(Spacer(1, 10*mm))
+
+    # --- SEÇÃO DE CARDS (RESUMO POR UG) ---
+    st_card_title = ParagraphStyle(name='CardTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, alignment=1, textColor=colors.darkgray)
+    st_card_value = ParagraphStyle(name='CardValue', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=16, alignment=1, spaceBefore=4, spaceAfter=4)
+    st_card_label = ParagraphStyle(name='CardLabel', parent=styles['Normal'], fontName='Helvetica', fontSize=8, alignment=1, textColor=colors.gray)
+
+    ugs_unicas = sorted(df_final['UG'].unique())
+    card_data_matrix = []
+    row_cards = []
+
+    for i, ug in enumerate(ugs_unicas):
+        df_ug = df_final[df_final['UG'] == ug]
+        pendencias = len(df_ug[abs(df_ug['DIFERENÇA']) > 0.01])
+        
+        cor_valor = colors.red if pendencias > 0 else colors.green
+        cor_borda = colors.red if pendencias > 0 else colors.green
+        
+        # Cria uma tabela interna para o conteúdo do card
+        sub_data = [
+            [Paragraph(ug, st_card_title)],
+            [Paragraph(str(pendencias), ParagraphStyle(name='V', parent=st_card_value, textColor=cor_valor))],
+            [Paragraph("PENDÊNCIAS", st_card_label)]
+        ]
+        sub_table = Table(sub_data, colWidths=[48*mm])
+        # Estilo do card: Borda esquerda grossa e colorida, resto cinza fino
+        sub_table.setStyle(TableStyle([
+            ('BOX', (0,0), (-1,-1), 0.5, colors.lightgrey),
+            ('LINEBEFORE', (0,0), (0,-1), 6, cor_borda),
+            ('TOPPADDING', (0,0), (-1,-1), 8),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+            ('BACKGROUND', (0,0), (-1,-1), colors.white)
+        ]))
+        row_cards.append(sub_table)
+
+        # Agrupa em linhas de 5 cards para o PDF paisagem
+        if len(row_cards) == 5 or i == len(ugs_unicas) - 1:
+            # Preenche com células vazias se a última linha tiver menos de 5
+            while len(row_cards) < 5: row_cards.append("") 
+            card_data_matrix.append(row_cards)
+            row_cards = []
+
+    if card_data_matrix:
+        # Tabela contêiner para os cards
+        t_cards = Table(card_data_matrix, colWidths=[50*mm]*5, hAlign='CENTER')
+        t_cards.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('LEFTPADDING', (0,0), (-1,-1), 5),
+            ('RIGHTPADDING', (0,0), (-1,-1), 5),
+            ('TOPPADDING', (0,0), (-1,-1), 5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 15), # Espaço após cada linha de cards
+        ]))
+        story.append(t_cards)
+        story.append(Spacer(1, 5*mm))
+
+    # --- FUNÇÃO PARA GERAR TABELAS DE DADOS ---
+    def add_data_table(df_part, titulo_secao):
+        if df_part.empty: return
+        
+        # Cabeçalho da Seção (Fundo Preto, Texto Branco)
+        header_style = ParagraphStyle(name='SectionHeader', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, alignment=0, textColor=colors.white, backColor=colors.black, padding=8, borderPadding=6)
+        story.append(KeepTogether(Paragraph(titulo_secao.upper(), header_style)))
+
+        # Dados da Tabela
+        cols_pdf = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA"]
+        data = [cols_pdf]
+        
+        ts = [
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+            ('ALIGN', (0,0), (-1,0), 'CENTER'),
+            ('ALIGN', (4,1), (-1,-1), 'RIGHT'), # Alinha valores à direita
+            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+            ('FONTSIZE', (0,0), (-1,-1), 8),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ]
+
+        for i, row in df_part.iterrows():
+            dif = row['DIFERENÇA']
+            row_data = [
+                str(row['UG']),
+                str(row['CÓDIGO']),
+                Paragraph(str(row['DESCRIÇÃO']), ParagraphStyle(name='DescTiny', fontSize=7)), # Descrição menor
+                str(row['CONTA']),
+                formatar_moeda(row['RAZÃO']),
+                formatar_moeda(row['EXTRATO']),
+                formatar_moeda(dif)
+            ]
+            data.append(row_data)
+            
+            # Destaca diferença em vermelho
+            if abs(dif) > 0.01:
+                ts.append(('TEXTCOLOR', (6, i+1), (6, i+1), colors.red))
+                ts.append(('FONTNAME', (6, i+1), (6, i+1), 'Helvetica-Bold'))
+
+        # Larguras das colunas para A4 Paisagem (~277mm úteis)
+        col_widths = [35*mm, 18*mm, 85*mm, 35*mm, 35*mm, 35*mm, 35*mm]
+        t_data = Table(data, colWidths=col_widths, repeatRows=1)
+        t_data.setStyle(TableStyle(ts))
+        story.append(t_data)
+        story.append(Spacer(1, 10*mm))
+
+    # Divide os dados
+    df_app = df_final[df_final['GRUPO'] == 'APLICACAO'].copy()
+    df_mov = df_final[df_final['GRUPO'] == 'MOVIMENTO'].copy()
+
+    # Adiciona as tabelas ao PDF
+    add_data_table(df_app, "Contas Aplicação")
+    add_data_table(df_mov, "Contas Movimento")
+
+    doc.build(story)
+    return buffer.getvalue()
+
 # ==============================================================================
-# 4. INTERFACE STREAMLIT
+# 5. INTERFACE STREAMLIT
 # ==============================================================================
 
 st.markdown("<h1 style='text-align: center;'>Conciliador de Saldos Bancários</h1>", unsafe_allow_html=True)
@@ -440,7 +593,7 @@ with c2:
 
 if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width=True):
     if up_extratos and up_planilha:
-        with st.spinner("Descompactando arquivos e analisando PDFs..."):
+        with st.spinner("Processando..."):
             
             temp_dir = tempfile.mkdtemp()
             try:
@@ -479,30 +632,27 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                     df_view = df_final[cols_validas].copy()
 
                     # ==========================================================
-                    # NOVO: EXIBIÇÃO DE CARDS POR UG (Estilo Referência)
+                    # EXIBIÇÃO DE CARDS EM TELA
                     # ==========================================================
                     st.markdown("### Resumo de Pendências por UG")
                     
                     ugs_unicas = sorted(df_view['UG'].unique())
                     
-                    # Cria linhas de 4 colunas para os cards
                     for i in range(0, len(ugs_unicas), 4):
                         cols = st.columns(4)
                         for j in range(4):
                             if i + j < len(ugs_unicas):
                                 ug_atual = ugs_unicas[i+j]
                                 df_ug = df_view[df_view['UG'] == ug_atual]
-                                
-                                # Contagem de pendências (Diferença > 0.01)
                                 pendencias = len(df_ug[abs(df_ug['DIFERENÇA']) > 0.01])
                                 
-                                # Lógica de Cor: Verde se 0, Vermelho se > 0
-                                classe_cor = "metric-card-green" if pendencias == 0 else "metric-card"
+                                # Usa classe base + classe de cor da borda
+                                classe_cor = "metric-card-green" if pendencias == 0 else "metric-card-red"
                                 cor_texto = "#28a745" if pendencias == 0 else "#ff4b4b"
                                 
                                 html_card = f"""
-                                <div class="{classe_cor}">
-                                    <div class="metric-ug-title">{ug_atual}</div>
+                                <div class="metric-card-base {classe_cor}">
+                                    <div class="metric-ug-title" title="{ug_atual}">{ug_atual}</div>
                                     <div class="metric-value" style="color: {cor_texto};">{pendencias}</div>
                                     <div class="metric-label">Pendências</div>
                                 </div>
@@ -513,39 +663,29 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                     st.markdown("---")
 
                     # ==========================================================
-                    # NOVO: TABELA HTML EM TELA (Estilo Referência)
+                    # TABELA HTML EM TELA (Com Coluna Arquivo Origem)
                     # ==========================================================
-                    
-                    # Dividir para exibição (Aplicação e Movimento)
                     df_app = df_view[df_final['GRUPO'] == 'APLICACAO']
                     df_mov = df_view[df_final['GRUPO'] == 'MOVIMENTO']
                     
                     def gerar_tabela_html(df_input, titulo):
                         if df_input.empty: return ""
-                        
-                        html = f"<h4 style='color: black;'>{titulo}</h4>"
-                        html += "<div style='overflow-x: auto;'>"
+                        # Título com fundo preto e texto branco
+                        html = f"<h4 class='section-title'>{titulo.upper()}</h4>"
+                        html += "<div class='preview-table-container'>"
                         html += "<table class='preview-table'>"
-                        
-                        # Cabeçalho
-                        html += "<thead><tr>"
-                        html += "<th>UG</th><th>CÓDIGO</th><th>DESCRIÇÃO</th><th>CONTA</th><th>RAZÃO</th><th>EXTRATO</th><th>DIFERENÇA</th>"
-                        html += "</tr></thead><tbody>"
+                        # Adicionada coluna ARQUIVO ORIGEM no cabeçalho
+                        html += "<thead><tr><th>UG</th><th>CÓDIGO</th><th>DESCRIÇÃO</th><th>CONTA</th><th>RAZÃO</th><th>EXTRATO</th><th>DIFERENÇA</th><th>ARQUIVO ORIGEM</th></tr></thead><tbody>"
                         
                         for _, row in df_input.iterrows():
                             dif = row['DIFERENÇA']
                             style_dif = "color: red; font-weight: bold;" if abs(dif) > 0.01 else "color: black;"
-                            
                             html += "<tr>"
-                            html += f"<td>{row['UG']}</td>"
-                            html += f"<td>{row['CÓDIGO']}</td>"
-                            html += f"<td style='text-align: left;'>{row['DESCRIÇÃO']}</td>"
-                            html += f"<td>{row['CONTA']}</td>"
-                            html += f"<td style='text-align: right;'>{formatar_moeda(row['RAZÃO'])}</td>"
-                            html += f"<td style='text-align: right;'>{formatar_moeda(row['EXTRATO'])}</td>"
+                            html += f"<td>{row['UG']}</td><td>{row['CÓDIGO']}</td><td style='text-align: left;'>{row['DESCRIÇÃO']}</td><td>{row['CONTA']}</td>"
+                            html += f"<td style='text-align: right;'>{formatar_moeda(row['RAZÃO'])}</td><td style='text-align: right;'>{formatar_moeda(row['EXTRATO'])}</td>"
                             html += f"<td style='text-align: right; {style_dif}'>{formatar_moeda(dif)}</td>"
-                            html += "</tr>"
-                        
+                            # Adicionada coluna ARQUIVO ORIGEM na linha
+                            html += f"<td style='font-size: 11px; font-style: italic; color: #555;'>{row['ARQUIVO_ORIGEM']}</td></tr>"
                         html += "</tbody></table></div><br>"
                         return html
 
@@ -553,14 +693,15 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                     st.markdown(gerar_tabela_html(df_mov, "Contas Movimento"), unsafe_allow_html=True)
 
                     # ==========================================================
-                    # GERAÇÃO DO EXCEL (Lógica Original V35)
+                    # GERAÇÃO DOS ARQUIVOS PARA DOWNLOAD (Excel e PDF)
                     # ==========================================================
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    
+                    # 1. Excel
+                    output_excel = io.BytesIO()
+                    with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
                         wb = writer.book
                         ws = wb.add_worksheet('Conciliacao')
                         writer.sheets['Conciliacao'] = ws
-                        
                         row = 0
                         if not df_app.empty:
                             ws.write(row, 0, "--- CONTAS APLICAÇÃO ---", wb.add_format({'bold':True, 'font_color':'blue'}))
@@ -568,25 +709,37 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                             df_app.to_excel(writer, sheet_name='Conciliacao', startrow=row, index=False)
                             aplicar_estilo_excel(ws, wb, df_app, row, cols_validas)
                             row += len(df_app) + 2
-                        
                         row += 1
                         if not df_mov.empty:
                             ws.write(row, 0, "--- CONTAS MOVIMENTO ---", wb.add_format({'bold':True, 'font_color':'blue'}))
                             row+=1
                             df_mov.to_excel(writer, sheet_name='Conciliacao', startrow=row, index=False)
                             aplicar_estilo_excel(ws, wb, df_mov, row, cols_validas)
+                    output_excel.seek(0)
 
-                    output.seek(0)
-                    
-                    st.success("Processamento concluído!")
-                    
-                    st.download_button(
-                        label="BAIXAR RELATÓRIO DE CONCILIAÇÃO EM EXCEL",
-                        data=output,
-                        file_name="Relatorio_Conciliacao_de_Saldos.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
+                    # 2. PDF
+                    pdf_bytes = gerar_pdf_conciliacao(df_view)
+
+                    st.success("Processamento concluído com sucesso!")
+
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        st.download_button(
+                            label="BAIXAR RELATÓRIO EM EXCEL",
+                            data=output_excel,
+                            file_name="Relatorio_Conciliacao_Saldos.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                    with col_d2:
+                         st.download_button(
+                            label="BAIXAR RELATÓRIO EM PDF",
+                            data=pdf_bytes,
+                            file_name="Relatorio_Conciliacao_Saldos.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+
                 else:
                     st.warning("O processamento não gerou dados. Verifique os arquivos.")
             
