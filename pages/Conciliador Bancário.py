@@ -157,10 +157,27 @@ def processar_pdf(file_bytes):
 
 def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
     try:
+        # Lê o arquivo (CSV ou Excel) sem cabeçalho para garantir acesso posicional fixo
         df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
         
-        try: df = df.iloc[:, [4, 5, 8, 25, 26, 27]].copy()
-        except: df = df.iloc[:, [4, 5, 8, -4, -2, -1]].copy()
+        # --- AJUSTE INTELIGENTE: Detecção da Coluna de Valor (Coluna I vs J) ---
+        col_valor = 8  # Padrão: Coluna I (índice 8)
+        try:
+            # Conta células preenchidas nas colunas 8 e 9 para decidir qual usar
+            # Considera válido o que não for NaN e não for string vazia
+            n_val_8 = df.iloc[:, 8].dropna().astype(str).str.strip().replace('', pd.NA).count()
+            n_val_9 = df.iloc[:, 9].dropna().astype(str).str.strip().replace('', pd.NA).count()
+            
+            # Se a coluna 8 estiver vazia e a 9 tiver dados, assume erro de geração do arquivo e usa a 9
+            if n_val_8 == 0 and n_val_9 > 0:
+                col_valor = 9
+        except:
+            pass  # Em caso de erro na verificação, mantém o padrão (8)
+        # -----------------------------------------------------------------------
+        
+        # Seleção das colunas usando o índice detectado dinamicamente (col_valor)
+        try: df = df.iloc[:, [4, 5, col_valor, 25, 26, 27]].copy()
+        except: df = df.iloc[:, [4, 5, col_valor, -4, -2, -1]].copy()
         
         df.columns = ['Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
@@ -249,6 +266,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         return df_final[['Data', 'Documento', 'Valor_Razao']]
         
     except Exception as e:
+        # Se ocorrer erro grave, retorna vazio
         return pd.DataFrame()
 
 def executar_conciliacao_inteligente(df_pdf, df_excel):
