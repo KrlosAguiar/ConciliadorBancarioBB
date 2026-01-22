@@ -243,8 +243,15 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
                 if dt in lookup_ded_geral: return lookup_ded_geral[dt]
             if dt not in lookup: return "S/D"
             if "TARIFA" in txt_ab and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
-            for n in re.findall(r'\d+', txt_ab):
-                if n.lstrip('0') in lookup[dt]: return lookup[dt][n.lstrip('0')]
+            
+            # --- AJUSTE: Limpeza de pontos no número do documento do Excel ---
+            # Busca qualquer sequência de dígitos e pontos (ex: 123.456)
+            for token in re.findall(r'[\d\.]+', txt_ab):
+                clean_n = token.replace('.', '')
+                if clean_n.lstrip('0') in lookup[dt]: 
+                    return lookup[dt][clean_n.lstrip('0')]
+            # -----------------------------------------------------------------
+            
             return "NÃO LOCALIZADO"
             
         df_final['Documento'] = df_final.apply(find_doc, axis=1)
@@ -385,19 +392,17 @@ def gerar_pdf_final(df_f, titulo_completo):
     
     headers = ['Data', 'Lanc.', 'Histórico', 'Documento', 'Vlr. Extrato', 'Vlr. Razão', 'Diferença']
     
-    # Ajuste de larguras para caber tudo em A4
     col_widths = [18*mm, 14*mm, 84*mm, 18*mm, 22*mm, 22*mm, 22*mm]
     
     data = [headers]
     
-    # Estilos Base
     table_style = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.black),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'), # Center All Default
-        ('ALIGN', (2,0), (2,-1), 'LEFT'),    # Histórico Left
-        ('ALIGN', (4,0), (-1,-1), 'RIGHT'),  # Values Right
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('ALIGN', (2,0), (2,-1), 'LEFT'),
+        ('ALIGN', (4,0), (-1,-1), 'RIGHT'),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('FONTSIZE', (0,0), (-1,0), 9),
     ]
@@ -407,37 +412,34 @@ def gerar_pdf_final(df_f, titulo_completo):
         diff = r['Diferença']
         tipo = r['Tipo']
         
-        # Substituição específica para PDF para economizar espaço
-        hist_text = str(r['Histórico']).replace("Tarifas Bancárias", "Tar. Banc.")
+        hist_text = str(r['Histórico'])
+        
+        # --- AJUSTE: Abreviação APENAS na coluna Documento ---
+        doc_text = str(r['Documento']).replace("Tarifas Bancárias", "Tar. Banc.")
+        # ----------------------------------------------------
         
         linha = [
             r['Data'], 
             str(r['Lancamento']), 
             hist_text, 
-            str(r['Documento']), 
+            doc_text, 
             formatar_moeda_br(r['Valor_Extrato']), 
             formatar_moeda_br(r['Valor_Razao']), 
             formatar_moeda_br(diff) if abs(diff) >= 0.01 else "-"
         ]
         data.append(linha)
         
-        # Tamanho fixo menor para histórico para caber melhor
         table_style.append(('FONTSIZE', (2, row_idx), (2, row_idx), 7))
         
         if tipo == 'Detalhe':
-            # Fundo Cinza Claro (whitesmoke), Fonte MENOR, Fonte PRETA
             table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.whitesmoke))
             table_style.append(('FONTSIZE', (0, row_idx), (-1, row_idx), 7))
             table_style.append(('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.black))
             table_style.append(('TOPPADDING', (0, row_idx), (-1, row_idx), 0))
             table_style.append(('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 0))
         else:
-            # Mestre: SEM FUNDO (Branco), Fonte Padrão (8)
-            # Removemos o BACKGROUND lightgrey
             table_style.append(('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold'))
             table_style.append(('FONTSIZE', (0, row_idx), (-1, row_idx), 8))
-            
-            # Reafirma tamanho 7 só para histórico mestre
             table_style.append(('FONTSIZE', (2, row_idx), (2, row_idx), 7))
             
             if abs(diff) >= 0.01:
@@ -471,7 +473,6 @@ def gerar_excel_final(df_f):
         fmt_currency = workbook.add_format({'num_format': '#,##0.00'})
         fmt_red_bold = workbook.add_format({'font_color': '#FF0000', 'bold': True, 'num_format': '#,##0.00'})
         
-        # Estilo para Detalhes: Cor Preta e Borda 1
         fmt_detalhe = workbook.add_format({'font_color': '#000000', 'bg_color': '#F2F2F2', 'italic': True, 'num_format': '#,##0.00', 'font_size': 9, 'border': 1})
         fmt_detalhe_txt = workbook.add_format({'font_color': '#000000', 'bg_color': '#F2F2F2', 'italic': True, 'font_size': 9, 'border': 1})
         
@@ -582,11 +583,8 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             
             for _, r in df_f.iterrows():
                 if r['Tipo'] == 'Detalhe':
-                    # Linha de Detalhe: Cor preta (#000), Fundo Cinza Claro, Borda Preta
                     style_row = "background-color: #f2f2f2; color: #000; font-size: 11px; line-height: 1.0;"
                     style_cell = "padding: 2px 8px; border: 1px solid #000;"
-                    
-                    # Coluna Historico (Det): fonte fixa 11px
                     html += f"<tr style='{style_row}'>"
                     html += f"<td style='{style_cell} text-align: center;'></td>" 
                     html += f"<td style='{style_cell} text-align: center;'>{r['Lancamento']}</td>"
@@ -596,10 +594,7 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
                     html += f"<td style='{style_cell} text-align: right;'>{formatar_moeda_br(r['Valor_Razao'])}</td>"
                     html += f"<td style='{style_cell}'></td></tr>"
                 else:
-                    # Linha Mestre: Fundo Branco
                     estilo_dif = "color: red; font-weight: bold;" if abs(r['Diferença']) >= 0.01 else "color: black;"
-                    
-                    # Coluna Historico (Mestre): fonte fixa 11px (solicitado para corrigir tela)
                     html += f"<tr style='background-color: white;'>"
                     html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Data']}</td>"
                     html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Lancamento']}</td>"
