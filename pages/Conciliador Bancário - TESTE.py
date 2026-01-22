@@ -158,104 +158,41 @@ def processar_pdf(file_bytes):
 
 def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
     try:
-        # Lê sempre sem cabeçalho para garantir acesso por índice
         df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
         
-        # 1. Detecção da Coluna de Valor (Geralmente 8 ou 9)
-        col_valor = 8
+        # --- AJUSTE INTELIGENTE: Detecção da Coluna de Valor (Coluna I vs J) ---
+        col_valor = 8  # Padrão: Coluna I (índice 8)
         try:
-            # Conta quantos valores não nulos existem na coluna 8 vs 9
             n_val_8 = df.iloc[:, 8].dropna().astype(str).str.strip().replace('', pd.NA).count()
             n_val_9 = df.iloc[:, 9].dropna().astype(str).str.strip().replace('', pd.NA).count()
             if n_val_8 == 0 and n_val_9 > 0: col_valor = 9
         except: pass
-
-        # 2. Detecção Dinâmica das Colunas de Informação
-        # Precisamos encontrar:
-        # Info_Z: Código de Classificação (ex: "204 - PAT...")
-        # Info_AA: Tipo de Operação (ex: "Arrecadação da Receita", "Lançamento Contábil")
-        # Info_AB: Descrição Detalhada (Texto longo, ex: "Rateio da Arrecadação...")
-
-        idx_code = -1
-        idx_type = -1
-        idx_desc = -1
-
-        # Analisa uma amostra das linhas para "adivinhar" as colunas
-        sample_df = df.iloc[5:55]
-
-        # PROCURA COLUNA DE TIPO (Info_AA)
-        # Palavras-chave: Arrecadação, Lançamento, Pagamento, Estorno
-        for c in range(10, min(df.shape[1], 40)):
-            col_data = sample_df[c].astype(str).str.upper()
-            if col_data.str.contains("ARRECADAÇÃO|LANÇAMENTO|PAGAMENTO|LIQUIDAÇÃO").any():
-                idx_type = c
-                break
         
-        # Se não achou, define um padrão antigo
-        if idx_type == -1: idx_type = 26
+        # --- AJUSTE DE LAYOUT (CORREÇÃO PARA ARQUIVO NOVO) ---
+        # Arquivo Antigo (~32 colunas): Info em 25, 26, 27
+        # Arquivo Novo (~26 colunas): Info em 19, 20, 21 (Deslocamento de -6)
+        c_z, c_aa, c_ab = 25, 26, 27
+        if df.shape[1] < 30: 
+            c_z, c_aa, c_ab = 19, 20, 21
 
-        # PROCURA COLUNA DE CÓDIGO (Info_Z)
-        # Geralmente está perto da coluna de Tipo (antes ou depois)
-        # Padrão: "NNN - " (ex: 204 - PAT)
-        for c in range(max(0, idx_type - 5), min(df.shape[1], idx_type + 5)):
-            if c == idx_type: continue
-            col_data = sample_df[c].astype(str)
-            if col_data.str.contains(r"^\d{3}\s-").any():
-                idx_code = c
-                break
+        try: df = df.iloc[:, [1, 4, 5, col_valor, c_z, c_aa, c_ab]].copy()
+        except: df = df.iloc[:, [1, 4, 5, col_valor, -4, -2, -1]].copy()
         
-        # Se não achou, tenta achar "204 - " especificamente
-        if idx_code == -1:
-             for c in range(10, min(df.shape[1], 40)):
-                if sample_df[c].astype(str).str.contains("204 -").any():
-                    idx_code = c
-                    break
-        if idx_code == -1: idx_code = 25 # Fallback
-
-        # PROCURA COLUNA DE DESCRIÇÃO (Info_AB)
-        # Geralmente é a coluna com texto mais longo após o Tipo
-        max_len_avg = 0
-        for c in range(idx_type + 1, min(df.shape[1], idx_type + 15)):
-            avg_len = sample_df[c].astype(str).map(len).mean()
-            if avg_len > max_len_avg and avg_len > 15:
-                max_len_avg = avg_len
-                idx_desc = c
-        
-        if idx_desc == -1: idx_desc = idx_type + 1 # Fallback, coluna seguinte ao tipo
-
-        # Monta o DataFrame com as colunas identificadas
-        try:
-            df = df.iloc[:, [1, 4, 5, col_valor, idx_code, idx_type, idx_desc]].copy()
-        except:
-             # Se der erro de índice (arquivo muito curto), tenta usar índices negativos como última tentativa
-             df = df.iloc[:, [1, 4, 5, col_valor, -3, -2, -1]].copy()
-
         df.columns = ['Lancamento', 'Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
-        
-        # --- Limpeza e Padronização ---
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
         df['Lancamento'] = df['Lancamento'].astype(str).str.replace(r'\.0$', '', regex=True)
         
-        # Filtros baseados no conteúdo (agora que as colunas estão mapeadas corretamente)
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
         mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
-        
-        # Ajuste para códigos diversos (ex: 204, 266, etc)
-        # Verifica Info_Z ou Info_AA pois as vezes o código está misturado
-        mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268|262|204", case=False, regex=True, na=False)
-        mask_codes_aa = df['Info_AA'].astype(str).str.contains(r"266|264|268|262|204", case=False, regex=True, na=False)
-        
-        # Filtro específico para Arrecadação (comum nos arquivos 8346)
-        mask_arrecadacao = df['Info_AA'].astype(str).str.contains("Arrecadação", case=False, na=False)
-        
+        mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268|262", case=False, regex=True, na=False)
         cond_250_z = df['Info_Z'].astype(str).str.contains("250", case=False, na=False)
         cond_ab_text = df['Info_AB'].astype(str).str.contains("transferência financeira concedida|repasse financeiro concedido", case=False, na=False)
         mask_250_restrict = cond_250_z & cond_ab_text
         mask_aa_ded = df['Info_AA'].astype(str).str.contains(r"Ded\.", case=False, regex=True, na=False)
         
-        df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_codes_aa | mask_arrecadacao | mask_250_restrict | mask_aa_ded].copy()
+        df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_ded].copy()
         
-        termos_estorno = r"Est Pgto Ext|Est Pagto|Estorno"
+        termos_estorno = r"Est Pgto Ext|Est Pagto"
         mask_eh_estorno = df_filtered['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
         df_estornos = df_filtered[mask_eh_estorno].copy()
         df_validos = df_filtered[~mask_eh_estorno].copy()
@@ -314,10 +251,13 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             if dt not in lookup: return "S/D"
             if "TARIFA" in txt_ab and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
             
+            # --- AJUSTE: Limpeza de pontos no número do documento do Excel ---
+            # Busca qualquer sequência de dígitos e pontos (ex: 123.456)
             for token in re.findall(r'[\d\.]+', txt_ab):
                 clean_n = token.replace('.', '')
                 if clean_n.lstrip('0') in lookup[dt]: 
                     return lookup[dt][clean_n.lstrip('0')]
+            # -----------------------------------------------------------------
             
             return "NÃO LOCALIZADO"
             
