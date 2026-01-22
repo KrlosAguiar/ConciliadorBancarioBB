@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import os
+import re
 from PIL import Image
 
 # Bibliotecas para geração do PDF (ReportLab)
@@ -88,8 +89,7 @@ def formatar_moeda_br(valor):
 
 @st.cache_data(show_spinner=False)
 def carregar_dados(file):
-    # Força leitura sem cabeçalho para garantir acesso posicional (0, 1, 2...)
-    # Isso evita erros se o arquivo tiver cabeçalhos deslocados ou nomes diferentes
+    # Força leitura sem cabeçalho para garantir acesso posicional
     try:
         df = pd.read_excel(file, header=None)
     except:
@@ -99,27 +99,23 @@ def carregar_dados(file):
         except:
             df = pd.read_csv(file, sep=None, engine='python', encoding='utf-8', header=None, on_bad_lines='skip')
     
-    # 1. Garantir número mínimo de colunas (Blindagem contra Index Error)
-    # O código usa até o índice 27 (Histórico). Se tiver menos, completamos.
-    min_cols = 28
+    # 1. Garantir número mínimo de colunas para evitar erros de índice
+    # O arquivo antigo vai até a coluna 27+, o novo até a 21+. Garantimos 30 para segurança.
+    min_cols = 30
     if df.shape[1] < min_cols:
         for i in range(df.shape[1], min_cols):
             df[i] = pd.NA
 
     # 2. Filtragem de segurança: Manter apenas linhas onde a Coluna 5 (D/C) é 'C' ou 'D'
-    # Isso remove cabeçalhos, rodapés e linhas vazias automaticamente.
-    # Coluna 5 é a coluna de Débito/Crédito
     if 5 in df.columns:
         df[5] = df[5].astype(str).str.strip().str.upper()
         df = df[df[5].isin(['C', 'D'])]
     
     df = df.ffill(axis=0)
     
-    # Conversão de Valor (Coluna 8)
+    # Conversão de Valor (Coluna 8 é fixa em ambos os layouts)
     col_valor_idx = 8 
-    # Com header=None, o nome da coluna é o próprio índice (int)
-    col_nome_valor = col_valor_idx 
-
+    
     def converter_valor(val):
         try:
             if isinstance(val, str):
@@ -128,24 +124,90 @@ def carregar_dados(file):
         except:
             return 0.0
 
-    if col_nome_valor in df.columns:
-        df[col_nome_valor] = df[col_nome_valor].apply(converter_valor)
+    if col_valor_idx in df.columns:
+        df[col_valor_idx] = df[col_valor_idx].apply(converter_valor)
         
     return df
+
+def identificar_colunas_dinamicas(df):
+    """
+    Identifica dinamicamente onde estão as colunas de Empenho, Tipo e Histórico
+    com base no conteúdo, para suportar diferentes versões do Excel.
+    """
+    # Padrões conhecidos (Fallback: Layout Antigo)
+    mapa = {
+        'empenho': 14, 
+        'tipo': 19, 
+        'hist': 27
+    }
+    
+    # Analisa as primeiras 100 linhas válidas para detectar o padrão
+    for idx, row in df.head(100).iterrows():
+        # 1. Tenta achar Empenho (Formato AAAA/NNNNN)
+        empenho_encontrado = None
+        # Varre colunas prováveis de empenho (12 a 15)
+        for c in range(12, 16): 
+            val = str(row[c]).strip()
+            # Regex para 2024/000123 ou similar
+            if re.match(r'^\d{4}/\d+$', val):
+                empenho_encontrado = c
+                break
+        
+        # 2. Tenta achar Tipo (Palavras chave)
+        tipo_encontrado = None
+        start_tipo = (empenho_encontrado + 1) if empenho_encontrado else 14
+        # Varre da posição do empenho até +8 colunas
+        for c in range(start_tipo, start_tipo + 10):
+            val = str(row[c]).upper()
+            if any(k in val for k in ["LIQUIDAÇÃO", "PAGAMENTO", "LANÇAMENTO", "RETENÇÃO", "ESTORNO"]):
+                tipo_encontrado = c
+                break
+        
+        # 3. Tenta achar Histórico (Texto longo)
+        hist_encontrado = None
+        if tipo_encontrado:
+            # O histórico costuma estar algumas colunas depois do tipo
+            start_hist = tipo_encontrado + 1
+            for c in range(start_hist, start_hist + 15):
+                val = str(row[c])
+                # Históricos costumam ser longos (>30 chars)
+                if len(val) > 30: 
+                    hist_encontrado = c
+                    break
+        
+        # Se encontrou um conjunto consistente, atualiza o mapa e para
+        if empenho_encontrado and tipo_encontrado:
+            mapa['empenho'] = empenho_encontrado
+            mapa['tipo'] = tipo_encontrado
+            if hist_encontrado:
+                mapa['hist'] = hist_encontrado
+            else:
+                # Se não achou histórico longo, usa heurística baseada no Tipo
+                # No antigo: Tipo=19, Hist=27 (Diff 8). No novo: Tipo=15, Hist=21 (Diff 6)
+                if tipo_encontrado == 15: mapa['hist'] = 21
+                elif tipo_encontrado == 19: mapa['hist'] = 27
+            return mapa
+
+    return mapa
 
 def processar_conciliacao(df, ug_sel, conta_sel):
     cod_conta = conta_sel.split(' - ')[0].strip()
     if not cod_conta.isdigit(): cod_conta = conta_sel.split(' ')[0]
 
-    # Como usamos header=None, as colunas são índices numéricos
+    # --- MAPEAMENTO DE COLUNAS ---
+    cols_map = identificar_colunas_dinamicas(df)
+    
+    # Colunas Fixas
     c_ug = 0
+    c_data = 4
     c_dc = 5
     c_conta = 6
     c_valor = 8
-    c_empenho = 14
-    c_tipo = 19
-    c_hist = 27
-    c_data = 4
+    
+    # Colunas Dinâmicas
+    c_empenho = cols_map['empenho']
+    c_tipo = cols_map['tipo']
+    c_hist = cols_map['hist']
 
     # Filtros
     mask_ug = df[c_ug].astype(str) == str(ug_sel)
@@ -170,7 +232,6 @@ def processar_conciliacao(df, ug_sel, conta_sel):
     df_pag = df_base[mask_pag].copy()
 
     # 4. Estornos de Pagamento (Crédito - C)
-    # Busca por 'Estorno' no tipo ou histórico, sendo Crédito
     mask_estorno_pag = (
         (df_base[c_dc] == 'C') & 
         (df_base['Tipo_Norm'].str.contains("Estorno", case=False) | 
@@ -243,7 +304,7 @@ def processar_conciliacao(df, ug_sel, conta_sel):
             resumo["val_ret_pendente"] += val
             
         resultados.append({
-            "Empenho": r[c_empenho], "Data Emp": r[c_data], # Data da Retenção
+            "Empenho": r[c_empenho], "Data Emp": r[c_data],
             "Vlr Retido": val, "Vlr Pago": val_pago,
             "Dif": val - val_pago, "Data Pag": dt_pag,
             "Histórico": r[c_hist], "_sort": sort,
