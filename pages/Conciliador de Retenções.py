@@ -80,24 +80,45 @@ st.markdown("""
 
 def formatar_moeda_br(valor):
     if pd.isna(valor) or valor == "": return "R$ 0,00"
-    return f"R$ {valor:,.2f}".replace(',', '_').replace('.', ',').replace('_', '.')
+    try:
+        val_float = float(valor)
+        return f"R$ {val_float:,.2f}".replace(',', '_').replace('.', ',').replace('_', '.')
+    except:
+        return "R$ 0,00"
 
 @st.cache_data(show_spinner=False)
 def carregar_dados(file):
+    # Força leitura sem cabeçalho para garantir acesso posicional (0, 1, 2...)
+    # Isso evita erros se o arquivo tiver cabeçalhos deslocados ou nomes diferentes
     try:
-        df = pd.read_excel(file)
+        df = pd.read_excel(file, header=None)
     except:
         file.seek(0)
         try:
-            df = pd.read_csv(file, sep=None, engine='python', encoding='latin1', on_bad_lines='skip')
+            df = pd.read_csv(file, sep=None, engine='python', encoding='latin1', header=None, on_bad_lines='skip')
         except:
-            df = pd.read_csv(file, sep=None, engine='python', encoding='utf-8', on_bad_lines='skip')
+            df = pd.read_csv(file, sep=None, engine='python', encoding='utf-8', header=None, on_bad_lines='skip')
+    
+    # 1. Garantir número mínimo de colunas (Blindagem contra Index Error)
+    # O código usa até o índice 27 (Histórico). Se tiver menos, completamos.
+    min_cols = 28
+    if df.shape[1] < min_cols:
+        for i in range(df.shape[1], min_cols):
+            df[i] = pd.NA
+
+    # 2. Filtragem de segurança: Manter apenas linhas onde a Coluna 5 (D/C) é 'C' ou 'D'
+    # Isso remove cabeçalhos, rodapés e linhas vazias automaticamente.
+    # Coluna 5 é a coluna de Débito/Crédito
+    if 5 in df.columns:
+        df[5] = df[5].astype(str).str.strip().str.upper()
+        df = df[df[5].isin(['C', 'D'])]
     
     df = df.ffill(axis=0)
-    df = df.dropna(how='all')
     
+    # Conversão de Valor (Coluna 8)
     col_valor_idx = 8 
-    col_nome_valor = df.columns[col_valor_idx]
+    # Com header=None, o nome da coluna é o próprio índice (int)
+    col_nome_valor = col_valor_idx 
 
     def converter_valor(val):
         try:
@@ -107,21 +128,24 @@ def carregar_dados(file):
         except:
             return 0.0
 
-    df[col_nome_valor] = df[col_nome_valor].apply(converter_valor)
+    if col_nome_valor in df.columns:
+        df[col_nome_valor] = df[col_nome_valor].apply(converter_valor)
+        
     return df
 
 def processar_conciliacao(df, ug_sel, conta_sel):
     cod_conta = conta_sel.split(' - ')[0].strip()
     if not cod_conta.isdigit(): cod_conta = conta_sel.split(' ')[0]
 
-    c_ug = df.columns[0]
-    c_dc = df.columns[5]
-    c_conta = df.columns[6]
-    c_valor = df.columns[8]
-    c_empenho = df.columns[14]
-    c_tipo = df.columns[19]
-    c_hist = df.columns[27]
-    c_data = df.columns[4]
+    # Como usamos header=None, as colunas são índices numéricos
+    c_ug = 0
+    c_dc = 5
+    c_conta = 6
+    c_valor = 8
+    c_empenho = 14
+    c_tipo = 19
+    c_hist = 27
+    c_data = 4
 
     # Filtros
     mask_ug = df[c_ug].astype(str) == str(ug_sel)
@@ -145,7 +169,7 @@ def processar_conciliacao(df, ug_sel, conta_sel):
     mask_pag = (df_base['Tipo_Norm'].str.contains("Pagamento de Documento Extra", case=False)) & (df_base[c_dc] == 'D')
     df_pag = df_base[mask_pag].copy()
 
-    # 4. Estornos de Pagamento (Crédito - C) -> NOVO TRATAMENTO
+    # 4. Estornos de Pagamento (Crédito - C)
     # Busca por 'Estorno' no tipo ou histórico, sendo Crédito
     mask_estorno_pag = (
         (df_base[c_dc] == 'C') & 
@@ -165,7 +189,7 @@ def processar_conciliacao(df, ug_sel, conta_sel):
     
     df_ret_limpa = df_ret[~df_ret.index.isin(idx_ret_cancel)]
 
-    # --- Limpeza de Estornos de Pagamento (NOVO) ---
+    # --- Limpeza de Estornos de Pagamento ---
     idx_pag_cancel = set()
     for _, r_est in df_est_pag.iterrows():
         v = r_est[c_valor]
@@ -233,7 +257,7 @@ def processar_conciliacao(df, ug_sel, conta_sel):
         
         resultados.append({
             "Empenho": r[c_empenho], 
-            "Data Emp": r[c_data], # <--- AJUSTE: Usa Data do Pagamento aqui
+            "Data Emp": r[c_data],
             "Vlr Retido": 0.0, "Vlr Pago": r[c_valor],
             "Dif": 0.0 - r[c_valor], "Data Pag": r[c_data],
             "Histórico": r[c_hist], "_sort": 1,
@@ -400,8 +424,9 @@ if arquivo:
     df_dados = carregar_dados(arquivo)
     
     if not df_dados.empty:
-        ugs = sorted(df_dados[df_dados.columns[0]].astype(str).unique().tolist())
-        contas = sorted(df_dados[df_dados.columns[6]].astype(str).unique().tolist())
+        # Coluna 0 é UG, Coluna 6 é Conta
+        ugs = sorted(df_dados[0].astype(str).unique().tolist())
+        contas = sorted(df_dados[6].astype(str).unique().tolist())
         opcoes_conta = ["7852 - ISS Pessoa Jurídica (Padrão)"] + [c for c in contas if "7852" not in str(c)]
         
         with placeholder_filtros.container():
@@ -498,7 +523,6 @@ if arquivo:
                 html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
                 
                 html += "<tr style='background-color: black; color: white !important;'>"
-                
                 html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Empenho</th>"
                 html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Data</th>"
                 html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Retido</th>"
