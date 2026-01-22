@@ -157,21 +157,71 @@ def processar_pdf(file_bytes):
     return df, coords_referencia
 
 def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
+    """
+    Função aprimorada com detecção dinâmica de colunas para suportar múltiplos layouts de Excel (Antigo/Novo).
+    """
     try:
+        # Lê sempre sem cabeçalho para garantir acesso por índice
         df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
         
-        # --- AJUSTE INTELIGENTE: Detecção da Coluna de Valor (Coluna I vs J) ---
-        col_valor = 8  # Padrão: Coluna I (índice 8)
+        # 1. Detecção da Coluna de Valor (Geralmente 8 ou 9)
+        col_valor = 8
         try:
             n_val_8 = df.iloc[:, 8].dropna().astype(str).str.strip().replace('', pd.NA).count()
             n_val_9 = df.iloc[:, 9].dropna().astype(str).str.strip().replace('', pd.NA).count()
             if n_val_8 == 0 and n_val_9 > 0: col_valor = 9
         except: pass
-        
-        try: df = df.iloc[:, [1, 4, 5, col_valor, 25, 26, 27]].copy()
-        except: df = df.iloc[:, [1, 4, 5, col_valor, -4, -2, -1]].copy()
+
+        # 2. Detecção Dinâmica das Colunas de Informação (Info_Z, Info_AA, Info_AB)
+        # Padrão Antigo (Fallback)
+        idx_code = 25 # Info_Z (Códigos ex: 250 - ...)
+        idx_type = 26 # Info_AA (Tipo ex: Lançamento Contábil)
+        idx_desc = 27 # Info_AB (Descrição Longa)
+
+        # Escaneamento das primeiras 50 linhas para achar os índices corretos
+        found_map = False
+        for i, row in df.head(50).iterrows():
+            # Procura coluna de Tipo (ex: Lançamento Contábil, Liquidação, Estorno)
+            c_type = -1
+            for c in range(10, min(40, df.shape[1])):
+                val = str(row[c]).upper().strip()
+                if val in ['LANÇAMENTO CONTÁBIL', 'LIQUIDAÇÃO DE EMPENHO', 'ESTORNO', 'LIQUIDACAO']:
+                    c_type = c
+                    
+                    # Se achou tipo, procura Código (NNN - ...) e Descrição (Texto Longo)
+                    # Heurística: Código costuma estar perto do Tipo
+                    c_code = -1
+                    for k in range(max(0, c-10), min(c+10, df.shape[1])):
+                        if re.match(r'\d{3}\s-\s', str(row[k])):
+                            c_code = k
+                            break
+                    
+                    # Heurística: Descrição costuma ser longa ou conter PAGAMENTO
+                    c_desc = -1
+                    for d in range(c, min(c+10, df.shape[1])):
+                        val_d = str(row[d]).upper()
+                        if len(val_d) > 25 or "PAGAMENTO" in val_d:
+                            c_desc = d
+                            break
+                    
+                    if c_code != -1 and c_desc != -1:
+                        idx_code, idx_type, idx_desc = c_code, c_type, c_desc
+                        found_map = True
+                        break
+            if found_map: break
+
+        # Seleciona as colunas dinâmicas
+        try: 
+            # Colunas Fixas: 1 (Lançamento), 4 (Data), 5 (DC), col_valor
+            cols_to_use = [1, 4, 5, col_valor, idx_code, idx_type, idx_desc]
+            df = df.iloc[:, cols_to_use].copy()
+        except Exception as e:
+            # Fallback extremo
+            df = df.iloc[:, [1, 4, 5, col_valor, -4, -2, -1]].copy()
         
         df.columns = ['Lancamento', 'Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
+        
+        # --- Processamento Normal (Lógica de Negócio) ---
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
         df['Lancamento'] = df['Lancamento'].astype(str).str.replace(r'\.0$', '', regex=True)
         
@@ -185,7 +235,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         
         df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_ded].copy()
         
-        termos_estorno = r"Est Pgto Ext|Est Pagto"
+        termos_estorno = r"Est Pgto Ext|Est Pagto|Estorno"
         mask_eh_estorno = df_filtered['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
         df_estornos = df_filtered[mask_eh_estorno].copy()
         df_validos = df_filtered[~mask_eh_estorno].copy()
@@ -244,13 +294,10 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             if dt not in lookup: return "S/D"
             if "TARIFA" in txt_ab and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
             
-            # --- AJUSTE: Limpeza de pontos no número do documento do Excel ---
-            # Busca qualquer sequência de dígitos e pontos (ex: 123.456)
             for token in re.findall(r'[\d\.]+', txt_ab):
                 clean_n = token.replace('.', '')
                 if clean_n.lstrip('0') in lookup[dt]: 
                     return lookup[dt][clean_n.lstrip('0')]
-            # -----------------------------------------------------------------
             
             return "NÃO LOCALIZADO"
             
@@ -510,7 +557,7 @@ def gerar_excel_final(df_f):
                 worksheet.write(excel_row, 6, '', fmt_detalhe)
             else:
                 if abs(row['Diferença']) >= 0.01:
-                     worksheet.write(excel_row, 6, row['Diferença'], fmt_red_bold)
+                      worksheet.write(excel_row, 6, row['Diferença'], fmt_red_bold)
 
         df_mestre = df_export[df_export['Tipo'] == 'Mestre']
         last_row = len(df_export) + 1
