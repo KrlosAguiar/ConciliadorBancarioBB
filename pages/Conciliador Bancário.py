@@ -11,7 +11,6 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import mm
-from reportlab.pdfbase.pdfmetrics import stringWidth # Necessário para calcular largura do texto
 from PIL import Image
 import fitz  # Requer pymupdf no requirements.txt
 
@@ -374,16 +373,6 @@ def executar_conciliacao_inteligente(df_pdf, df_excel):
 # 2. GERAÇÃO DE SAÍDAS (PDF, EXCEL E MARCAÇÃO)
 # ==============================================================================
 
-def calcular_tamanho_fonte(text, font_name, max_width_pt, start_size=8, min_size=4):
-    """Calcula o maior tamanho de fonte que faz o texto caber em uma linha, respeitando um mínimo."""
-    size = start_size
-    text = str(text)
-    while size > min_size:
-        if stringWidth(text, font_name, size) <= max_width_pt:
-            return size
-        size -= 0.5
-    return min_size
-
 def gerar_pdf_final(df_f, titulo_completo):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=5*mm, leftMargin=5*mm, topMargin=15*mm, bottomMargin=15*mm, title=titulo_completo)
@@ -394,13 +383,10 @@ def gerar_pdf_final(df_f, titulo_completo):
     story.append(Paragraph(f"<b>Conta:</b> {nome_conta_interno}", ParagraphStyle(name='C', alignment=1)))
     story.append(Spacer(1, 15))
     
-    # NOVAS COLUNAS: Inclusão de Histórico e ajustes de largura
-    # A4 Width = 210mm. Margins 5+5=10mm. Usable = 200mm.
-    # Data(18) + Lanc(14) + Hist(84) + Doc(18) + Ext(22) + Raz(22) + Dif(22) = 200mm
     headers = ['Data', 'Lanc.', 'Histórico', 'Documento', 'Vlr. Extrato', 'Vlr. Razão', 'Diferença']
     
+    # Ajuste de larguras para caber tudo em A4
     col_widths = [18*mm, 14*mm, 84*mm, 18*mm, 22*mm, 22*mm, 22*mm]
-    max_hist_width_pt = (84*mm) / 0.352778 # Conversão mm para points (aprox 238 pts)
     
     data = [headers]
     
@@ -420,19 +406,14 @@ def gerar_pdf_final(df_f, titulo_completo):
     for _, r in df_f.iterrows():
         diff = r['Diferença']
         tipo = r['Tipo']
-        hist_text = str(r['Histórico'])
         
-        # Cálculo dinâmico da fonte para o Histórico
-        font_size_hist = calcular_tamanho_fonte(hist_text, 'Helvetica', max_hist_width_pt - 6) # -6 padding
+        # Substituição específica para PDF para economizar espaço
+        hist_text = str(r['Histórico']).replace("Tarifas Bancárias", "Tar. Banc.")
         
-        # Criação do Parágrafo para o Histórico com o tamanho calculado
-        # style_hist = ParagraphStyle(name=f'H_{row_idx}', fontName='Helvetica', fontSize=font_size_hist, leading=font_size_hist+2)
-        p_hist = Paragraph(f'<font size={font_size_hist}>{hist_text}</font>', styles['Normal'])
-
         linha = [
             r['Data'], 
             str(r['Lancamento']), 
-            p_hist, # Objeto Paragraph
+            hist_text, 
             str(r['Documento']), 
             formatar_moeda_br(r['Valor_Extrato']), 
             formatar_moeda_br(r['Valor_Razao']), 
@@ -440,18 +421,24 @@ def gerar_pdf_final(df_f, titulo_completo):
         ]
         data.append(linha)
         
+        # Tamanho fixo menor para histórico para caber melhor
+        table_style.append(('FONTSIZE', (2, row_idx), (2, row_idx), 7))
+        
         if tipo == 'Detalhe':
-            # Fundo Cinza Claro, Fonte MENOR, Fonte PRETA
+            # Fundo Cinza Claro (whitesmoke), Fonte MENOR, Fonte PRETA
             table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.whitesmoke))
             table_style.append(('FONTSIZE', (0, row_idx), (-1, row_idx), 7))
             table_style.append(('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.black))
             table_style.append(('TOPPADDING', (0, row_idx), (-1, row_idx), 0))
             table_style.append(('BOTTOMPADDING', (0, row_idx), (-1, row_idx), 0))
         else:
-            # Mestre
-            table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.lightgrey))
+            # Mestre: SEM FUNDO (Branco), Fonte Padrão (8)
+            # Removemos o BACKGROUND lightgrey
             table_style.append(('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold'))
             table_style.append(('FONTSIZE', (0, row_idx), (-1, row_idx), 8))
+            
+            # Reafirma tamanho 7 só para histórico mestre
+            table_style.append(('FONTSIZE', (2, row_idx), (2, row_idx), 7))
             
             if abs(diff) >= 0.01:
                 table_style.append(('TEXTCOLOR', (6, row_idx), (6, row_idx), colors.red))
@@ -595,23 +582,28 @@ if st.button("PROCESSAR CONCILIAÇÃO", use_container_width=True):
             
             for _, r in df_f.iterrows():
                 if r['Tipo'] == 'Detalhe':
-                    # Linha de Detalhe: Cor preta (#000) e Borda Preta Sólida (#000)
+                    # Linha de Detalhe: Cor preta (#000), Fundo Cinza Claro, Borda Preta
                     style_row = "background-color: #f2f2f2; color: #000; font-size: 11px; line-height: 1.0;"
                     style_cell = "padding: 2px 8px; border: 1px solid #000;"
+                    
+                    # Coluna Historico (Det): fonte fixa 11px
                     html += f"<tr style='{style_row}'>"
-                    html += f"<td style='{style_cell} text-align: center;'></td>" # Data Vazia
+                    html += f"<td style='{style_cell} text-align: center;'></td>" 
                     html += f"<td style='{style_cell} text-align: center;'>{r['Lancamento']}</td>"
-                    html += f"<td style='{style_cell}'></td>" # Historico Vazio
-                    html += f"<td style='{style_cell}'></td>" # Documento Vazio
+                    html += f"<td style='{style_cell} font-size: 11px;'></td>" 
+                    html += f"<td style='{style_cell}'></td>" 
                     html += f"<td style='{style_cell} text-align: right;'>{formatar_moeda_br(r['Valor_Extrato'])}</td>"
                     html += f"<td style='{style_cell} text-align: right;'>{formatar_moeda_br(r['Valor_Razao'])}</td>"
                     html += f"<td style='{style_cell}'></td></tr>"
                 else:
+                    # Linha Mestre: Fundo Branco
                     estilo_dif = "color: red; font-weight: bold;" if abs(r['Diferença']) >= 0.01 else "color: black;"
+                    
+                    # Coluna Historico (Mestre): fonte fixa 11px (solicitado para corrigir tela)
                     html += f"<tr style='background-color: white;'>"
                     html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Data']}</td>"
                     html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Lancamento']}</td>"
-                    html += f"<td style='text-align: left; border: 1px solid #000; color: black;'>{r['Histórico']}</td>"
+                    html += f"<td style='text-align: left; border: 1px solid #000; color: black; font-size: 11px;'>{r['Histórico']}</td>"
                     html += f"<td style='text-align: center; border: 1px solid #000; color: black;'>{r['Documento']}</td>"
                     html += f"<td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Extrato'])}</td>"
                     html += f"<td style='text-align: right; border: 1px solid #000; color: black;'>{formatar_moeda_br(r['Valor_Razao'])}</td>"
