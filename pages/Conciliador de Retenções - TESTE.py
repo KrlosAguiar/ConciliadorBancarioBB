@@ -408,7 +408,6 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         fmt_tot_val = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'valign': 'vcenter'})
         
         fmt_card_label = wb.add_format({'bold': True, 'bg_color': '#f0f0f0', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
-        # NOVO: Formato centralizado para cabeçalhos de QTD e VALOR dos Cards
         fmt_card_header_center = wb.add_format({'bold': True, 'bg_color': '#f0f0f0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         
         fmt_card_qtd = wb.add_format({'bold': True, 'num_format': '0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
@@ -420,7 +419,6 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         # --- 1. QUADRO DE RESUMO (CARDS) ---
         ws.merge_range('A3:C3', 'RESUMO POR SITUAÇÃO (CARDS)', fmt_head)
         ws.write(3, 0, "CATEGORIA", fmt_card_label)
-        # Uso do novo formato centralizado
         ws.write(3, 1, "QTD", fmt_card_header_center)
         ws.write(3, 2, "VALOR", fmt_card_header_center)
         
@@ -454,7 +452,14 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         ws.write(5, 4, "TOTAL PAGO", fmt_tot_label)
         ws.write(5, 5, resumo['tot_pag'], fmt_tot_val_red)
         
-        fmt_saldo_final = fmt_tot_val_green if resumo['saldo'] >= 0 else fmt_tot_val_red
+        # Lógica de cor do Saldo a Pagar (Positivo = Vermelho, Negativo = Verde, Zero = Preto)
+        if resumo['saldo'] > 0.001:
+            fmt_saldo_final = fmt_tot_val_red
+        elif resumo['saldo'] < -0.001:
+            fmt_saldo_final = fmt_tot_val_green
+        else:
+            fmt_saldo_final = fmt_tot_val
+
         ws.write(6, 4, "SALDO A PAGAR", fmt_tot_label)
         ws.write(6, 5, resumo['saldo'], fmt_saldo_final)
 
@@ -504,7 +509,6 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     story = []
     styles = getSampleStyleSheet()
     
-    # Estilo personalizado para Histórico (Fonte reduzida e alinhamento)
     style_hist = ParagraphStyle(
         name='SmallHist', 
         parent=styles['Normal'], 
@@ -533,7 +537,7 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     t_res.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), # Vertical Center
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('FONTSIZE', (0,0), (-1,0), 9),
         ('FONTSIZE', (0,1), (-1,2), 11),
@@ -556,15 +560,23 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     ]
     t_tot = Table(data_totais, colWidths=[47*mm, 47*mm, 47*mm, 48*mm])
     
+    # Definição da cor do Saldo Final
+    if resumo['saldo'] > 0.001:
+        cor_saldo_final = colors.red
+    elif resumo['saldo'] < -0.001:
+        cor_saldo_final = colors.darkgreen
+    else:
+        cor_saldo_final = colors.black
+
     t_tot.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), # Vertical Center
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
         ('BACKGROUND', (0,0), (-1,-1), bg_blu),
         ('TEXTCOLOR', (1,1), (1,1), colors.darkgreen),
         ('TEXTCOLOR', (2,1), (2,1), colors.red),
-        ('TEXTCOLOR', (3,1), (3,1), colors.red if resumo['saldo'] > 0.01 else (colors.blue if resumo['saldo'] < -0.01 else colors.green)),
+        ('TEXTCOLOR', (3,1), (3,1), cor_saldo_final),
     ]))
     story.append(t_tot)
     story.append(Spacer(1, 8*mm))
@@ -576,11 +588,11 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey), 
         ('TEXTCOLOR', (0,0), (-1,0), colors.black),
-        ('ALIGN', (0,0), (-1,0), 'CENTER'), # Cabeçalho Centralizado
-        ('ALIGN', (0,1), (-1,-1), 'CENTER'), # Corpo Padrão Centralizado
-        ('ALIGN', (2,1), (4,-1), 'RIGHT'),   # Valores à direita
-        ('ALIGN', (5,1), (5,-1), 'LEFT'),    # Histórico à esquerda
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), # Vertical Center Global
+        ('ALIGN', (0,0), (-1,0), 'CENTER'), 
+        ('ALIGN', (0,1), (-1,-1), 'CENTER'), 
+        ('ALIGN', (2,1), (4,-1), 'RIGHT'),   
+        ('ALIGN', (5,1), (5,-1), 'LEFT'),    
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), 
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('FONTSIZE', (0,0), (-1,-1), 7),
     ]
@@ -589,14 +601,13 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
         dif = r['Dif']
         hist_str = str(r['Histórico'])
         
-        # Criação do Parágrafo para Quebra de Linha Automática
         hist_para = Paragraph(hist_str, style_hist)
         
         row_data = [
             str(r['Empenho']), str(r['Data Emp']),
             formatar_moeda_br(r['Vlr Retido']), formatar_moeda_br(r['Vlr Pago']),
             formatar_moeda_br(dif) if abs(dif) >= 0.01 else "-",
-            hist_para, # Objeto Paragraph ao invés de string simples
+            hist_para, 
             str(r['Status'])
         ]
         data.append(row_data)
@@ -612,7 +623,13 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     table_style.append(('FONTNAME', (0, last_row_idx), (-1, last_row_idx), 'Helvetica-Bold'))
     table_style.append(('SPAN', (0, last_row_idx), (1, last_row_idx)))
 
-    col_widths = [20*mm, 16*mm, 25*mm, 25*mm, 25*mm, 59*mm, 19*mm]
+    # AJUSTE NAS LARGURAS DAS COLUNAS
+    # Empenho: 20 -> 17 (-3)
+    # Data: 16 -> 14 (-2)
+    # Status: 19 -> 24 (+5)
+    # Total mantido (189mm)
+    col_widths = [17*mm, 14*mm, 25*mm, 25*mm, 25*mm, 59*mm, 24*mm]
+    
     t = Table(data, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle(table_style))
     story.append(t)
@@ -690,44 +707,6 @@ if arquivo:
                     st.markdown(f"""<div class="metric-card metric-card-blue"><div class="metric-label">Total Pago (Período)</div><div class="metric-value" style="color: #004085;">{formatar_moeda_br(resumo['tot_pag'])}</div></div>""", unsafe_allow_html=True)
                 with f4: # 4. Saldo a Pagar
                     st.markdown(f"""<div class="metric-card metric-card-dark"><div class="metric-label">Saldo a Pagar</div><div class="metric-value" style="color: {cor_saldo};">{formatar_moeda_br(resumo['saldo'])}</div></div>""", unsafe_allow_html=True)
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                
-                html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
-                html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
-                html += "<tr style='background-color: black; color: white !important;'>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Empenho</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Data</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Retido</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Pago</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Diferença</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 34%;'>Histórico</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Status</th>"
-                html += "</tr>"
-                
-                for _, r in df_res.iterrows():
-                    dif = r['Dif']
-                    style_dif = "color: darkgreen; font-weight: bold;" if dif > 0.01 else ("color: red; font-weight: bold;" if dif < -0.01 else "color: black;")
-                    
-                    html += "<tr style='background-color: white;'>"
-                    html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Empenho']}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Data Emp']}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 11px; word-wrap: break-word; white-space: normal;'>{r['Histórico']}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px;'>{r['Status']}</td>"
-                    html += "</tr>"
-                
-                html += f"<tr style='font-weight: bold; background-color: lightgrey; color: black;'>"
-                html += "<td colspan='2' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL PERÍODO</td>"
-                html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['tot_ret'])}</td>"
-                html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['tot_pag'])}</td>"
-                html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['saldo'] - saldo_ant_float)}</td>"
-                html += "<td colspan='2' style='border: 1px solid #000;'></td></tr>"
-
-                html += "</table></div>"
-                st.markdown(html, unsafe_allow_html=True)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
