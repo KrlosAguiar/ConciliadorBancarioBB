@@ -98,6 +98,14 @@ def converter_moeda_input(texto):
     except:
         return 0.0
 
+def formatar_data(dt):
+    """Formata datetime para string dd/mm/aaaa ou retorna o próprio valor se não for data."""
+    if pd.isna(dt): return "-"
+    try:
+        return dt.strftime("%d/%m/%Y")
+    except:
+        return str(dt)
+
 @st.cache_data(show_spinner=False)
 def carregar_dados(file):
     try:
@@ -117,9 +125,6 @@ def carregar_dados(file):
     if 5 in df.columns:
         df[5] = df[5].astype(str).str.strip().str.upper()
         df = df[df[5].isin(['C', 'D'])]
-    
-    # REMOVIDO O FFILL GLOBAL
-    # df = df.ffill(axis=0) 
     
     col_valor_idx = 8 
     def converter_valor(val):
@@ -160,7 +165,6 @@ def identificar_colunas_dinamicas(df):
     return mapa
 
 def sanitizar_historico(val):
-    """Converte NaN/None/'nan' para string vazia."""
     if pd.isna(val) or str(val).lower().strip() == 'nan':
         return ""
     return str(val).strip()
@@ -173,7 +177,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     c_ug, c_data, c_dc, c_conta, c_valor = 0, 4, 5, 6, 8
     c_empenho, c_tipo, c_hist = cols_map['empenho'], cols_map['tipo'], cols_map['hist']
 
-    # FFILL APENAS ESTRUTURAL (Sem Histórico)
+    # FFILL APENAS ESTRUTURAL
     colunas_para_preencher = [c_ug, c_data, c_conta, c_empenho, c_tipo]
     for col in colunas_para_preencher:
         if col < df.shape[1]:
@@ -236,17 +240,21 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
         else:
             cand = df_pag_limpa[condicao_valor & condicao_usado]
         
-        val_pago, dt_pag, match, sort = 0.0, "-", False, 0
+        val_pago, dt_pag_str, match, sort = 0.0, "-", False, 0
+        dt_pag_sort = pd.NaT 
         
-        # Sanitiza o histórico da retenção (pode estar vazio)
         hist_final = sanitizar_historico(r[c_hist])
         
         if not cand.empty:
             r_pag = cand.iloc[0]
-            val_pago, dt_pag = r_pag[c_valor], r_pag[c_data]
-            # Se conciliou, atualiza para o histórico rico do pagamento (também sanitizado)
+            val_pago = r_pag[c_valor]
+            dt_real_pag = r_pag[c_data]
+            dt_pag_sort = r['Data_Dt']
+            if pd.notna(dt_real_pag):
+                dt_pag_str = formatar_data(dt_real_pag)
+            
             hist_pag = sanitizar_historico(r_pag[c_hist])
-            if hist_pag: # Só substitui se o pagamento tiver histórico
+            if hist_pag: 
                 hist_final = hist_pag
             
             idx_pag_usado.add(r_pag.name)
@@ -258,34 +266,46 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
             resumo["val_ret_pendente"] += val
             
         resultados.append({
-            "Empenho": r[c_empenho], "Data Emp": r[c_data],
-            "Vlr Retido": val, "Vlr Pago": val_pago,
-            "Dif": val - val_pago, "Data Pag": dt_pag,
-            "Histórico": hist_final, "_sort": sort,
+            "Empenho": r[c_empenho], 
+            "Data Emp": formatar_data(r[c_data]), 
+            "Vlr Retido": val, 
+            "Vlr Pago": val_pago,
+            "Dif": val - val_pago, 
+            "Data Pag": dt_pag_str, 
+            "Histórico": hist_final, 
+            "_sort": sort,
+            "_dt_sort": r['Data_Dt'], 
             "Status": "Conciliado" if match else "Retido s/ Pagto"
         })
 
     for _, r in df_pag_limpa[~df_pag_limpa.index.isin(idx_pag_usado)].iterrows():
         resumo["pag_sobra"] += 1
         resumo["val_pag_sobra"] += r[c_valor]
+        
         resultados.append({
-            "Empenho": r[c_empenho], "Data Emp": r[c_data],
-            "Vlr Retido": 0.0, "Vlr Pago": r[c_valor],
-            "Dif": 0.0 - r[c_valor], "Data Pag": r[c_data],
-            "Histórico": sanitizar_historico(r[c_hist]), "_sort": 1,
+            "Empenho": r[c_empenho], 
+            "Data Emp": "-",  
+            "Vlr Retido": 0.0, 
+            "Vlr Pago": r[c_valor],
+            "Dif": 0.0 - r[c_valor], 
+            "Data Pag": formatar_data(r[c_data]), 
+            "Histórico": sanitizar_historico(r[c_hist]), 
+            "_sort": 1,
+            "_dt_sort": r['Data_Dt'], 
             "Status": "Pago s/ Retenção"
         })
 
     if not resultados: return pd.DataFrame(), resumo
 
-    df_res = pd.DataFrame(resultados).sort_values(by=['_sort', 'Data Emp', 'Data Pag'])
+    df_res = pd.DataFrame(resultados).sort_values(by=['_sort', '_dt_sort'])
+    df_final = df_res.drop(columns=['_dt_sort'])
     
-    resumo["tot_ret"] = df_res["Vlr Retido"].sum()
-    resumo["tot_pag"] = df_res["Vlr Pago"].sum()
-    diferenca_tabela = df_res["Dif"].sum()
+    resumo["tot_ret"] = df_final["Vlr Retido"].sum()
+    resumo["tot_pag"] = df_final["Vlr Pago"].sum()
+    diferenca_tabela = df_final["Dif"].sum()
     resumo["saldo"] = diferenca_tabela + saldo_anterior_val
     
-    return df_res, resumo
+    return df_final, resumo
 
 def gerar_excel(df, resumo, saldo_anterior):
     out = io.BytesIO()
@@ -361,17 +381,18 @@ def gerar_excel(df, resumo, saldo_anterior):
         for n in cat_names:
             if len(n) > max_len_A: max_len_A = len(n)
 
-        # --- 2. RESUMO FINANCEIRO (TOTAIS) ---
+        # --- 2. RESUMO FINANCEIRO (TOTAIS) - ORDEM CORRIGIDA ---
         ws.merge_range('E1:F1', 'RESUMO FINANCEIRO (TOTAIS)', fmt_head)
         
-        ws.write(1, 4, "TOTAL RETIDO", fmt_tot_label)
-        ws.write(1, 5, resumo['tot_ret'], fmt_tot_val_green)
+        # Ordem: Saldo Anterior -> Retido -> Pago -> Saldo a Pagar
+        ws.write(1, 4, "SALDO ANTERIOR", fmt_tot_label)
+        ws.write(1, 5, saldo_anterior, fmt_tot_val)
+
+        ws.write(2, 4, "TOTAL RETIDO", fmt_tot_label)
+        ws.write(2, 5, resumo['tot_ret'], fmt_tot_val_green)
         
-        ws.write(2, 4, "TOTAL PAGO", fmt_tot_label)
-        ws.write(2, 5, resumo['tot_pag'], fmt_tot_val_red)
-        
-        ws.write(3, 4, "SALDO ANTERIOR", fmt_tot_label)
-        ws.write(3, 5, saldo_anterior, fmt_tot_val)
+        ws.write(3, 4, "TOTAL PAGO", fmt_tot_label)
+        ws.write(3, 5, resumo['tot_pag'], fmt_tot_val_red)
         
         fmt_saldo_final = fmt_tot_val_green if resumo['saldo'] >= 0 else fmt_tot_val_red
         ws.write(4, 4, "SALDO A PAGAR", fmt_tot_label)
@@ -446,21 +467,26 @@ def gerar_pdf(df_f, titulo_conta, resumo, saldo_anterior):
     story.append(t_res)
     story.append(Spacer(1, 3*mm))
 
+    # TOTAIS REORDENADOS
     data_totais = [
-        ["TOTAL RETIDO", "TOTAL PAGO", "SALDO ANTERIOR", "SALDO A PAGAR"],
+        ["SALDO ANTERIOR", "TOTAL RETIDO", "TOTAL PAGO", "SALDO A PAGAR"],
         [
+            formatar_moeda_br(saldo_anterior),
             formatar_moeda_br(resumo['tot_ret']), 
             formatar_moeda_br(resumo['tot_pag']), 
-            formatar_moeda_br(saldo_anterior),
             formatar_moeda_br(resumo['saldo'])
         ]
     ]
     t_tot = Table(data_totais, colWidths=[47*mm, 47*mm, 47*mm, 48*mm])
+    
+    # ESTILO TOTAIS COM CORES (Visualmente igual ao Excel)
     t_tot.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
         ('BACKGROUND', (0,0), (-1,-1), bg_blu),
+        ('TEXTCOLOR', (1,1), (1,1), colors.darkgreen), # Total Retido - Verde
+        ('TEXTCOLOR', (2,1), (2,1), colors.red),       # Total Pago - Vermelho
         ('TEXTCOLOR', (3,1), (3,1), colors.red if resumo['saldo'] > 0.01 else (colors.blue if resumo['saldo'] < -0.01 else colors.green)),
     ]))
     story.append(t_tot)
@@ -469,10 +495,11 @@ def gerar_pdf(df_f, titulo_conta, resumo, saldo_anterior):
     headers = ['Empenho', 'Data', 'Vlr. Retido', 'Vlr. Pago', 'Diferença', 'Histórico', 'Status']
     data = [headers]
     
+    # ESTILO DO CABEÇALHO TABELA DADOS (Cinza Claro / Texto Preto)
     table_style = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-        ('BACKGROUND', (0,0), (-1,0), colors.black),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey), # Cor de Fundo Cabeçalho (igual Excel)
+        ('TEXTCOLOR', (0,0), (-1,0), colors.black),      # Texto Cabeçalho (igual Excel)
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('ALIGN', (2,0), (4,-1), 'RIGHT'),
         ('ALIGN', (5,0), (5,-1), 'LEFT'),
