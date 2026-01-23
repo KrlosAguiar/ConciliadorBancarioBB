@@ -80,7 +80,57 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. FUNÇÕES DE PROCESSAMENTO
+# 1. LISTAS FIXAS DE OPÇÕES
+# ==============================================================================
+
+LISTA_UGS = [
+    "0 - PMB",
+    "3 - FMS",
+    "4 - FMAS",
+    "5 - FMDCA",
+    "6 - FME",
+    "7 - FMMA",
+    "10 - ARSEP",
+    "11 - FMDPI",
+    "12 - SEMER",
+    "9999 - CONSOLIDADO"
+]
+
+LISTA_CONTAS = [
+    "7812 - Salario Maternidade",
+    "7814 - PENSÃO ALIMENTICIA",
+    "7815 - UNIMED Belem Coop. de Trabalho Medico",
+    "7816 - UNIODONTO - Coop. de Trab. Odontologico",
+    "7817 - ODONTOPREV",
+    "7819 - Sindicato dos Trabalhadores em Educação",
+    "7821 - Sind. dos Agentes de Vig. de Barcarena",
+    "7824 - Emp. Consignado BANPARA",
+    "7826 - Emp. Cons. CAIXA ECONOMICA FEDERAL",
+    "7827 - Emp. Cons. BANCO DO BRASIL",
+    "7828 - Emp. Consignado SANTANDER",
+    "7831 - A.M.P.E Barcarena - Di",
+    "7832 - Desc. Autorizado PSDB 3%",
+    "7837 - Desc. Aut. ASPEB",
+    "7845 - IRRF DE SERVIÇOS DE TERCEIROS PJ",
+    "7846 - IRRF DE SERV. DA ADM. DIR. E INDIRETA",
+    "7847 - IRPF - Imposto de Renda da Pessoa Fisica",
+    "7852 - ISS de Pessoa Juridica Retido na Fonte",
+    "7853 - ISS De Pessoa Fisica Retido na Fonte",
+    "7857 - INSS - Pessoa Fisica",
+    "7858 - INSS FOPAG EFETIVOS",
+    "7859 - INSS FOPAG TEMPORARIOS E COMISSIONADOS",
+    "7864 - SALARIO FAMILIA",
+    "7865 - INSS - Pessoa Juridica",
+    "8926 - GARANTIA DE SAÚDE",
+    "8931 - Emp. Consignado BRADESCO",
+    "9032 - SEPUB -SINDICATO DOS SERVIDORES CIVIS DO PARÁ E MUNICIPIOS",
+    "9159 - Emp. Cons.Kardbank",
+    "9160 - Emp. Cons. Fydigital",
+    "9210 - Emp. Consignado HBI - Scd"
+]
+
+# ==============================================================================
+# 2. FUNÇÕES DE PROCESSAMENTO
 # ==============================================================================
 
 def formatar_moeda_br(valor):
@@ -109,10 +159,8 @@ def formatar_data(dt):
 
 def limpar_nome_arquivo(texto):
     """Remove caracteres inválidos para nome de arquivo e acentos."""
-    # Normaliza unicode (remove acentos)
     nfkd_form = unicodedata.normalize('NFKD', str(texto))
     texto_sem_acento = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
-    # Substitui caracteres inválidos por underline ou remove
     texto_limpo = re.sub(r'[\\/*?:"<>|]', '_', texto_sem_acento)
     return texto_limpo.strip()
 
@@ -180,20 +228,29 @@ def sanitizar_historico(val):
     return str(val).strip()
 
 def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
+    # Extrai códigos dos filtros
+    cod_ug = ug_sel.split(' - ')[0].strip()
     cod_conta = conta_sel.split(' - ')[0].strip()
-    if not cod_conta.isdigit(): cod_conta = conta_sel.split(' ')[0]
 
     cols_map = identificar_colunas_dinamicas(df)
     c_ug, c_data, c_dc, c_conta, c_valor = 0, 4, 5, 6, 8
     c_empenho, c_tipo, c_hist = cols_map['empenho'], cols_map['tipo'], cols_map['hist']
 
+    # FFILL APENAS ESTRUTURAL
     colunas_para_preencher = [c_ug, c_data, c_conta, c_empenho, c_tipo]
     for col in colunas_para_preencher:
         if col < df.shape[1]:
             df[col] = df[col].ffill()
 
-    mask_ug = df[c_ug].astype(str) == str(ug_sel)
+    # LÓGICA DE FILTRAGEM
+    # Se UG for 9999, não filtra por UG (considera todas), mas mantém filtro de conta
+    if cod_ug == '9999':
+        mask_ug = pd.Series(True, index=df.index)
+    else:
+        mask_ug = df[c_ug].astype(str) == str(cod_ug)
+        
     mask_conta = df[c_conta].astype(str).str.startswith(str(cod_conta))
+    
     df_base = df[mask_ug & mask_conta].copy()
     
     if df_base.empty: return pd.DataFrame(), {}
@@ -320,7 +377,15 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
     out = io.BytesIO()
     df_exp = df.drop(columns=['_sort', 'Status'])
     
-    start_row_table = 9
+    # AJUSTE DE POSIÇÃO NO EXCEL
+    # Linha 1 (índice 0): Cabeçalho UG/Conta
+    # Linha 2 (índice 1): Vazia
+    # Linha 3 (índice 2): Títulos das Tabelas de Resumo
+    # Linha 4 (índice 3): Cabeçalhos das Tabelas de Resumo
+    # ... dados do resumo ...
+    # Deixamos espaço e começamos a tabela de dados na linha 9 (índice 8 - Header, índice 9 - Dados)
+    
+    start_row_table = 8 # Índice 8 no Python = Linha 9 no Excel (Cabeçalho da Tabela)
     
     with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
         df_exp.to_excel(writer, sheet_name='Conciliacao', index=False, startrow=start_row_table)
@@ -345,7 +410,6 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         fmt_red = wb.add_format({'font_color': '#FF0000', 'bold': True, 'num_format': '#,##0.00', 'align': 'center', 'valign': 'vcenter'})
         fmt_hist = wb.add_format({'text_wrap': True, 'valign': 'vcenter', 'font_size': 10, 'align': 'left'})
 
-        # --- TOTAIS E CARDS ---
         fmt_tot_label = wb.add_format({'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
         fmt_tot_val_green = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'font_color': '#006400', 'valign': 'vcenter'})
         fmt_tot_val_red = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'font_color': '#FF0000', 'valign': 'vcenter'})
@@ -355,49 +419,49 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         fmt_card_qtd = wb.add_format({'bold': True, 'num_format': '0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         fmt_card_money = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'valign': 'vcenter'})
 
-        # --- 1. QUADRO DE RESUMO (CARDS) ---
-        ws.merge_range('A1:C1', 'RESUMO POR SITUAÇÃO (CARDS)', fmt_head)
-        ws.write(1, 0, "CATEGORIA", fmt_card_label)
-        ws.write(1, 1, "QTD", fmt_card_label)
-        ws.write(1, 2, "VALOR", fmt_card_label)
+        # --- CABEÇALHO DO FILTRO (LINHA 1 - Índice 0) ---
+        ws.merge_range('A1:G1', f"UG: {ug}  |  CONTA: {conta}", fmt_head_filter)
+
+        # --- 1. QUADRO DE RESUMO (CARDS) - INICIA LINHA 3 (Índice 2) ---
+        ws.merge_range('A3:C3', 'RESUMO POR SITUAÇÃO (CARDS)', fmt_head)
+        ws.write(3, 0, "CATEGORIA", fmt_card_label)
+        ws.write(3, 1, "QTD", fmt_card_label)
+        ws.write(3, 2, "VALOR", fmt_card_label)
         
         cat_names = ["Retido s/ Pagto (Pendente)", "Pago s/ Retenção (Sobra)", "Conciliados (OK)"]
         
-        ws.write(2, 0, cat_names[0], fmt_card_label)
-        ws.write(2, 1, resumo['ret_pendente'], fmt_card_qtd)
-        ws.write(2, 2, resumo['val_ret_pendente'], fmt_card_money)
+        ws.write(4, 0, cat_names[0], fmt_card_label)
+        ws.write(4, 1, resumo['ret_pendente'], fmt_card_qtd)
+        ws.write(4, 2, resumo['val_ret_pendente'], fmt_card_money)
         
-        ws.write(3, 0, cat_names[1], fmt_card_label)
-        ws.write(3, 1, resumo['pag_sobra'], fmt_card_qtd)
-        ws.write(3, 2, resumo['val_pag_sobra'], fmt_card_money)
+        ws.write(5, 0, cat_names[1], fmt_card_label)
+        ws.write(5, 1, resumo['pag_sobra'], fmt_card_qtd)
+        ws.write(5, 2, resumo['val_pag_sobra'], fmt_card_money)
         
-        ws.write(4, 0, cat_names[2], fmt_card_label)
-        ws.write(4, 1, resumo['ok'], fmt_card_qtd)
-        ws.write(4, 2, resumo['val_ok'], fmt_card_money)
+        ws.write(6, 0, cat_names[2], fmt_card_label)
+        ws.write(6, 1, resumo['ok'], fmt_card_qtd)
+        ws.write(6, 2, resumo['val_ok'], fmt_card_money)
 
         max_len_A = len("CATEGORIA")
         for n in cat_names:
             if len(n) > max_len_A: max_len_A = len(n)
 
-        # --- 2. RESUMO FINANCEIRO (TOTAIS) ---
-        ws.merge_range('E1:F1', 'RESUMO FINANCEIRO (TOTAIS)', fmt_head)
+        # --- 2. RESUMO FINANCEIRO (TOTAIS) - INICIA LINHA 3 (Índice 2) ---
+        ws.merge_range('E3:F3', 'RESUMO FINANCEIRO (TOTAIS)', fmt_head)
         
         # Ordem: Saldo Anterior -> Retido -> Pago -> Saldo a Pagar
-        ws.write(1, 4, "SALDO ANTERIOR", fmt_tot_label)
-        ws.write(1, 5, saldo_anterior, fmt_tot_val)
+        ws.write(3, 4, "SALDO ANTERIOR", fmt_tot_label)
+        ws.write(3, 5, saldo_anterior, fmt_tot_val)
 
-        ws.write(2, 4, "TOTAL RETIDO", fmt_tot_label)
-        ws.write(2, 5, resumo['tot_ret'], fmt_tot_val_green)
+        ws.write(4, 4, "TOTAL RETIDO", fmt_tot_label)
+        ws.write(4, 5, resumo['tot_ret'], fmt_tot_val_green)
         
-        ws.write(3, 4, "TOTAL PAGO", fmt_tot_label)
-        ws.write(3, 5, resumo['tot_pag'], fmt_tot_val_red)
+        ws.write(5, 4, "TOTAL PAGO", fmt_tot_label)
+        ws.write(5, 5, resumo['tot_pag'], fmt_tot_val_red)
         
         fmt_saldo_final = fmt_tot_val_green if resumo['saldo'] >= 0 else fmt_tot_val_red
-        ws.write(4, 4, "SALDO A PAGAR", fmt_tot_label)
-        ws.write(4, 5, resumo['saldo'], fmt_saldo_final)
-
-        # --- CABEÇALHO DO FILTRO (NOVO) ---
-        ws.merge_range('A7:G7', f"UG: {ug}  |  CONTA: {conta}", fmt_head_filter)
+        ws.write(6, 4, "SALDO A PAGAR", fmt_tot_label)
+        ws.write(6, 5, resumo['saldo'], fmt_saldo_final)
 
         # --- 3. TABELA DE DADOS ---
         for i, col in enumerate(df_exp.columns):
@@ -574,14 +638,14 @@ if arquivo:
     df_dados = carregar_dados(arquivo)
     
     if not df_dados.empty:
-        ugs = sorted(df_dados[0].astype(str).unique().tolist())
-        contas = sorted(df_dados[6].astype(str).unique().tolist())
-        opcoes_conta = ["7852 - ISS Pessoa Jurídica (Padrão)"] + [c for c in contas if "7852" not in str(c)]
+        # LISTAS FIXAS AGORA SÃO USADAS AQUI
+        opcoes_ug = LISTA_UGS
+        opcoes_conta = LISTA_CONTAS
         
         with placeholder_filtros.container():
             r1_col1, r1_col2 = st.columns([1, 3]) 
             with r1_col1: 
-                ug_sel = st.selectbox("UG", ugs)
+                ug_sel = st.selectbox("UG", opcoes_ug)
             with r1_col2: 
                 conta_sel = st.selectbox("Conta de Retenção", opcoes_conta)
             
