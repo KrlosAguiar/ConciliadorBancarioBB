@@ -270,6 +270,9 @@ def gerar_excel(df, resumo, saldo_anterior):
     out = io.BytesIO()
     df_exp = df.drop(columns=['_sort', 'Status'])
     
+    # Mapeamento de Colunas (0-based)
+    # 0: Empenho, 1: Data Emp, 2: Vlr Ret, 3: Vlr Pag, 4: Dif, 5: Data Pag, 6: Histórico
+    
     start_row_table = 9
     
     with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
@@ -278,7 +281,6 @@ def gerar_excel(df, resumo, saldo_anterior):
         ws = writer.sheets['Conciliacao']
         
         # --- DEFINIÇÃO DE FORMATOS ---
-        # Todos com 'valign': 'vcenter' (Alinhamento Vertical Centralizado)
         
         # Cabeçalhos
         fmt_head = wb.add_format({
@@ -286,59 +288,41 @@ def gerar_excel(df, resumo, saldo_anterior):
             'align': 'center', 'valign': 'vcenter'
         })
         
-        # Valores Monetários Tabela
-        fmt_money = wb.add_format({
-            'num_format': '#,##0.00', 'valign': 'vcenter'
-        })
-        
-        # Diferenças (Condicional)
-        fmt_green = wb.add_format({
-            'font_color': '#006400', 'bold': True, 'num_format': '#,##0.00', 'valign': 'vcenter'
-        })
-        fmt_red = wb.add_format({
-            'font_color': '#FF0000', 'bold': True, 'num_format': '#,##0.00', 'valign': 'vcenter'
-        })
-        
-        # Formato Padrão para Dados Gerais (texto normal centralizado verticalmente)
-        fmt_general = wb.add_format({'valign': 'vcenter'})
-
-        # --- TOTAIS (Resumo Financeiro) ---
-        fmt_tot_label = wb.add_format({
-            'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 
-            'align': 'left', 'valign': 'vcenter'
-        })
-        fmt_tot_val = wb.add_format({
-            'bold': True, 'num_format': '#,##0.00', 'border': 1, 
-            'align': 'right', 'valign': 'vcenter'
-        })
-        fmt_tot_val_green = wb.add_format({
-            'bold': True, 'num_format': '#,##0.00', 'border': 1, 
-            'align': 'right', 'font_color': '#006400', 'valign': 'vcenter'
-        })
-        fmt_tot_val_red = wb.add_format({
-            'bold': True, 'num_format': '#,##0.00', 'border': 1, 
-            'align': 'right', 'font_color': '#FF0000', 'valign': 'vcenter'
-        })
-        
-        # --- CARDS (Resumo Situação) ---
-        fmt_card_label = wb.add_format({
-            'bold': True, 'bg_color': '#f0f0f0', 'border': 1, 
-            'align': 'left', 'valign': 'vcenter'
-        })
-        fmt_card_qtd = wb.add_format({
-            'bold': True, 'num_format': '0', 'border': 1, 
+        # Formato Padrão para Dados Gerais (Centralizado)
+        fmt_center = wb.add_format({
             'align': 'center', 'valign': 'vcenter'
         })
-        fmt_card_money = wb.add_format({
-            'bold': True, 'num_format': '#,##0.00', 'border': 1, 
-            'align': 'right', 'valign': 'vcenter'
+        
+        # Valores Monetários Tabela (Centralizado conforme pedido)
+        fmt_money_center = wb.add_format({
+            'num_format': '#,##0.00', 'align': 'center', 'valign': 'vcenter'
         })
         
-        # --- HISTÓRICO ---
-        # Quebra texto + Alinhamento Meio + Fonte 10
-        fmt_hist = wb.add_format({
-            'text_wrap': True, 'valign': 'vcenter', 'font_size': 10
+        # Diferenças (Condicional + Centralizado)
+        fmt_green = wb.add_format({
+            'font_color': '#006400', 'bold': True, 'num_format': '#,##0.00', 
+            'align': 'center', 'valign': 'vcenter'
         })
+        fmt_red = wb.add_format({
+            'font_color': '#FF0000', 'bold': True, 'num_format': '#,##0.00', 
+            'align': 'center', 'valign': 'vcenter'
+        })
+        
+        # Histórico (Esquerda, Wrap, Fonte 10)
+        fmt_hist = wb.add_format({
+            'text_wrap': True, 'valign': 'vcenter', 
+            'font_size': 10, 'align': 'left'
+        })
+
+        # --- TOTAIS E CARDS (FORMATOS ESPECÍFICOS) ---
+        fmt_tot_label = wb.add_format({'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
+        fmt_tot_val_green = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'font_color': '#006400', 'valign': 'vcenter'})
+        fmt_tot_val_red = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'font_color': '#FF0000', 'valign': 'vcenter'})
+        fmt_tot_val = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'valign': 'vcenter'})
+        
+        fmt_card_label = wb.add_format({'bold': True, 'bg_color': '#f0f0f0', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
+        fmt_card_qtd = wb.add_format({'bold': True, 'num_format': '0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        fmt_card_money = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'valign': 'vcenter'})
 
         # --- 1. QUADRO DE RESUMO (CARDS) ---
         ws.merge_range('A1:C1', 'RESUMO POR SITUAÇÃO (CARDS)', fmt_head)
@@ -360,7 +344,7 @@ def gerar_excel(df, resumo, saldo_anterior):
         ws.write(4, 1, resumo['ok'], fmt_card_qtd)
         ws.write(4, 2, resumo['val_ok'], fmt_card_money)
 
-        # Cálculo da largura ideal para Coluna A (baseado nos cards)
+        # Cálculo da largura ideal para Coluna A
         max_len_A = len("CATEGORIA")
         for n in cat_names:
             if len(n) > max_len_A: max_len_A = len(n)
@@ -368,19 +352,15 @@ def gerar_excel(df, resumo, saldo_anterior):
         # --- 2. RESUMO FINANCEIRO (TOTAIS) ---
         ws.merge_range('E1:F1', 'RESUMO FINANCEIRO (TOTAIS)', fmt_head)
         
-        # Total Retido (VERDE)
         ws.write(1, 4, "TOTAL RETIDO", fmt_tot_label)
         ws.write(1, 5, resumo['tot_ret'], fmt_tot_val_green)
         
-        # Total Pago (VERMELHO)
         ws.write(2, 4, "TOTAL PAGO", fmt_tot_label)
         ws.write(2, 5, resumo['tot_pag'], fmt_tot_val_red)
         
-        # Saldo Anterior (Preto padrão)
         ws.write(3, 4, "SALDO ANTERIOR", fmt_tot_label)
         ws.write(3, 5, saldo_anterior, fmt_tot_val)
         
-        # Saldo a Pagar (Condicional)
         fmt_saldo_final = fmt_tot_val_green if resumo['saldo'] >= 0 else fmt_tot_val_red
         ws.write(4, 4, "SALDO A PAGAR", fmt_tot_label)
         ws.write(4, 5, resumo['saldo'], fmt_saldo_final)
@@ -391,7 +371,7 @@ def gerar_excel(df, resumo, saldo_anterior):
             
             # Autoajuste de largura
             if i == 0: 
-                current_max = max_len_A # Usa o cálculo dos Cards para a coluna A
+                current_max = max_len_A 
             else:
                 current_max = len(str(col))
             
@@ -402,13 +382,13 @@ def gerar_excel(df, resumo, saldo_anterior):
             if current_max > 60: current_max = 60
             if current_max < 12: current_max = 12
             
-            # Aplicação de formatos nas colunas
-            if i == 5: # Histórico
+            # Aplicação de formatos (ÍNDICES CORRIGIDOS)
+            if i == 6: # Histórico (Coluna G)
                 ws.set_column(i, i, 50, fmt_hist) 
-            elif i in [2, 3, 4]: # Vlr Retido, Pago, Dif (Valores)
-                ws.set_column(i, i, 18, fmt_money)
-            else: # Colunas gerais (Empenho, Data, Status)
-                ws.set_column(i, i, current_max + 2, fmt_general)
+            elif i in [2, 3, 4]: # Vlr Retido, Pago, Dif
+                ws.set_column(i, i, 18, fmt_money_center)
+            else: # Colunas gerais (Empenho 0, Data 1, Data Pag 5)
+                ws.set_column(i, i, current_max + 2, fmt_center)
 
         # --- 4. FORMATAÇÃO CONDICIONAL (DIFERENÇA) ---
         first_row = start_row_table + 1
@@ -581,7 +561,6 @@ if arquivo:
                 with v3:
                     st.markdown(f"""<div class="metric-card metric-card-green"><div class="metric-label">Total Retido e Pago</div><div class="metric-value" style="color: #28a745;">{formatar_moeda_br(resumo['val_ok'])}</div></div>""", unsafe_allow_html=True)
 
-                # LINHA 3 REORDENADA CONFORME SOLICITADO
                 f1, f2, f3, f4 = st.columns(4)
                 cor_saldo = "#ff4b4b" if resumo['saldo'] > 0.01 else ("#28a745" if resumo['saldo'] == 0 else "#007bff")
                 
