@@ -224,10 +224,12 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
             cand = df_pag_limpa[condicao_valor & condicao_usado]
         
         val_pago, dt_pag, match, sort = 0.0, "-", False, 0
+        hist_final = r[c_hist] # Por padrão, usa o histórico da Retenção
         
         if not cand.empty:
             r_pag = cand.iloc[0]
             val_pago, dt_pag = r_pag[c_valor], r_pag[c_data]
+            hist_final = r_pag[c_hist] # Se conciliou, atualiza para o histórico do Pagamento
             idx_pag_usado.add(r_pag.name)
             match, sort = True, 2
             resumo["ok"] += 1
@@ -240,7 +242,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
             "Empenho": r[c_empenho], "Data Emp": r[c_data],
             "Vlr Retido": val, "Vlr Pago": val_pago,
             "Dif": val - val_pago, "Data Pag": dt_pag,
-            "Histórico": r[c_hist], "_sort": sort,
+            "Histórico": hist_final, "_sort": sort,
             "Status": "Conciliado" if match else "Retido s/ Pagto"
         })
 
