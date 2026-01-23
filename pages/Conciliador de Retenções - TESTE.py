@@ -274,9 +274,7 @@ def gerar_excel(df, resumo, saldo_anterior):
     out = io.BytesIO()
     df_exp = df.drop(columns=['_sort', 'Status'])
     
-    # Início da tabela de dados (deixando espaço para o resumo e totais no topo)
-    # Linhas: 0=Título, 1=HeaderCards, 2-4=DadosCards, 5=Espaço, 
-    # 6=HeaderTotais, 7=DadosTotais, 8=Espaço, 9=HeaderTabela
+    # Início da tabela de dados (linha 9, para dar espaço aos resumos)
     start_row_table = 9
     
     with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
@@ -289,8 +287,12 @@ def gerar_excel(df, resumo, saldo_anterior):
         fmt_money = wb.add_format({'num_format': '#,##0.00'})
         fmt_green = wb.add_format({'font_color': '#006400', 'bold': True, 'num_format': '#,##0.00'}) # Verde Escuro
         fmt_red = wb.add_format({'font_color': '#FF0000', 'bold': True, 'num_format': '#,##0.00'})   # Vermelho
-        fmt_tot_head = wb.add_format({'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 'align': 'center'})
-        fmt_tot_val = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'center'})
+        
+        # Format para Labels dos Totais (Fundo Cinza Claro)
+        fmt_tot_label = wb.add_format({'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 'align': 'left'})
+        # Format para Valores dos Totais (Sem fundo, Borda)
+        fmt_tot_val = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right'})
+        
         fmt_card_label = wb.add_format({'bold': True, 'bg_color': '#f0f0f0', 'border': 1, 'align': 'left'})
         fmt_card_val = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right'})
         
@@ -312,55 +314,56 @@ def gerar_excel(df, resumo, saldo_anterior):
         ws.write(4, 1, resumo['ok'], fmt_card_val)
         ws.write(4, 2, resumo['val_ok'], fmt_money)
 
-        # --- 2. QUADRO DE TOTAIS E SALDOS (AGORA NO TOPO) ---
-        ws.merge_range('E1:H1', 'RESUMO FINANCEIRO (TOTAIS)', fmt_head)
-        totais_headers = ["TOTAL RETIDO", "TOTAL PAGO", "SALDO ANTERIOR", "SALDO A PAGAR"]
-        totais_values = [resumo['tot_ret'], resumo['tot_pag'], saldo_anterior, resumo['saldo']]
+        # --- 2. RESUMO FINANCEIRO (TOTAIS) - AGORA VERTICAL ---
+        # Cabeçalho mesclado E1:F1
+        ws.merge_range('E1:F1', 'RESUMO FINANCEIRO (TOTAIS)', fmt_head)
         
-        for i, h in enumerate(totais_headers):
-            ws.write(1, 4 + i, h, fmt_tot_head) # Começa na coluna E (index 4)
-            ws.write(2, 4 + i, totais_values[i], fmt_tot_val)
+        # Labels na Coluna E (index 4), Valores na Coluna F (index 5)
+        # Linha 2
+        ws.write(1, 4, "TOTAL RETIDO", fmt_tot_label)
+        ws.write(1, 5, resumo['tot_ret'], fmt_tot_val)
+        
+        # Linha 3
+        ws.write(2, 4, "TOTAL PAGO", fmt_tot_label)
+        ws.write(2, 5, resumo['tot_pag'], fmt_tot_val)
+        
+        # Linha 4
+        ws.write(3, 4, "SALDO ANTERIOR", fmt_tot_label)
+        ws.write(3, 5, saldo_anterior, fmt_tot_val)
+        
+        # Linha 5
+        ws.write(4, 4, "SALDO A PAGAR", fmt_tot_label)
+        ws.write(4, 5, resumo['saldo'], fmt_tot_val)
 
         # --- 3. FORMATAÇÃO DA TABELA E AUTOAJUSTE ---
-        # Formatar cabeçalho
         for i, col in enumerate(df_exp.columns):
             ws.write(start_row_table, i, col, fmt_head)
             
-            # AUTOAJUSTE DE COLUNAS
-            # Calcula o tamanho máximo do conteúdo na coluna
-            max_len = len(str(col)) # Começa com tamanho do header
+            # Autoajuste
+            max_len = len(str(col)) 
             for val in df_exp[col]:
                 val_len = len(str(val))
                 if val_len > max_len: max_len = val_len
             
-            # Limite máximo para histórico não ficar gigante
             if max_len > 60: max_len = 60
-            if max_len < 12: max_len = 12 # Mínimo
+            if max_len < 12: max_len = 12
             
-            ws.set_column(i, i, max_len + 2) # +2 para respiro
+            ws.set_column(i, i, max_len + 2)
 
         # Formatar colunas de valor
         ws.set_column('C:E', 18, fmt_money)
         
-        # --- 4. FORMATAÇÃO CONDICIONAL DA DIFERENÇA ---
-        # Range da coluna "Dif" (Coluna E -> index 4)
+        # --- 4. FORMATAÇÃO CONDICIONAL ---
         first_row = start_row_table + 1
         last_row = start_row_table + len(df_exp)
         
-        # Regra 1: Maior que 0 (Retido s/ Pgto) -> VERDE ESCURO
+        # Verde Escuro para positivo
         ws.conditional_format(first_row, 4, last_row, 4, {
-            'type': 'cell',
-            'criteria': '>',
-            'value': 0.001,
-            'format': fmt_green
+            'type': 'cell', 'criteria': '>', 'value': 0.001, 'format': fmt_green
         })
-        
-        # Regra 2: Menor que 0 (Pago s/ Retenção) -> VERMELHO
+        # Vermelho para negativo
         ws.conditional_format(first_row, 4, last_row, 4, {
-            'type': 'cell',
-            'criteria': '<',
-            'value': -0.001,
-            'format': fmt_red
+            'type': 'cell', 'criteria': '<', 'value': -0.001, 'format': fmt_red
         })
         
     return out.getvalue()
@@ -449,12 +452,10 @@ def gerar_pdf(df_f, titulo_conta, resumo, saldo_anterior):
         data.append(row_data)
         
         if abs(dif) >= 0.01:
-            # Cor verde para dif positiva (retido s/ pagto), vermelha para negativa
             cor_fonte = colors.darkgreen if dif > 0 else colors.red
             table_style.append(('TEXTCOLOR', (4, i+1), (4, i+1), cor_fonte))
             table_style.append(('FONTNAME', (4, i+1), (4, i+1), 'Helvetica-Bold'))
 
-    # Totais no rodapé do PDF também, mas sem Saldo Anterior/A Pagar pois já está no topo
     data.append(['TOTAIS PERÍODO', '', formatar_moeda_br(resumo['tot_ret']), formatar_moeda_br(resumo['tot_pag']), formatar_moeda_br(resumo['saldo'] - saldo_anterior), '', ''])
     last_row_idx = len(data) - 1
     table_style.append(('BACKGROUND', (0, last_row_idx), (-1, last_row_idx), colors.lightgrey))
@@ -557,7 +558,6 @@ if arquivo:
                 
                 for _, r in df_res.iterrows():
                     dif = r['Dif']
-                    # Cor condicional na tela também, para consistência com o pedido
                     style_dif = "color: darkgreen; font-weight: bold;" if dif > 0.01 else ("color: red; font-weight: bold;" if dif < -0.01 else "color: black;")
                     
                     html += "<tr style='background-color: white;'>"
