@@ -118,7 +118,7 @@ def carregar_dados(file):
         df[5] = df[5].astype(str).str.strip().str.upper()
         df = df[df[5].isin(['C', 'D'])]
     
-    # REMOVIDO O FFILL GLOBAL PARA EVITAR POLUIÇÃO DE HISTÓRICO
+    # REMOVIDO O FFILL GLOBAL
     # df = df.ffill(axis=0) 
     
     col_valor_idx = 8 
@@ -141,12 +141,10 @@ def carregar_dados(file):
 
 def identificar_colunas_dinamicas(df):
     mapa = {'empenho': 14, 'tipo': 19, 'hist': 21}
-    # Verifica onde está o histórico baseado na coluna AB (27)
     coluna_ab_tem_dados = df[27].head(50).notna().sum() > 0
     if coluna_ab_tem_dados: mapa['hist'] = 27 
     else: mapa['hist'] = 21
 
-    # Varredura para encontrar colunas chave
     for idx, row in df.head(50).iterrows():
         for c in range(12, 16): 
             val = str(row[c]).strip()
@@ -161,6 +159,12 @@ def identificar_colunas_dinamicas(df):
                 break
     return mapa
 
+def sanitizar_historico(val):
+    """Converte NaN/None/'nan' para string vazia."""
+    if pd.isna(val) or str(val).lower().strip() == 'nan':
+        return ""
+    return str(val).strip()
+
 def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     cod_conta = conta_sel.split(' - ')[0].strip()
     if not cod_conta.isdigit(): cod_conta = conta_sel.split(' ')[0]
@@ -169,9 +173,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     c_ug, c_data, c_dc, c_conta, c_valor = 0, 4, 5, 6, 8
     c_empenho, c_tipo, c_hist = cols_map['empenho'], cols_map['tipo'], cols_map['hist']
 
-    # --- APLICAÇÃO DO FFILL SELETIVO (Apenas Estrutural) ---
-    # Isso garante que UG, Data, Conta e Empenho sejam repetidos para as linhas filhas,
-    # MAS NÃO o Histórico (c_hist), evitando a "adivinhação".
+    # FFILL APENAS ESTRUTURAL (Sem Histórico)
     colunas_para_preencher = [c_ug, c_data, c_conta, c_empenho, c_tipo]
     for col in colunas_para_preencher:
         if col < df.shape[1]:
@@ -197,7 +199,6 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     mask_estorno_pag = ((df_base[c_dc] == 'C') & (df_base['Tipo_Norm'].str.contains("Estorno", case=False) | df_base[c_hist].astype(str).str.contains("Estorno", case=False)))
     df_est_pag = df_base[mask_estorno_pag].copy()
 
-    # Limpeza de estornos
     idx_ret_cancel = set()
     for _, r_est in df_est_ret.iterrows():
         v, e = r_est[c_valor], r_est[c_empenho]
@@ -226,7 +227,6 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
         val = r[c_valor]
         dt_retencao = r['Data_Dt']
         
-        # Match: Valor Igual E Data Compatível (Sem trava de empenho)
         condicao_valor = (df_pag_limpa[c_valor] == val)
         condicao_usado = (~df_pag_limpa.index.isin(idx_pag_usado))
         
@@ -238,14 +238,17 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
         
         val_pago, dt_pag, match, sort = 0.0, "-", False, 0
         
-        # Lógica de Histórico:
-        # Pega o da Retenção (r[c_hist]) -> Se estiver vazio no Excel, virá NaN/NaT/None (não preenchido pelo ffill)
-        hist_final = r[c_hist] 
+        # Sanitiza o histórico da retenção (pode estar vazio)
+        hist_final = sanitizar_historico(r[c_hist])
         
         if not cand.empty:
             r_pag = cand.iloc[0]
             val_pago, dt_pag = r_pag[c_valor], r_pag[c_data]
-            hist_final = r_pag[c_hist] # Se conciliou, pega o histórico rico do pagamento
+            # Se conciliou, atualiza para o histórico rico do pagamento (também sanitizado)
+            hist_pag = sanitizar_historico(r_pag[c_hist])
+            if hist_pag: # Só substitui se o pagamento tiver histórico
+                hist_final = hist_pag
+            
             idx_pag_usado.add(r_pag.name)
             match, sort = True, 2
             resumo["ok"] += 1
@@ -269,7 +272,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
             "Empenho": r[c_empenho], "Data Emp": r[c_data],
             "Vlr Retido": 0.0, "Vlr Pago": r[c_valor],
             "Dif": 0.0 - r[c_valor], "Data Pag": r[c_data],
-            "Histórico": r[c_hist], "_sort": 1,
+            "Histórico": sanitizar_historico(r[c_hist]), "_sort": 1,
             "Status": "Pago s/ Retenção"
         })
 
@@ -297,23 +300,19 @@ def gerar_excel(df, resumo, saldo_anterior):
         
         # --- DEFINIÇÃO DE FORMATOS ---
         
-        # Cabeçalhos
         fmt_head = wb.add_format({
             'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 
             'align': 'center', 'valign': 'vcenter'
         })
         
-        # Formato Padrão para Dados Gerais (Centralizado)
         fmt_center = wb.add_format({
             'align': 'center', 'valign': 'vcenter'
         })
         
-        # Valores Monetários Tabela (Centralizado)
         fmt_money_center = wb.add_format({
             'num_format': '#,##0.00', 'align': 'center', 'valign': 'vcenter'
         })
         
-        # Diferenças (Condicional + Centralizado)
         fmt_green = wb.add_format({
             'font_color': '#006400', 'bold': True, 'num_format': '#,##0.00', 
             'align': 'center', 'valign': 'vcenter'
@@ -323,7 +322,6 @@ def gerar_excel(df, resumo, saldo_anterior):
             'align': 'center', 'valign': 'vcenter'
         })
         
-        # Histórico (Esquerda, Wrap, Fonte 10)
         fmt_hist = wb.add_format({
             'text_wrap': True, 'valign': 'vcenter', 
             'font_size': 10, 'align': 'left'
@@ -396,7 +394,7 @@ def gerar_excel(df, resumo, saldo_anterior):
             if current_max > 60: current_max = 60
             if current_max < 12: current_max = 12
             
-            # Aplicação de formatos (Histórico = Coluna G = índice 6)
+            # Formatação
             if i == 6: 
                 ws.set_column(i, i, 50, fmt_hist) 
             elif i in [2, 3, 4]: 
