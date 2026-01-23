@@ -13,6 +13,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import mm
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 # ==============================================================================
 # 0. CONFIGURAÇÃO DA PÁGINA E CSS
@@ -243,7 +244,6 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
             df[col] = df[col].ffill()
 
     # LÓGICA DE FILTRAGEM
-    # Se UG for 9999, não filtra por UG (considera todas), mas mantém filtro de conta
     if cod_ug == '9999':
         mask_ug = pd.Series(True, index=df.index)
     else:
@@ -377,15 +377,7 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
     out = io.BytesIO()
     df_exp = df.drop(columns=['_sort', 'Status'])
     
-    # AJUSTE DE POSIÇÃO NO EXCEL
-    # Linha 1 (índice 0): Cabeçalho UG/Conta
-    # Linha 2 (índice 1): Vazia
-    # Linha 3 (índice 2): Títulos das Tabelas de Resumo
-    # Linha 4 (índice 3): Cabeçalhos das Tabelas de Resumo
-    # ... dados do resumo ...
-    # Deixamos espaço e começamos a tabela de dados na linha 9 (índice 8 - Header, índice 9 - Dados)
-    
-    start_row_table = 8 # Índice 8 no Python = Linha 9 no Excel (Cabeçalho da Tabela)
+    start_row_table = 8 
     
     with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
         df_exp.to_excel(writer, sheet_name='Conciliacao', index=False, startrow=start_row_table)
@@ -401,7 +393,7 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         
         fmt_head_filter = wb.add_format({
             'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 
-            'align': 'left', 'valign': 'vcenter', 'font_size': 12
+            'align': 'center', 'valign': 'vcenter', 'font_size': 12
         })
         
         fmt_center = wb.add_format({'align': 'center', 'valign': 'vcenter'})
@@ -416,17 +408,21 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         fmt_tot_val = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'valign': 'vcenter'})
         
         fmt_card_label = wb.add_format({'bold': True, 'bg_color': '#f0f0f0', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
+        # NOVO: Formato centralizado para cabeçalhos de QTD e VALOR dos Cards
+        fmt_card_header_center = wb.add_format({'bold': True, 'bg_color': '#f0f0f0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+        
         fmt_card_qtd = wb.add_format({'bold': True, 'num_format': '0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         fmt_card_money = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'valign': 'vcenter'})
 
-        # --- CABEÇALHO DO FILTRO (LINHA 1 - Índice 0) ---
+        # --- CABEÇALHO DO FILTRO ---
         ws.merge_range('A1:G1', f"UG: {ug}  |  CONTA: {conta}", fmt_head_filter)
 
-        # --- 1. QUADRO DE RESUMO (CARDS) - INICIA LINHA 3 (Índice 2) ---
+        # --- 1. QUADRO DE RESUMO (CARDS) ---
         ws.merge_range('A3:C3', 'RESUMO POR SITUAÇÃO (CARDS)', fmt_head)
         ws.write(3, 0, "CATEGORIA", fmt_card_label)
-        ws.write(3, 1, "QTD", fmt_card_label)
-        ws.write(3, 2, "VALOR", fmt_card_label)
+        # Uso do novo formato centralizado
+        ws.write(3, 1, "QTD", fmt_card_header_center)
+        ws.write(3, 2, "VALOR", fmt_card_header_center)
         
         cat_names = ["Retido s/ Pagto (Pendente)", "Pago s/ Retenção (Sobra)", "Conciliados (OK)"]
         
@@ -446,10 +442,9 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         for n in cat_names:
             if len(n) > max_len_A: max_len_A = len(n)
 
-        # --- 2. RESUMO FINANCEIRO (TOTAIS) - INICIA LINHA 3 (Índice 2) ---
+        # --- 2. RESUMO FINANCEIRO (TOTAIS) ---
         ws.merge_range('E3:F3', 'RESUMO FINANCEIRO (TOTAIS)', fmt_head)
         
-        # Ordem: Saldo Anterior -> Retido -> Pago -> Saldo a Pagar
         ws.write(3, 4, "SALDO ANTERIOR", fmt_tot_label)
         ws.write(3, 5, saldo_anterior, fmt_tot_val)
 
@@ -467,7 +462,6 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         for i, col in enumerate(df_exp.columns):
             ws.write(start_row_table, i, col, fmt_head)
             
-            # Autoajuste
             if i == 0: 
                 current_max = max_len_A 
             else:
@@ -480,7 +474,6 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
             if current_max > 60: current_max = 60
             if current_max < 12: current_max = 12
             
-            # Formatação
             if i == 6: 
                 ws.set_column(i, i, 50, fmt_hist) 
             elif i in [2, 3, 4]: 
@@ -500,21 +493,28 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
 def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     buffer = io.BytesIO()
     
-    # Define Título do Documento nos Metadados
     doc_title = f"Conciliação de Retenções - UG {ug} - Retenção {conta}"
     doc = SimpleDocTemplate(
         buffer, 
         pagesize=A4, 
         rightMargin=10*mm, leftMargin=10*mm, topMargin=10*mm, bottomMargin=10*mm,
-        title=doc_title # Metadado do PDF
+        title=doc_title 
     )
     
     story = []
     styles = getSampleStyleSheet()
     
+    # Estilo personalizado para Histórico (Fonte reduzida e alinhamento)
+    style_hist = ParagraphStyle(
+        name='SmallHist', 
+        parent=styles['Normal'], 
+        fontSize=6, 
+        leading=7,
+        alignment=TA_LEFT
+    )
+    
     story.append(Paragraph("Relatório de Conciliação de Retenções", styles["Title"]))
     
-    # Filtro formatado
     filtro_text = f"<b>UG:</b> {ug}  |  <b>CONTA:</b> {conta}"
     story.append(Paragraph(filtro_text, ParagraphStyle(name='C', alignment=1, spaceAfter=10)))
     
@@ -533,6 +533,7 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     t_res.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), # Vertical Center
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('FONTSIZE', (0,0), (-1,0), 9),
         ('FONTSIZE', (0,1), (-1,2), 11),
@@ -544,7 +545,6 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     story.append(t_res)
     story.append(Spacer(1, 3*mm))
 
-    # TOTAIS REORDENADOS
     data_totais = [
         ["SALDO ANTERIOR", "TOTAL RETIDO", "TOTAL PAGO", "SALDO A PAGAR"],
         [
@@ -556,10 +556,10 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     ]
     t_tot = Table(data_totais, colWidths=[47*mm, 47*mm, 47*mm, 48*mm])
     
-    # ESTILO TOTAIS COM CORES
     t_tot.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), # Vertical Center
         ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
         ('BACKGROUND', (0,0), (-1,-1), bg_blu),
         ('TEXTCOLOR', (1,1), (1,1), colors.darkgreen),
@@ -572,29 +572,32 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     headers = ['Empenho', 'Data', 'Vlr. Retido', 'Vlr. Pago', 'Diferença', 'Histórico', 'Status']
     data = [headers]
     
-    # ESTILO DO CABEÇALHO TABELA DADOS (Igual Excel)
     table_style = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey), 
         ('TEXTCOLOR', (0,0), (-1,0), colors.black),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('ALIGN', (2,0), (4,-1), 'RIGHT'),
-        ('ALIGN', (5,0), (5,-1), 'LEFT'),
+        ('ALIGN', (0,0), (-1,0), 'CENTER'), # Cabeçalho Centralizado
+        ('ALIGN', (0,1), (-1,-1), 'CENTER'), # Corpo Padrão Centralizado
+        ('ALIGN', (2,1), (4,-1), 'RIGHT'),   # Valores à direita
+        ('ALIGN', (5,1), (5,-1), 'LEFT'),    # Histórico à esquerda
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), # Vertical Center Global
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('FONTSIZE', (0,0), (-1,-1), 7),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]
     
     for i, (_, r) in enumerate(df_f.iterrows()):
         dif = r['Dif']
-        hist = str(r['Histórico'])
-        if len(hist) > 60: hist = hist[:57] + "..."
+        hist_str = str(r['Histórico'])
+        
+        # Criação do Parágrafo para Quebra de Linha Automática
+        hist_para = Paragraph(hist_str, style_hist)
         
         row_data = [
             str(r['Empenho']), str(r['Data Emp']),
             formatar_moeda_br(r['Vlr Retido']), formatar_moeda_br(r['Vlr Pago']),
             formatar_moeda_br(dif) if abs(dif) >= 0.01 else "-",
-            hist, str(r['Status'])
+            hist_para, # Objeto Paragraph ao invés de string simples
+            str(r['Status'])
         ]
         data.append(row_data)
         
@@ -638,7 +641,6 @@ if arquivo:
     df_dados = carregar_dados(arquivo)
     
     if not df_dados.empty:
-        # LISTAS FIXAS AGORA SÃO USADAS AQUI
         opcoes_ug = LISTA_UGS
         opcoes_conta = LISTA_CONTAS
         
@@ -661,7 +663,6 @@ if arquivo:
             
             if not df_res.empty:
                 
-                # CARDS
                 c_k1, c_k2, c_k3 = st.columns(3)
                 with c_k1:
                     st.markdown(f"""<div class="metric-card"><div class="metric-label">Retido e Não Pago</div><div class="metric-value" style="color: #ff4b4b;">{resumo['ret_pendente']}</div></div>""", unsafe_allow_html=True)
@@ -670,7 +671,6 @@ if arquivo:
                 with c_k3:
                     st.markdown(f"""<div class="metric-card metric-card-green"><div class="metric-label">Conciliados</div><div class="metric-value" style="color: #28a745;">{resumo['ok']}</div></div>""", unsafe_allow_html=True)
                 
-                # VALORES CARDS
                 v1, v2, v3 = st.columns(3)
                 with v1:
                     st.markdown(f"""<div class="metric-card"><div class="metric-label">Total Retido s/ Pgto</div><div class="metric-value" style="color: #ff4b4b;">{formatar_moeda_br(resumo['val_ret_pendente'])}</div></div>""", unsafe_allow_html=True)
@@ -679,7 +679,6 @@ if arquivo:
                 with v3:
                     st.markdown(f"""<div class="metric-card metric-card-green"><div class="metric-label">Total Retido e Pago</div><div class="metric-value" style="color: #28a745;">{formatar_moeda_br(resumo['val_ok'])}</div></div>""", unsafe_allow_html=True)
 
-                # TOTAIS GERAIS
                 f1, f2, f3, f4 = st.columns(4)
                 cor_saldo = "#ff4b4b" if resumo['saldo'] > 0.01 else ("#28a745" if resumo['saldo'] == 0 else "#007bff")
                 
@@ -694,7 +693,6 @@ if arquivo:
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # VISUALIZAÇÃO TABELA HTML
                 html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
                 html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
                 html += "<tr style='background-color: black; color: white !important;'>"
@@ -733,9 +731,8 @@ if arquivo:
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # Gera Nomes de Arquivo Padronizados
                 ug_limpa = limpar_nome_arquivo(str(ug_sel))
-                conta_limpa = limpar_nome_arquivo(str(conta_sel).split(' ')[0]) # Pega só o código da conta
+                conta_limpa = limpar_nome_arquivo(str(conta_sel).split(' ')[0])
                 nome_base = f"Conciliacao_Retencoes_UG_{ug_limpa}_Retencao_{conta_limpa}"
                 
                 excel_bytes = gerar_excel(df_res, resumo, saldo_ant_float, ug_sel, conta_sel)
