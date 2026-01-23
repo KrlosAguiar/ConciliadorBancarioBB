@@ -243,11 +243,17 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
         if col < df.shape[1]:
             df[col] = df[col].ffill()
 
-    # LÓGICA DE FILTRAGEM
+    # LÓGICA DE FILTRAGEM (CORRIGIDA PARA TRATAR "12.0" == "12")
     if cod_ug == '9999':
         mask_ug = pd.Series(True, index=df.index)
     else:
-        mask_ug = df[c_ug].astype(str) == str(cod_ug)
+        # Converte a coluna de UG para string e remove o ".0" caso exista
+        def normalizar_ug(val):
+            s = str(val).strip()
+            if s.endswith('.0'): return s[:-2]
+            return s
+        
+        mask_ug = df[c_ug].apply(normalizar_ug) == str(cod_ug)
         
     mask_conta = df[c_conta].astype(str).str.startswith(str(cod_conta))
     
@@ -452,7 +458,7 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         ws.write(5, 4, "TOTAL PAGO", fmt_tot_label)
         ws.write(5, 5, resumo['tot_pag'], fmt_tot_val_red)
         
-        # Lógica de cor do Saldo a Pagar (Positivo = Vermelho, Negativo = Verde, Zero = Preto)
+        # Cor condicional do Saldo a Pagar no Excel
         if resumo['saldo'] > 0.001:
             fmt_saldo_final = fmt_tot_val_red
         elif resumo['saldo'] < -0.001:
@@ -560,7 +566,6 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     ]
     t_tot = Table(data_totais, colWidths=[47*mm, 47*mm, 47*mm, 48*mm])
     
-    # Definição da cor do Saldo Final
     if resumo['saldo'] > 0.001:
         cor_saldo_final = colors.red
     elif resumo['saldo'] < -0.001:
@@ -623,11 +628,6 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     table_style.append(('FONTNAME', (0, last_row_idx), (-1, last_row_idx), 'Helvetica-Bold'))
     table_style.append(('SPAN', (0, last_row_idx), (1, last_row_idx)))
 
-    # AJUSTE NAS LARGURAS DAS COLUNAS
-    # Empenho: 20 -> 17 (-3)
-    # Data: 16 -> 14 (-2)
-    # Status: 19 -> 24 (+5)
-    # Total mantido (189mm)
     col_widths = [17*mm, 14*mm, 25*mm, 25*mm, 25*mm, 59*mm, 24*mm]
     
     t = Table(data, colWidths=col_widths, repeatRows=1)
@@ -707,6 +707,44 @@ if arquivo:
                     st.markdown(f"""<div class="metric-card metric-card-blue"><div class="metric-label">Total Pago (Período)</div><div class="metric-value" style="color: #004085;">{formatar_moeda_br(resumo['tot_pag'])}</div></div>""", unsafe_allow_html=True)
                 with f4: # 4. Saldo a Pagar
                     st.markdown(f"""<div class="metric-card metric-card-dark"><div class="metric-label">Saldo a Pagar</div><div class="metric-value" style="color: {cor_saldo};">{formatar_moeda_br(resumo['saldo'])}</div></div>""", unsafe_allow_html=True)
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
+                html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
+                html += "<tr style='background-color: black; color: white !important;'>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Empenho</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Data</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Retido</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Pago</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Diferença</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 34%;'>Histórico</th>"
+                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Status</th>"
+                html += "</tr>"
+                
+                for _, r in df_res.iterrows():
+                    dif = r['Dif']
+                    style_dif = "color: darkgreen; font-weight: bold;" if dif > 0.01 else ("color: red; font-weight: bold;" if dif < -0.01 else "color: black;")
+                    
+                    html += "<tr style='background-color: white;'>"
+                    html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Empenho']}</td>"
+                    html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Data Emp']}</td>"
+                    html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
+                    html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
+                    html += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
+                    html += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 11px; word-wrap: break-word; white-space: normal;'>{r['Histórico']}</td>"
+                    html += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px;'>{r['Status']}</td>"
+                    html += "</tr>"
+                
+                html += f"<tr style='font-weight: bold; background-color: lightgrey; color: black;'>"
+                html += "<td colspan='2' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL PERÍODO</td>"
+                html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['tot_ret'])}</td>"
+                html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['tot_pag'])}</td>"
+                html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['saldo'] - saldo_ant_float)}</td>"
+                html += "<td colspan='2' style='border: 1px solid #000;'></td></tr>"
+
+                html += "</table></div>"
+                st.markdown(html, unsafe_allow_html=True)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
