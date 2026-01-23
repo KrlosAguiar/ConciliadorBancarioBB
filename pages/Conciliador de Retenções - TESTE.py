@@ -247,8 +247,8 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     if cod_ug == '9999':
         mask_ug = pd.Series(True, index=df.index)
     else:
-        # Normalização para garantir que tipos como '12.0' e '12' coincidam
-        mask_ug = df[c_ug].astype(str).str.replace('.0', '', regex=False) == str(cod_ug)
+        # Normalização de UG para evitar erro com casas decimais (ex: 12.0)
+        mask_ug = df[c_ug].astype(str).str.split('.').str[0] == str(cod_ug)
         
     mask_conta = df[c_conta].astype(str).str.startswith(str(cod_conta))
     
@@ -349,10 +349,9 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
         resumo["pag_sobra"] += 1
         resumo["val_pag_sobra"] += r[c_valor]
         
-        # INCLUSÃO SOLICITADA: Para "Pago s/ Retenção", exibe a data do pagamento em "Data Emp"
         resultados.append({
             "Empenho": r[c_empenho], 
-            "Data Emp": formatar_data(r[c_data]),  
+            "Data Emp": "-",  # MANTIDO "-" PARA EXCEL CONFORME SOLICITADO
             "Vlr Retido": 0.0, 
             "Vlr Pago": r[c_valor],
             "Dif": 0.0 - r[c_valor], 
@@ -410,7 +409,6 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         fmt_tot_val = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'valign': 'vcenter'})
         
         fmt_card_label = wb.add_format({'bold': True, 'bg_color': '#f0f0f0', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
-        # NOVO: Formato centralizado para cabeçalhos de QTD e VALOR dos Cards
         fmt_card_header_center = wb.add_format({'bold': True, 'bg_color': '#f0f0f0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         
         fmt_card_qtd = wb.add_format({'bold': True, 'num_format': '0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
@@ -422,7 +420,6 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         # --- 1. QUADRO DE RESUMO (CARDS) ---
         ws.merge_range('A3:C3', 'RESUMO POR SITUAÇÃO (CARDS)', fmt_head)
         ws.write(3, 0, "CATEGORIA", fmt_card_label)
-        # Uso do novo formato centralizado
         ws.write(3, 1, "QTD", fmt_card_header_center)
         ws.write(3, 2, "VALOR", fmt_card_header_center)
         
@@ -591,14 +588,17 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
         dif = r['Dif']
         hist_str = str(r['Histórico'])
         
-        # Criação do Parágrafo para Quebra de Linha Automática
+        # Estilo para Histórico
         hist_para = Paragraph(hist_str, style_hist)
         
+        # INCLUSÃO SOLICITADA PARA O PDF: Se for Pago s/ Retenção, exibe Data Pag em Data Emp
+        data_emp_pdf = str(r['Data Pag']) if r['Status'] == "Pago s/ Retenção" else str(r['Data Emp'])
+        
         row_data = [
-            str(r['Empenho']), str(r['Data Emp']),
+            str(r['Empenho']), data_emp_pdf,
             formatar_moeda_br(r['Vlr Retido']), formatar_moeda_br(r['Vlr Pago']),
             formatar_moeda_br(dif) if abs(dif) >= 0.01 else "-",
-            hist_para, # Objeto Paragraph ao invés de string simples
+            hist_para, 
             str(r['Status'])
         ]
         data.append(row_data)
@@ -711,9 +711,12 @@ if arquivo:
                     dif = r['Dif']
                     style_dif = "color: darkgreen; font-weight: bold;" if dif > 0.01 else ("color: red; font-weight: bold;" if dif < -0.01 else "color: black;")
                     
+                    # INCLUSÃO SOLICITADA PARA A TELA: Se for Pago s/ Retenção, exibe Data Pag em Data Emp
+                    data_exibicao = r['Data Pag'] if r['Status'] == "Pago s/ Retenção" else r['Data Emp']
+                    
                     html += "<tr style='background-color: white;'>"
                     html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Empenho']}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Data Emp']}</td>"
+                    html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{data_exibicao}</td>"
                     html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
                     html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
                     html += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
