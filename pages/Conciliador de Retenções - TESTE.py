@@ -632,7 +632,7 @@ st.markdown("---")
 c_top_1, c_top_2 = st.columns(2)
 
 with c_top_1: 
-    st.markdown('<p class="big-label">1. Upload Razão Contábil</p>', unsafe_allow_html=True)
+    st.markdown('<p class="big-label">1. Selecione o Razão da Contabilidade (.xlsx)</p>', unsafe_allow_html=True)
     arquivo = st.file_uploader("", type=["xlsx", "csv"], key="up_razao", label_visibility="collapsed")
 
 with c_top_2:
