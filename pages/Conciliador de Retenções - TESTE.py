@@ -118,7 +118,8 @@ def carregar_dados(file):
         df[5] = df[5].astype(str).str.strip().str.upper()
         df = df[df[5].isin(['C', 'D'])]
     
-    df = df.ffill(axis=0)
+    # REMOVIDO O FFILL GLOBAL PARA EVITAR POLUIÇÃO DE HISTÓRICO
+    # df = df.ffill(axis=0) 
     
     col_valor_idx = 8 
     def converter_valor(val):
@@ -140,10 +141,12 @@ def carregar_dados(file):
 
 def identificar_colunas_dinamicas(df):
     mapa = {'empenho': 14, 'tipo': 19, 'hist': 21}
+    # Verifica onde está o histórico baseado na coluna AB (27)
     coluna_ab_tem_dados = df[27].head(50).notna().sum() > 0
     if coluna_ab_tem_dados: mapa['hist'] = 27 
     else: mapa['hist'] = 21
 
+    # Varredura para encontrar colunas chave
     for idx, row in df.head(50).iterrows():
         for c in range(12, 16): 
             val = str(row[c]).strip()
@@ -166,6 +169,14 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     c_ug, c_data, c_dc, c_conta, c_valor = 0, 4, 5, 6, 8
     c_empenho, c_tipo, c_hist = cols_map['empenho'], cols_map['tipo'], cols_map['hist']
 
+    # --- APLICAÇÃO DO FFILL SELETIVO (Apenas Estrutural) ---
+    # Isso garante que UG, Data, Conta e Empenho sejam repetidos para as linhas filhas,
+    # MAS NÃO o Histórico (c_hist), evitando a "adivinhação".
+    colunas_para_preencher = [c_ug, c_data, c_conta, c_empenho, c_tipo]
+    for col in colunas_para_preencher:
+        if col < df.shape[1]:
+            df[col] = df[col].ffill()
+
     mask_ug = df[c_ug].astype(str) == str(ug_sel)
     mask_conta = df[c_conta].astype(str).str.startswith(str(cod_conta))
     df_base = df[mask_ug & mask_conta].copy()
@@ -186,6 +197,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     mask_estorno_pag = ((df_base[c_dc] == 'C') & (df_base['Tipo_Norm'].str.contains("Estorno", case=False) | df_base[c_hist].astype(str).str.contains("Estorno", case=False)))
     df_est_pag = df_base[mask_estorno_pag].copy()
 
+    # Limpeza de estornos
     idx_ret_cancel = set()
     for _, r_est in df_est_ret.iterrows():
         v, e = r_est[c_valor], r_est[c_empenho]
@@ -214,6 +226,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
         val = r[c_valor]
         dt_retencao = r['Data_Dt']
         
+        # Match: Valor Igual E Data Compatível (Sem trava de empenho)
         condicao_valor = (df_pag_limpa[c_valor] == val)
         condicao_usado = (~df_pag_limpa.index.isin(idx_pag_usado))
         
@@ -224,12 +237,15 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
             cand = df_pag_limpa[condicao_valor & condicao_usado]
         
         val_pago, dt_pag, match, sort = 0.0, "-", False, 0
-        hist_final = r[c_hist] # Por padrão, usa o histórico da Retenção
+        
+        # Lógica de Histórico:
+        # Pega o da Retenção (r[c_hist]) -> Se estiver vazio no Excel, virá NaN/NaT/None (não preenchido pelo ffill)
+        hist_final = r[c_hist] 
         
         if not cand.empty:
             r_pag = cand.iloc[0]
             val_pago, dt_pag = r_pag[c_valor], r_pag[c_data]
-            hist_final = r_pag[c_hist] # Se conciliou, atualiza para o histórico do Pagamento
+            hist_final = r_pag[c_hist] # Se conciliou, pega o histórico rico do pagamento
             idx_pag_usado.add(r_pag.name)
             match, sort = True, 2
             resumo["ok"] += 1
@@ -272,9 +288,6 @@ def gerar_excel(df, resumo, saldo_anterior):
     out = io.BytesIO()
     df_exp = df.drop(columns=['_sort', 'Status'])
     
-    # Mapeamento de Colunas (0-based)
-    # 0: Empenho, 1: Data Emp, 2: Vlr Ret, 3: Vlr Pag, 4: Dif, 5: Data Pag, 6: Histórico
-    
     start_row_table = 9
     
     with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
@@ -295,7 +308,7 @@ def gerar_excel(df, resumo, saldo_anterior):
             'align': 'center', 'valign': 'vcenter'
         })
         
-        # Valores Monetários Tabela (Centralizado conforme pedido)
+        # Valores Monetários Tabela (Centralizado)
         fmt_money_center = wb.add_format({
             'num_format': '#,##0.00', 'align': 'center', 'valign': 'vcenter'
         })
@@ -316,7 +329,7 @@ def gerar_excel(df, resumo, saldo_anterior):
             'font_size': 10, 'align': 'left'
         })
 
-        # --- TOTAIS E CARDS (FORMATOS ESPECÍFICOS) ---
+        # --- TOTAIS E CARDS ---
         fmt_tot_label = wb.add_format({'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
         fmt_tot_val_green = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'font_color': '#006400', 'valign': 'vcenter'})
         fmt_tot_val_red = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'font_color': '#FF0000', 'valign': 'vcenter'})
@@ -346,7 +359,6 @@ def gerar_excel(df, resumo, saldo_anterior):
         ws.write(4, 1, resumo['ok'], fmt_card_qtd)
         ws.write(4, 2, resumo['val_ok'], fmt_card_money)
 
-        # Cálculo da largura ideal para Coluna A
         max_len_A = len("CATEGORIA")
         for n in cat_names:
             if len(n) > max_len_A: max_len_A = len(n)
@@ -371,7 +383,7 @@ def gerar_excel(df, resumo, saldo_anterior):
         for i, col in enumerate(df_exp.columns):
             ws.write(start_row_table, i, col, fmt_head)
             
-            # Autoajuste de largura
+            # Autoajuste
             if i == 0: 
                 current_max = max_len_A 
             else:
@@ -384,15 +396,15 @@ def gerar_excel(df, resumo, saldo_anterior):
             if current_max > 60: current_max = 60
             if current_max < 12: current_max = 12
             
-            # Aplicação de formatos (ÍNDICES CORRIGIDOS)
-            if i == 6: # Histórico (Coluna G)
+            # Aplicação de formatos (Histórico = Coluna G = índice 6)
+            if i == 6: 
                 ws.set_column(i, i, 50, fmt_hist) 
-            elif i in [2, 3, 4]: # Vlr Retido, Pago, Dif
+            elif i in [2, 3, 4]: 
                 ws.set_column(i, i, 18, fmt_money_center)
-            else: # Colunas gerais (Empenho 0, Data 1, Data Pag 5)
+            else: 
                 ws.set_column(i, i, current_max + 2, fmt_center)
 
-        # --- 4. FORMATAÇÃO CONDICIONAL (DIFERENÇA) ---
+        # --- 4. FORMATAÇÃO CONDICIONAL ---
         first_row = start_row_table + 1
         last_row = start_row_table + len(df_exp)
         
