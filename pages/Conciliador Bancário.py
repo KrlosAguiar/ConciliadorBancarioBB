@@ -168,7 +168,14 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             if n_val_8 == 0 and n_val_9 > 0: col_valor = 9
         except: pass
         
-        try: df = df.iloc[:, [1, 4, 5, col_valor, 25, 26, 27]].copy()
+        # --- AJUSTE DE LAYOUT (CORREÇÃO PARA ARQUIVO NOVO) ---
+        # Arquivo Antigo (~32 colunas): Info em 25, 26, 27
+        # Arquivo Novo (~26 colunas): Info em 19, 20, 21 (Deslocamento de -6)
+        c_z, c_aa, c_ab = 25, 26, 27
+        if df.shape[1] < 30: 
+            c_z, c_aa, c_ab = 19, 20, 21
+
+        try: df = df.iloc[:, [1, 4, 5, col_valor, c_z, c_aa, c_ab]].copy()
         except: df = df.iloc[:, [1, 4, 5, col_valor, -4, -2, -1]].copy()
         
         df.columns = ['Lancamento', 'Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
@@ -510,7 +517,7 @@ def gerar_excel_final(df_f):
                 worksheet.write(excel_row, 6, '', fmt_detalhe)
             else:
                 if abs(row['Diferença']) >= 0.01:
-                     worksheet.write(excel_row, 6, row['Diferença'], fmt_red_bold)
+                      worksheet.write(excel_row, 6, row['Diferença'], fmt_red_bold)
 
         df_mestre = df_export[df_export['Tipo'] == 'Mestre']
         last_row = len(df_export) + 1
