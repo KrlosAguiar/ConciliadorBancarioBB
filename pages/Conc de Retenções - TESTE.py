@@ -78,7 +78,7 @@ st.markdown("""
     .metric-value { font-size: 22px; font-weight: bold; }
     .metric-label { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    /* AUMENTO DA FONTE DA TABELA DE INPUT (20px agora) */
+    /* AUMENTO DA FONTE DA TABELA DE INPUT (20px) */
     [data-testid="stDataEditor"] table {
         border-collapse: collapse !important;
         font-size: 20px !important; 
@@ -98,7 +98,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. LISTAS FIXAS DE OPÇÕES
+# 1. LISTAS FIXAS DE OPÇÕES E CONFIGURAÇÕES
 # ==============================================================================
 
 LISTA_UGS = [
@@ -147,6 +147,13 @@ LISTA_CONTAS = [
     "9210 - Emp. Consignado HBI - Scd"
 ]
 
+# Mapa de meses para verificação textual (Normalizados sem acento)
+MAPA_MESES = {
+    1: "JANEIRO", 2: "FEVEREIRO", 3: "MARCO", 4: "ABRIL",
+    5: "MAIO", 6: "JUNHO", 7: "JULHO", 8: "AGOSTO",
+    9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO"
+}
+
 # ==============================================================================
 # 2. FUNÇÕES DE PROCESSAMENTO
 # ==============================================================================
@@ -180,6 +187,45 @@ def limpar_nome_arquivo(texto):
     texto_sem_acento = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
     texto_limpo = re.sub(r'[\\/*?:"<>|]', '_', texto_sem_acento)
     return texto_limpo.strip()
+
+def normalizar_texto(texto):
+    """Remove acentos e coloca em caixa alta para comparação"""
+    if not isinstance(texto, str): return ""
+    nfkd_form = unicodedata.normalize('NFKD', texto)
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)]).upper()
+
+def verificar_compatibilidade_mes(hist_pagamento, data_retencao):
+    """
+    Retorna True se:
+    1. O histórico NÃO menciona nenhum mês.
+    2. O histórico menciona um mês e ele É IGUAL ao mês da data de retenção.
+    Retorna False se:
+    1. O histórico menciona um mês diferente do mês da retenção.
+    """
+    if pd.isna(data_retencao):
+        return True # Se não tem data de retenção para comparar, aceita
+        
+    hist_norm = normalizar_texto(hist_pagamento)
+    mes_retencao_num = data_retencao.month
+    mes_retencao_nome = MAPA_MESES[mes_retencao_num] # Já está sem acento (ex: MARCO)
+    
+    # Verifica quais meses aparecem no texto do histórico
+    meses_encontrados = []
+    for mes_num, mes_nome in MAPA_MESES.items():
+        # Usa boundary de palavra para evitar falsos positivos (opcional, mas mais seguro se regex)
+        # Aqui faremos contains simples primeiro, mas garantindo que MARCO não pegue em MARCOS (nome)
+        # Para simplificar e ser robusto:
+        if mes_nome in hist_norm:
+            meses_encontrados.append(mes_nome)
+            
+    if not meses_encontrados:
+        return True # Nenhum mês citado, segue o baile
+        
+    # Se encontrou meses, o mês da retenção DEVE estar entre eles
+    if mes_retencao_nome in meses_encontrados:
+        return True
+    
+    return False # Citou meses (ex: NOVEMBRO), mas não citou o mês da retenção (ex: DEZEMBRO)
 
 @st.cache_data(show_spinner=False)
 def carregar_dados(file):
@@ -333,25 +379,42 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
         
         val_pago, dt_pag_str, match, sort = 0.0, "-", False, 0
         dt_pag_sort = pd.NaT 
-        
         hist_final = sanitizar_historico(r[c_hist])
         
+        # --- LÓGICA DE SELEÇÃO DO MELHOR CANDIDATO COM FILTRO DE MÊS ---
+        r_pag = None
+        match_encontrado = False
+        
         if not cand.empty:
-            r_pag = cand.iloc[0]
-            val_pago = r_pag[c_valor]
-            dt_real_pag = r_pag[c_data]
-            dt_pag_sort = r['Data_Dt']
-            if pd.notna(dt_real_pag):
-                dt_pag_str = formatar_data(dt_real_pag)
+            # Itera sobre os candidatos para encontrar um que respeite a regra do mês
+            for idx_c, row_c in cand.iterrows():
+                hist_candidato = sanitizar_historico(row_c[c_hist])
+                
+                # Verifica compatibilidade de Mês (NOVO FILTRO)
+                if verificar_compatibilidade_mes(hist_candidato, dt_retencao):
+                    r_pag = row_c
+                    match_encontrado = True
+                    break # Encontrou o primeiro válido, para
             
-            hist_pag = sanitizar_historico(r_pag[c_hist])
-            if hist_pag: 
-                hist_final = hist_pag
-            
-            idx_pag_usado.add(r_pag.name)
-            match, sort = True, 2
-            resumo["ok"] += 1
-            resumo["val_ok"] += val_pago
+            if match_encontrado:
+                val_pago = r_pag[c_valor]
+                dt_real_pag = r_pag[c_data]
+                dt_pag_sort = r['Data_Dt']
+                if pd.notna(dt_real_pag):
+                    dt_pag_str = formatar_data(dt_real_pag)
+                
+                hist_pag = sanitizar_historico(r_pag[c_hist])
+                if hist_pag: 
+                    hist_final = hist_pag
+                
+                idx_pag_usado.add(r_pag.name)
+                match, sort = True, 2
+                resumo["ok"] += 1
+                resumo["val_ok"] += val_pago
+            else:
+                # Tinha candidato pelo valor/data, mas foi barrado pelo filtro de mês
+                resumo["ret_pendente"] += 1
+                resumo["val_ret_pendente"] += val
         else:
             resumo["ret_pendente"] += 1
             resumo["val_ret_pendente"] += val
