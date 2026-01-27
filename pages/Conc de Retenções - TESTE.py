@@ -77,6 +77,22 @@ st.markdown("""
     
     .metric-value { font-size: 22px; font-weight: bold; }
     .metric-label { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
+    
+    /* Tentativa de estilização do st.data_editor para parecer com a tabela HTML (Cabeçalho Preto) */
+    [data-testid="stDataEditor"] {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        overflow: hidden;
+    }
+    [data-testid="stDataEditor"] div[role="columnheader"] {
+        background-color: black !important;
+        color: white !important;
+        font-weight: bold;
+    }
+    [data-testid="stDataEditor"] div[role="gridcell"] {
+        background-color: white !important;
+        color: black !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -228,12 +244,11 @@ def sanitizar_historico(val):
     return str(val).strip()
 
 def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
-    # INICIALIZA O RESUMO ZERADO PARA EVITAR KEYERROR
     resumo = {
         "ret_pendente": 0, "val_ret_pendente": 0.0,
         "pag_sobra": 0,    "val_pag_sobra": 0.0,
         "ok": 0,           "val_ok": 0.0,
-        "tot_ret": 0.0, "tot_pag": 0.0, "saldo": saldo_anterior_val # Já inicia com saldo anterior
+        "tot_ret": 0.0, "tot_pag": 0.0, "saldo": saldo_anterior_val
     }
 
     cod_ug = ug_sel.split(' - ')[0].strip()
@@ -349,7 +364,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
             "Dif": val - val_pago, 
             "Data Pag": dt_pag_str, 
             "Histórico": hist_final, 
-            "_sort": sort,
+            "_sort": sort, 
             "_dt_sort": r['Data_Dt'], 
             "Status": "Conciliado" if match else "Retido s/ Pagto"
         })
@@ -434,7 +449,11 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         ws.write(4, 5, resumo['tot_ret'], fmt_tot_val_green)
         ws.write(5, 4, "TOTAL PAGO", fmt_tot_label)
         ws.write(5, 5, resumo['tot_pag'], fmt_tot_val_red)
-        fmt_saldo_final = fmt_tot_val_green if resumo['saldo'] >= 0 else fmt_tot_val_red
+        
+        # LÓGICA DE CORES INVERTIDA (INDIVIDUAL)
+        # Positivo = Vermelho, Negativo = Verde
+        fmt_saldo_final = fmt_tot_val_red if resumo['saldo'] > 0.01 else (fmt_tot_val_green if resumo['saldo'] < -0.01 else fmt_tot_val)
+        
         ws.write(6, 4, "SALDO A PAGAR", fmt_tot_label)
         ws.write(6, 5, resumo['saldo'], fmt_saldo_final)
 
@@ -446,8 +465,13 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         
         first_row = start_row_table + 1
         last_row = start_row_table + len(df_exp)
-        ws.conditional_format(first_row, 4, last_row, 4, {'type': 'cell', 'criteria': '>', 'value': 0.001, 'format': fmt_green})
-        ws.conditional_format(first_row, 4, last_row, 4, {'type': 'cell', 'criteria': '<', 'value': -0.001, 'format': fmt_red})
+        # Lógica da Tabela de Itens (mantém padrão Diferença: Positivo=Verde, Negativo=Vermelho? 
+        # O prompt pediu para inverter "SALDO A PAGAR". Vou manter a lógica da coluna Diferença original se não foi pedido,
+        # mas geralmente Saldo a Pagar segue a Diferença. Vou inverter Diferença também para consistência.
+        # Originalmente: > 0 (Verde), < 0 (Vermelho).
+        # Nova Lógica: > 0 (Vermelho - deve pagar), < 0 (Verde - sobra).
+        ws.conditional_format(first_row, 4, last_row, 4, {'type': 'cell', 'criteria': '>', 'value': 0.001, 'format': fmt_red})
+        ws.conditional_format(first_row, 4, last_row, 4, {'type': 'cell', 'criteria': '<', 'value': -0.001, 'format': fmt_green})
     return out.getvalue()
 
 def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
@@ -485,11 +509,15 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
         [formatar_moeda_br(saldo_anterior), formatar_moeda_br(resumo['tot_ret']), formatar_moeda_br(resumo['tot_pag']), formatar_moeda_br(resumo['saldo'])]
     ]
     t_tot = Table(data_totais, colWidths=[47*mm, 47*mm, 47*mm, 48*mm])
+    
+    # LÓGICA DE CORES INVERTIDA (PDF INDIVIDUAL)
+    cor_saldo_final = colors.red if resumo['saldo'] > 0.01 else (colors.darkgreen if resumo['saldo'] < -0.01 else colors.black)
+
     t_tot.setStyle(TableStyle([
         ('GRID', (0,0), (-1,-1), 0.5, colors.black), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), ('BACKGROUND', (0,0), (-1,-1), bg_blu),
         ('TEXTCOLOR', (1,1), (1,1), colors.darkgreen), ('TEXTCOLOR', (2,1), (2,1), colors.red),
-        ('TEXTCOLOR', (3,1), (3,1), colors.red if resumo['saldo'] > 0.01 else (colors.blue if resumo['saldo'] < -0.01 else colors.green)),
+        ('TEXTCOLOR', (3,1), (3,1), cor_saldo_final),
     ]))
     story.append(t_tot)
     story.append(Spacer(1, 8*mm))
@@ -510,7 +538,8 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
         ]
         data.append(row_data)
         if abs(dif) >= 0.01:
-            cor_fonte = colors.darkgreen if dif > 0 else colors.red
+            # INVERTIDO: Positivo = Vermelho, Negativo = Verde
+            cor_fonte = colors.red if dif > 0 else colors.darkgreen
             table_style.append(('TEXTCOLOR', (4, i+1), (4, i+1), cor_fonte))
             table_style.append(('FONTNAME', (4, i+1), (4, i+1), 'Helvetica-Bold'))
     data.append(['TOTAIS PERÍODO', '', formatar_moeda_br(resumo['tot_ret']), formatar_moeda_br(resumo['tot_pag']), formatar_moeda_br(resumo['saldo'] - saldo_anterior), '', ''])
@@ -528,31 +557,44 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
 def gerar_excel_geral(df_resumo, ug):
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
-        df_resumo.to_excel(writer, sheet_name='Geral', index=False)
+        df_resumo.to_excel(writer, sheet_name='Geral', index=False, startrow=2)
         wb = writer.book
         ws = writer.sheets['Geral']
         
+        fmt_title = wb.add_format({'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 14})
         fmt_head = wb.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         fmt_money = wb.add_format({'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'valign': 'vcenter'})
         fmt_text = wb.add_format({'border': 1, 'align': 'left', 'valign': 'vcenter'})
         fmt_green = wb.add_format({'font_color': '#006400', 'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'valign': 'vcenter'})
         fmt_red = wb.add_format({'font_color': '#FF0000', 'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'valign': 'vcenter'})
         
-        ws.set_column(0, 0, 40, fmt_text) # Conta
-        ws.set_column(1, 4, 18, fmt_money) # Valores
+        ws.merge_range('A1:E1', f"Relatório Geral de Retenções | UG: {ug}", fmt_title)
         
-        for i, col in enumerate(df_resumo.columns):
-            ws.write(0, i, col, fmt_head)
+        cols = df_resumo.columns
+        for i, col in enumerate(cols):
+            ws.write(2, i, col, fmt_head)
             
         for row_num, row_data in enumerate(df_resumo.values):
+            excel_row = row_num + 3
             for col_num, cell_data in enumerate(row_data):
                 if col_num == 0:
-                    ws.write(row_num + 1, col_num, cell_data, fmt_text)
+                    ws.write(excel_row, col_num, cell_data, fmt_text)
                 else:
                     style = fmt_money
-                    if col_num == 4: # Saldo a Pagar
-                        style = fmt_green if cell_data >= 0 else fmt_red
-                    ws.write(row_num + 1, col_num, cell_data, style)
+                    if col_num == 4: 
+                        # LÓGICA DE CORES INVERTIDA (EXCEL GERAL)
+                        if cell_data > 0.01: style = fmt_red
+                        elif cell_data < -0.01: style = fmt_green
+                        else: style = fmt_money
+                    ws.write(excel_row, col_num, cell_data, style)
+
+        for i, col in enumerate(df_resumo.columns):
+            max_len = len(str(col))
+            for val in df_resumo[col]:
+                val_len = len(str(val))
+                if val_len > max_len: max_len = val_len
+            ws.set_column(i, i, max_len + 2)
+
     return out.getvalue()
 
 def gerar_pdf_geral(df_resumo, ug):
@@ -561,7 +603,7 @@ def gerar_pdf_geral(df_resumo, ug):
     story = []
     styles = getSampleStyleSheet()
     
-    story.append(Paragraph(f"Relatório Geral de Retenções - {ug}", styles["Title"]))
+    story.append(Paragraph(f"Relatório Geral de Retenções | UG: {ug}", styles["Title"]))
     story.append(Spacer(1, 5*mm))
     
     data = [df_resumo.columns.tolist()]
@@ -580,16 +622,20 @@ def gerar_pdf_geral(df_resumo, ug):
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('ALIGN', (0,1), (0,-1), 'LEFT'), # Conta align left
-        ('ALIGN', (1,1), (-1,-1), 'RIGHT'), # Values align right
+        ('ALIGN', (0,1), (0,-1), 'LEFT'),
+        ('ALIGN', (1,1), (-1,-1), 'RIGHT'),
         ('FONTSIZE', (0,0), (-1,-1), 8),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]
     
-    # Formatação condicional para Saldo Final
+    # LÓGICA DE CORES INVERTIDA (PDF GERAL)
     for i in range(1, len(data)):
         val_saldo = df_resumo.iloc[i-1]['Saldo A Pagar']
-        color = colors.darkgreen if val_saldo >= 0 else colors.red
+        # Positivo = Vermelho, Negativo = Verde
+        if val_saldo > 0.01: color = colors.red
+        elif val_saldo < -0.01: color = colors.darkgreen
+        else: color = colors.black
+            
         table_style.append(('TEXTCOLOR', (4, i), (4, i), color))
         table_style.append(('FONTNAME', (4, i), (4, i), 'Helvetica-Bold'))
 
@@ -602,7 +648,6 @@ def gerar_pdf_geral(df_resumo, ug):
 def gerar_tabela_html_geral(df_resultado):
     html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
     html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
-    # Header
     html += "<tr style='background-color: black; color: white !important;'>"
     html += "<th style='padding: 8px; border: 1px solid #000; text-align: left; width: 40%;'>Conta de Retenção</th>"
     html += "<th style='padding: 8px; border: 1px solid #000; text-align: right; width: 15%;'>Saldo Anterior</th>"
@@ -613,7 +658,8 @@ def gerar_tabela_html_geral(df_resultado):
     
     for _, r in df_resultado.iterrows():
         saldo = r['Saldo A Pagar']
-        style_saldo = "color: darkgreen; font-weight: bold;" if saldo >= 0.01 else ("color: red; font-weight: bold;" if saldo <= -0.01 else "color: black;")
+        # LÓGICA DE CORES INVERTIDA (TELA GERAL)
+        style_saldo = "color: red; font-weight: bold;" if saldo > 0.01 else ("color: darkgreen; font-weight: bold;" if saldo < -0.01 else "color: black;")
         
         html += "<tr style='background-color: white;'>"
         html += f"<td style='border: 1px solid #000; text-align: left; color: black;'>{r['Conta De Retenção']}</td>"
@@ -638,123 +684,125 @@ with c_top_1:
     st.markdown('<p class="big-label">1. Selecione o Razão da Contabilidade (.xlsx)</p>', unsafe_allow_html=True)
     arquivo = st.file_uploader("", type=["xlsx", "csv"], key="up_razao", label_visibility="collapsed")
 
-# VARIÁVEIS DE ESTADO
-if 'modo_conciliacao' not in st.session_state: st.session_state['modo_conciliacao'] = 'individual'
-
-# DataFrame persistente para saldos gerais
-if 'df_saldos_geral' not in st.session_state:
-    st.session_state['df_saldos_geral'] = pd.DataFrame({
-        "CONTA DE RETENÇÃO": LISTA_CONTAS,
-        "SALDO ANTERIOR": 0.0
-    })
-
 with c_top_2:
     st.markdown('<p class="big-label">2. Filtros e Saldos</p>', unsafe_allow_html=True)
     
-    # LAYOUT ORIGINAL PRESERVADO: UG + CONTA + SALDO
-    r1_col1, r1_col2 = st.columns([1, 3]) 
-    with r1_col1: 
-        ug_sel = st.selectbox("UG", LISTA_UGS)
-    with r1_col2: 
-        conta_sel = st.selectbox("Conta de Retenção", LISTA_CONTAS)
-    
-    val_anterior_str = st.text_input("Saldo Anterior", value="0,00", help="Digite o saldo acumulado de períodos anteriores.")
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # BOTÕES EMPILHADOS
-    if st.button("PROCESSAR CONCILIAÇÃO INDIVIDUAL", use_container_width=True):
-        st.session_state['modo_conciliacao'] = 'individual'
-        
-    if st.button("PROCESSAR CONCILIAÇÃO GERAL", use_container_width=True):
-        st.session_state['modo_conciliacao'] = 'geral'
+    if 'modo_conciliacao' not in st.session_state: st.session_state['modo_conciliacao'] = 'individual'
+
+    if 'df_saldos_geral' not in st.session_state:
+        st.session_state['df_saldos_geral'] = pd.DataFrame({
+            "CONTA DE RETENÇÃO": LISTA_CONTAS,
+            "SALDO ANTERIOR": 0.0
+        })
 
 if arquivo:
     df_dados = carregar_dados(arquivo)
     
     if not df_dados.empty:
-        
-        # --- MODO INDIVIDUAL (Original) ---
+        with placeholder_filtros.container():
+            r1_col1, r1_col2 = st.columns([1, 3]) 
+            with r1_col1: 
+                ug_sel = st.selectbox("UG", LISTA_UGS)
+            with r1_col2: 
+                conta_sel = st.selectbox("Conta de Retenção", LISTA_CONTAS)
+            
+            val_anterior_str = st.text_input("Saldo Anterior", value="0,00", help="Digite o saldo acumulado de períodos anteriores.")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            if st.button("PROCESSAR CONCILIAÇÃO INDIVIDUAL", use_container_width=True):
+                st.session_state['modo_conciliacao'] = 'individual'
+                
+            if st.button("PROCESSAR CONCILIAÇÃO GERAL", use_container_width=True):
+                st.session_state['modo_conciliacao'] = 'geral'
+                st.session_state['df_saldos_geral'] = pd.DataFrame({
+                    "CONTA DE RETENÇÃO": LISTA_CONTAS,
+                    "SALDO ANTERIOR": 0.0
+                })
+
+        st.markdown("---")
+
         if st.session_state['modo_conciliacao'] == 'individual':
-            # Só executa se o usuário clicar no botão (que define o state) 
-            # Como o botão já foi clicado para setar o state, processamos com os dados atuais da tela
-            saldo_ant_float = converter_moeda_input(val_anterior_str)
-            
-            with st.spinner("Processando Conciliação Individual..."):
-                df_res, resumo = processar_conciliacao(df_dados, ug_sel, conta_sel, saldo_ant_float)
-            
-            if not df_res.empty:
-                c_k1, c_k2, c_k3 = st.columns(3)
-                with c_k1: st.markdown(f"""<div class="metric-card"><div class="metric-label">Retido s/ Pgto</div><div class="metric-value" style="color: #ff4b4b;">{resumo['ret_pendente']}</div></div>""", unsafe_allow_html=True)
-                with c_k2: st.markdown(f"""<div class="metric-card metric-card-orange"><div class="metric-label">Pago s/ Retenção</div><div class="metric-value" style="color: #ffc107;">{resumo['pag_sobra']}</div></div>""", unsafe_allow_html=True)
-                with c_k3: st.markdown(f"""<div class="metric-card metric-card-green"><div class="metric-label">Conciliados</div><div class="metric-value" style="color: #28a745;">{resumo['ok']}</div></div>""", unsafe_allow_html=True)
-                
-                v1, v2, v3 = st.columns(3)
-                with v1: st.markdown(f"""<div class="metric-card"><div class="metric-label">Total Retido s/ Pgto</div><div class="metric-value" style="color: #ff4b4b;">{formatar_moeda_br(resumo['val_ret_pendente'])}</div></div>""", unsafe_allow_html=True)
-                with v2: st.markdown(f"""<div class="metric-card metric-card-orange"><div class="metric-label">Total Pago s/ Retenção</div><div class="metric-value" style="color: #ffc107;">{formatar_moeda_br(resumo['val_pag_sobra'])}</div></div>""", unsafe_allow_html=True)
-                with v3: st.markdown(f"""<div class="metric-card metric-card-green"><div class="metric-label">Total Retido e Pago</div><div class="metric-value" style="color: #28a745;">{formatar_moeda_br(resumo['val_ok'])}</div></div>""", unsafe_allow_html=True)
+            if 'modo_conciliacao' in st.session_state and st.session_state['modo_conciliacao'] == 'individual':
+                 saldo_ant_float = converter_moeda_input(val_anterior_str)
+                 
+                 with st.spinner("Processando..."):
+                    df_res, resumo = processar_conciliacao(df_dados, ug_sel, conta_sel, saldo_ant_float)
+                 
+                 if not df_res.empty:
+                    c_k1, c_k2, c_k3 = st.columns(3)
+                    with c_k1: st.markdown(f"""<div class="metric-card"><div class="metric-label">Retido s/ Pgto</div><div class="metric-value" style="color: #ff4b4b;">{resumo['ret_pendente']}</div></div>""", unsafe_allow_html=True)
+                    with c_k2: st.markdown(f"""<div class="metric-card metric-card-orange"><div class="metric-label">Pago s/ Retenção</div><div class="metric-value" style="color: #ffc107;">{resumo['pag_sobra']}</div></div>""", unsafe_allow_html=True)
+                    with c_k3: st.markdown(f"""<div class="metric-card metric-card-green"><div class="metric-label">Conciliados</div><div class="metric-value" style="color: #28a745;">{resumo['ok']}</div></div>""", unsafe_allow_html=True)
+                    
+                    v1, v2, v3 = st.columns(3)
+                    with v1: st.markdown(f"""<div class="metric-card"><div class="metric-label">Total Retido s/ Pgto</div><div class="metric-value" style="color: #ff4b4b;">{formatar_moeda_br(resumo['val_ret_pendente'])}</div></div>""", unsafe_allow_html=True)
+                    with v2: st.markdown(f"""<div class="metric-card metric-card-orange"><div class="metric-label">Total Pago s/ Retenção</div><div class="metric-value" style="color: #ffc107;">{formatar_moeda_br(resumo['val_pag_sobra'])}</div></div>""", unsafe_allow_html=True)
+                    with v3: st.markdown(f"""<div class="metric-card metric-card-green"><div class="metric-label">Total Retido e Pago</div><div class="metric-value" style="color: #28a745;">{formatar_moeda_br(resumo['val_ok'])}</div></div>""", unsafe_allow_html=True)
 
-                f1, f2, f3, f4 = st.columns(4)
-                cor_saldo = "#ff4b4b" if resumo['saldo'] > 0.01 else ("#28a745" if resumo['saldo'] == 0 else "#007bff")
-                with f1: st.markdown(f"""<div class="metric-card metric-card-dark"><div class="metric-label">Saldo Anterior</div><div class="metric-value" style="color: #343a40;">{formatar_moeda_br(saldo_ant_float)}</div></div>""", unsafe_allow_html=True)
-                with f2: st.markdown(f"""<div class="metric-card metric-card-blue"><div class="metric-label">Total Retido (Período)</div><div class="metric-value" style="color: #004085;">{formatar_moeda_br(resumo['tot_ret'])}</div></div>""", unsafe_allow_html=True)
-                with f3: st.markdown(f"""<div class="metric-card metric-card-blue"><div class="metric-label">Total Pago (Período)</div><div class="metric-value" style="color: #004085;">{formatar_moeda_br(resumo['tot_pag'])}</div></div>""", unsafe_allow_html=True)
-                with f4: st.markdown(f"""<div class="metric-card metric-card-dark"><div class="metric-label">Saldo a Pagar</div><div class="metric-value" style="color: {cor_saldo};">{formatar_moeda_br(resumo['saldo'])}</div></div>""", unsafe_allow_html=True)
+                    f1, f2, f3, f4 = st.columns(4)
+                    # LÓGICA DE CORES INVERTIDA (CARDS INDIVIDUAL)
+                    cor_saldo = "#ff4b4b" if resumo['saldo'] > 0.01 else ("#28a745" if resumo['saldo'] < -0.01 else "#343a40")
+                    
+                    with f1: st.markdown(f"""<div class="metric-card metric-card-dark"><div class="metric-label">Saldo Anterior</div><div class="metric-value" style="color: #343a40;">{formatar_moeda_br(saldo_ant_float)}</div></div>""", unsafe_allow_html=True)
+                    with f2: st.markdown(f"""<div class="metric-card metric-card-blue"><div class="metric-label">Total Retido (Período)</div><div class="metric-value" style="color: #004085;">{formatar_moeda_br(resumo['tot_ret'])}</div></div>""", unsafe_allow_html=True)
+                    with f3: st.markdown(f"""<div class="metric-card metric-card-blue"><div class="metric-label">Total Pago (Período)</div><div class="metric-value" style="color: #004085;">{formatar_moeda_br(resumo['tot_pag'])}</div></div>""", unsafe_allow_html=True)
+                    with f4: st.markdown(f"""<div class="metric-card metric-card-dark"><div class="metric-label">Saldo a Pagar</div><div class="metric-value" style="color: {cor_saldo};">{formatar_moeda_br(resumo['saldo'])}</div></div>""", unsafe_allow_html=True)
 
-                html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
-                html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
-                html += "<tr style='background-color: black; color: white !important;'>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Empenho</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Data</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Retido</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Pago</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Diferença</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 34%;'>Histórico</th>"
-                html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Status</th>"
-                html += "</tr>"
-                
-                for _, r in df_res.iterrows():
-                    dif = r['Dif']
-                    style_dif = "color: darkgreen; font-weight: bold;" if dif > 0.01 else ("color: red; font-weight: bold;" if dif < -0.01 else "color: black;")
-                    data_exibicao = r['Data Pag'] if r['Status'] == "Pago s/ Retenção" else r['Data Emp']
-                    html += "<tr style='background-color: white;'>"
-                    html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Empenho']}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{data_exibicao}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 11px; word-wrap: break-word; white-space: normal;'>{r['Histórico']}</td>"
-                    html += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px;'>{r['Status']}</td>"
+                    html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
+                    html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
+                    html += "<tr style='background-color: black; color: white !important;'>"
+                    html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Empenho</th>"
+                    html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Data</th>"
+                    html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Retido</th>"
+                    html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Pago</th>"
+                    html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Diferença</th>"
+                    html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 34%;'>Histórico</th>"
+                    html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Status</th>"
                     html += "</tr>"
-                
-                html += f"<tr style='font-weight: bold; background-color: lightgrey; color: black;'>"
-                html += "<td colspan='2' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL PERÍODO</td>"
-                html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['tot_ret'])}</td>"
-                html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['tot_pag'])}</td>"
-                html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['saldo'] - saldo_ant_float)}</td>"
-                html += "<td colspan='2' style='border: 1px solid #000;'></td></tr>"
-                html += "</table></div>"
-                st.markdown(html, unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
-                
-                ug_limpa = limpar_nome_arquivo(str(ug_sel))
-                conta_limpa = limpar_nome_arquivo(str(conta_sel).split(' ')[0])
-                nome_base = f"Conciliacao_Retencoes_UG_{ug_limpa}_Retencao_{conta_limpa}"
-                
-                excel_bytes = gerar_excel(df_res, resumo, saldo_ant_float, ug_sel, conta_sel)
-                st.download_button("BAIXAR RELATÓRIO EM EXCEL", excel_bytes, f"{nome_base}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                
-                pdf_bytes = gerar_pdf(df_res, ug_sel, conta_sel, resumo, saldo_ant_float)
-                st.download_button("BAIXAR RELATÓRIO EM PDF", pdf_bytes, f"{nome_base}.pdf", "application/pdf", use_container_width=True)
-            else:
-                st.warning("Nenhum dado encontrado.")
+                    
+                    for _, r in df_res.iterrows():
+                        dif = r['Dif']
+                        # LÓGICA DE CORES INVERTIDA (TABELA INDIVIDUAL - COLUNA DIFERENÇA)
+                        style_dif = "color: red; font-weight: bold;" if dif > 0.01 else ("color: darkgreen; font-weight: bold;" if dif < -0.01 else "color: black;")
+                        
+                        data_exibicao = r['Data Pag'] if r['Status'] == "Pago s/ Retenção" else r['Data Emp']
+                        html += "<tr style='background-color: white;'>"
+                        html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Empenho']}</td>"
+                        html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{data_exibicao}</td>"
+                        html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
+                        html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
+                        html += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
+                        html += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 11px; word-wrap: break-word; white-space: normal;'>{r['Histórico']}</td>"
+                        html += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px;'>{r['Status']}</td>"
+                        html += "</tr>"
+                    
+                    html += f"<tr style='font-weight: bold; background-color: lightgrey; color: black;'>"
+                    html += "<td colspan='2' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL PERÍODO</td>"
+                    html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['tot_ret'])}</td>"
+                    html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['tot_pag'])}</td>"
+                    html += f"<td style='text-align: right; border: 1px solid #000;'>{formatar_moeda_br(resumo['saldo'] - saldo_ant_float)}</td>"
+                    html += "<td colspan='2' style='border: 1px solid #000;'></td></tr>"
+                    html += "</table></div>"
+                    st.markdown(html, unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    
+                    ug_limpa = limpar_nome_arquivo(str(ug_sel))
+                    conta_limpa = limpar_nome_arquivo(str(conta_sel).split(' ')[0])
+                    nome_base = f"Conciliacao_Retencoes_UG_{ug_limpa}_Retencao_{conta_limpa}"
+                    
+                    excel_bytes = gerar_excel(df_res, resumo, saldo_ant_float, ug_sel, conta_sel)
+                    st.download_button("BAIXAR RELATÓRIO EM EXCEL", excel_bytes, f"{nome_base}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    
+                    pdf_bytes = gerar_pdf(df_res, ug_sel, conta_sel, resumo, saldo_ant_float)
+                    st.download_button("BAIXAR RELATÓRIO EM PDF", pdf_bytes, f"{nome_base}.pdf", "application/pdf", use_container_width=True)
+                 else:
+                    st.warning("Nenhum dado encontrado.")
 
-        # --- MODO GERAL (Novo) ---
         elif st.session_state['modo_conciliacao'] == 'geral':
             st.markdown("### Conciliação Geral (Múltiplas Contas)")
             st.info("Insira o Saldo Anterior para cada conta abaixo e clique em CONCILIAR.")
             
-            # Tabela Editável para Saldos Anteriores
             st.session_state['df_saldos_geral'] = st.data_editor(
                 st.session_state['df_saldos_geral'], 
                 use_container_width=True, 
@@ -774,7 +822,6 @@ if arquivo:
                     conta = row['CONTA DE RETENÇÃO']
                     saldo_ant = row['SALDO ANTERIOR']
                     
-                    # Reaproveita a lógica de processamento
                     _, resumo = processar_conciliacao(df_dados, ug_sel, conta, saldo_ant)
                     
                     resultados_gerais.append({
@@ -789,13 +836,11 @@ if arquivo:
                 df_resultado_geral = pd.DataFrame(resultados_gerais)
                 st.success("Conciliação Geral concluída!")
                 
-                # GERA HTML PADRONIZADO (IGUAL AO ORIGINAL)
                 html_geral = gerar_tabela_html_geral(df_resultado_geral)
                 st.markdown(html_geral, unsafe_allow_html=True)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # Botões de Download GERAL
                 ug_limpa = limpar_nome_arquivo(str(ug_sel))
                 nome_base_geral = f"Relatorio_Geral_Retencoes_UG_{ug_limpa}"
                 
