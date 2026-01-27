@@ -77,21 +77,20 @@ st.markdown("""
     
     .metric-value { font-size: 22px; font-weight: bold; }
     .metric-label { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
-    
-    /* Tentativa de estilização do st.data_editor para parecer com a tabela HTML (Cabeçalho Preto) */
-    [data-testid="stDataEditor"] {
-        border: 1px solid #ddd;
-        border-radius: 5px;
-        overflow: hidden;
+
+    /* Estilização da Tabela de Input (Data Editor) para parecer com a tabela de resultados */
+    [data-testid="stDataEditor"] table {
+        border-collapse: collapse !important;
     }
-    [data-testid="stDataEditor"] div[role="columnheader"] {
+    [data-testid="stDataEditor"] thead tr th {
         background-color: black !important;
         color: white !important;
-        font-weight: bold;
+        font-weight: bold !important;
+        text-align: center !important;
+        border: 1px solid #444 !important;
     }
-    [data-testid="stDataEditor"] div[role="gridcell"] {
-        background-color: white !important;
-        color: black !important;
+    [data-testid="stDataEditor"] td {
+        border: 1px solid #ddd !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -244,13 +243,6 @@ def sanitizar_historico(val):
     return str(val).strip()
 
 def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
-    resumo = {
-        "ret_pendente": 0, "val_ret_pendente": 0.0,
-        "pag_sobra": 0,    "val_pag_sobra": 0.0,
-        "ok": 0,           "val_ok": 0.0,
-        "tot_ret": 0.0, "tot_pag": 0.0, "saldo": saldo_anterior_val
-    }
-
     cod_ug = ug_sel.split(' - ')[0].strip()
     cod_conta = conta_sel.split(' - ')[0].strip()
 
@@ -272,8 +264,14 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     
     df_base = df[mask_ug & mask_conta].copy()
     
-    if df_base.empty: 
-        return pd.DataFrame(), resumo
+    resumo = {
+        "ret_pendente": 0, "val_ret_pendente": 0.0,
+        "pag_sobra": 0,    "val_pag_sobra": 0.0,
+        "ok": 0,           "val_ok": 0.0,
+        "tot_ret": 0.0, "tot_pag": 0.0, "saldo": saldo_anterior_val
+    }
+
+    if df_base.empty: return pd.DataFrame(), resumo
 
     df_base['Tipo_Norm'] = df_base[c_tipo].astype(str).str.strip()
     df_base['Status_Lanc'] = df_base[c_status].astype(str).str.strip()
@@ -364,7 +362,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
             "Dif": val - val_pago, 
             "Data Pag": dt_pag_str, 
             "Histórico": hist_final, 
-            "_sort": sort, 
+            "_sort": sort,
             "_dt_sort": r['Data_Dt'], 
             "Status": "Conciliado" if match else "Retido s/ Pagto"
         })
@@ -398,10 +396,6 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     
     return df_final, resumo
 
-# ==============================================================================
-# 3. GERADORES DE RELATÓRIO
-# ==============================================================================
-
 def gerar_excel(df, resumo, saldo_anterior, ug, conta):
     out = io.BytesIO()
     df_exp = df.drop(columns=['_sort', 'Status'])
@@ -410,6 +404,8 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         df_exp.to_excel(writer, sheet_name='Conciliacao', index=False, startrow=start_row_table)
         wb = writer.book
         ws = writer.sheets['Conciliacao']
+        
+        # --- DEFINIÇÃO DE FORMATOS ---
         fmt_head = wb.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         fmt_head_filter = wb.add_format({'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'font_size': 12})
         fmt_center = wb.add_format({'align': 'center', 'valign': 'vcenter'})
@@ -426,7 +422,10 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         fmt_card_qtd = wb.add_format({'bold': True, 'num_format': '0', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
         fmt_card_money = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'valign': 'vcenter'})
 
+        # --- CABEÇALHO DO FILTRO ---
         ws.merge_range('A1:G1', f"UG: {ug}  |  CONTA: {conta}", fmt_head_filter)
+
+        # --- 1. QUADRO DE RESUMO (CARDS) ---
         ws.merge_range('A3:C3', 'RESUMO POR SITUAÇÃO (CARDS)', fmt_head)
         ws.write(3, 0, "CATEGORIA", fmt_card_label)
         ws.write(3, 1, "QTD", fmt_card_header_center)
@@ -441,7 +440,8 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         ws.write(6, 0, cat_names[2], fmt_card_label)
         ws.write(6, 1, resumo['ok'], fmt_card_qtd)
         ws.write(6, 2, resumo['val_ok'], fmt_card_money)
-        
+
+        # --- 2. RESUMO FINANCEIRO (TOTAIS) ---
         ws.merge_range('E3:F3', 'RESUMO FINANCEIRO (TOTAIS)', fmt_head)
         ws.write(3, 4, "SALDO ANTERIOR", fmt_tot_label)
         ws.write(3, 5, saldo_anterior, fmt_tot_val)
@@ -450,13 +450,12 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         ws.write(5, 4, "TOTAL PAGO", fmt_tot_label)
         ws.write(5, 5, resumo['tot_pag'], fmt_tot_val_red)
         
-        # LÓGICA DE CORES INVERTIDA (INDIVIDUAL)
-        # Positivo = Vermelho, Negativo = Verde
+        # INVERSÃO DE CORES: Saldo positivo = Vermelho (Pagar), Saldo negativo = Verde (Sobra)
         fmt_saldo_final = fmt_tot_val_red if resumo['saldo'] > 0.01 else (fmt_tot_val_green if resumo['saldo'] < -0.01 else fmt_tot_val)
-        
         ws.write(6, 4, "SALDO A PAGAR", fmt_tot_label)
         ws.write(6, 5, resumo['saldo'], fmt_saldo_final)
 
+        # --- 3. TABELA DE DADOS ---
         for i, col in enumerate(df_exp.columns):
             ws.write(start_row_table, i, col, fmt_head)
             if i == 6: ws.set_column(i, i, 50, fmt_hist) 
@@ -465,13 +464,11 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         
         first_row = start_row_table + 1
         last_row = start_row_table + len(df_exp)
-        # Lógica da Tabela de Itens (mantém padrão Diferença: Positivo=Verde, Negativo=Vermelho? 
-        # O prompt pediu para inverter "SALDO A PAGAR". Vou manter a lógica da coluna Diferença original se não foi pedido,
-        # mas geralmente Saldo a Pagar segue a Diferença. Vou inverter Diferença também para consistência.
-        # Originalmente: > 0 (Verde), < 0 (Vermelho).
-        # Nova Lógica: > 0 (Vermelho - deve pagar), < 0 (Verde - sobra).
+        
+        # INVERSÃO DE CORES TAMBÉM NA COLUNA DIFERENÇA (>0 Vermelho, <0 Verde)
         ws.conditional_format(first_row, 4, last_row, 4, {'type': 'cell', 'criteria': '>', 'value': 0.001, 'format': fmt_red})
         ws.conditional_format(first_row, 4, last_row, 4, {'type': 'cell', 'criteria': '<', 'value': -0.001, 'format': fmt_green})
+        
     return out.getvalue()
 
 def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
@@ -490,6 +487,7 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     bg_org = colors.Color(1, 0.95, 0.8)
     bg_grn = colors.Color(0.9, 1, 0.9)
     bg_blu = colors.Color(0.9, 0.95, 1)
+    
     data_resumo = [
         ["PENDENTES (RETIDO S/ PGTO)", "SOBRAS (PAGO S/ RETENÇÃO)", "CONCILIADOS"],
         [f"{resumo['ret_pendente']} itens", f"{resumo['pag_sobra']} itens", f"{resumo['ok']} itens"],
@@ -504,13 +502,14 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     ]))
     story.append(t_res)
     story.append(Spacer(1, 3*mm))
+
     data_totais = [
         ["SALDO ANTERIOR", "TOTAL RETIDO", "TOTAL PAGO", "SALDO A PAGAR"],
         [formatar_moeda_br(saldo_anterior), formatar_moeda_br(resumo['tot_ret']), formatar_moeda_br(resumo['tot_pag']), formatar_moeda_br(resumo['saldo'])]
     ]
     t_tot = Table(data_totais, colWidths=[47*mm, 47*mm, 47*mm, 48*mm])
     
-    # LÓGICA DE CORES INVERTIDA (PDF INDIVIDUAL)
+    # INVERSÃO DE CORES: Saldo positivo = Vermelho, Negativo = Verde
     cor_saldo_final = colors.red if resumo['saldo'] > 0.01 else (colors.darkgreen if resumo['saldo'] < -0.01 else colors.black)
 
     t_tot.setStyle(TableStyle([
@@ -521,14 +520,17 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
     ]))
     story.append(t_tot)
     story.append(Spacer(1, 8*mm))
+    
     headers = ['Empenho', 'Data', 'Vlr. Retido', 'Vlr. Pago', 'Diferença', 'Histórico', 'Status']
     data = [headers]
+    
     table_style = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.black), ('BACKGROUND', (0,0), (-1,0), colors.lightgrey), 
         ('TEXTCOLOR', (0,0), (-1,0), colors.black), ('ALIGN', (0,0), (-1,0), 'CENTER'), ('ALIGN', (0,1), (-1,-1), 'CENTER'),
         ('ALIGN', (2,1), (4,-1), 'RIGHT'), ('ALIGN', (5,1), (5,-1), 'LEFT'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 7),
     ]
+    
     for i, (_, r) in enumerate(df_f.iterrows()):
         dif = r['Dif']
         data_emp_pdf = str(r['Data Pag']) if r['Status'] == "Pago s/ Retenção" else str(r['Data Emp'])
@@ -538,21 +540,25 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
         ]
         data.append(row_data)
         if abs(dif) >= 0.01:
-            # INVERTIDO: Positivo = Vermelho, Negativo = Verde
+            # INVERSÃO DE CORES NA LINHA TAMBÉM
             cor_fonte = colors.red if dif > 0 else colors.darkgreen
             table_style.append(('TEXTCOLOR', (4, i+1), (4, i+1), cor_fonte))
             table_style.append(('FONTNAME', (4, i+1), (4, i+1), 'Helvetica-Bold'))
+
     data.append(['TOTAIS PERÍODO', '', formatar_moeda_br(resumo['tot_ret']), formatar_moeda_br(resumo['tot_pag']), formatar_moeda_br(resumo['saldo'] - saldo_anterior), '', ''])
     last_row_idx = len(data) - 1
     table_style.append(('BACKGROUND', (0, last_row_idx), (-1, last_row_idx), colors.lightgrey))
     table_style.append(('FONTNAME', (0, last_row_idx), (-1, last_row_idx), 'Helvetica-Bold'))
     table_style.append(('SPAN', (0, last_row_idx), (1, last_row_idx)))
+
     col_widths = [20*mm, 16*mm, 25*mm, 25*mm, 25*mm, 59*mm, 19*mm]
     t = Table(data, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle(table_style))
     story.append(t)
     doc.build(story)
     return buffer.getvalue()
+
+# ----------------- NOVAS FUNÇÕES PARA O MODO GERAL -----------------
 
 def gerar_excel_geral(df_resumo, ug):
     out = io.BytesIO()
@@ -570,8 +576,7 @@ def gerar_excel_geral(df_resumo, ug):
         
         ws.merge_range('A1:E1', f"Relatório Geral de Retenções | UG: {ug}", fmt_title)
         
-        cols = df_resumo.columns
-        for i, col in enumerate(cols):
+        for i, col in enumerate(df_resumo.columns):
             ws.write(2, i, col, fmt_head)
             
         for row_num, row_data in enumerate(df_resumo.values):
@@ -581,11 +586,10 @@ def gerar_excel_geral(df_resumo, ug):
                     ws.write(excel_row, col_num, cell_data, fmt_text)
                 else:
                     style = fmt_money
-                    if col_num == 4: 
-                        # LÓGICA DE CORES INVERTIDA (EXCEL GERAL)
+                    if col_num == 4: # Coluna Saldo a Pagar
+                        # INVERSÃO CORES: Positivo=Vermelho, Negativo=Verde
                         if cell_data > 0.01: style = fmt_red
                         elif cell_data < -0.01: style = fmt_green
-                        else: style = fmt_money
                     ws.write(excel_row, col_num, cell_data, style)
 
         for i, col in enumerate(df_resumo.columns):
@@ -594,7 +598,6 @@ def gerar_excel_geral(df_resumo, ug):
                 val_len = len(str(val))
                 if val_len > max_len: max_len = val_len
             ws.set_column(i, i, max_len + 2)
-
     return out.getvalue()
 
 def gerar_pdf_geral(df_resumo, ug):
@@ -628,14 +631,12 @@ def gerar_pdf_geral(df_resumo, ug):
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]
     
-    # LÓGICA DE CORES INVERTIDA (PDF GERAL)
     for i in range(1, len(data)):
         val_saldo = df_resumo.iloc[i-1]['Saldo A Pagar']
-        # Positivo = Vermelho, Negativo = Verde
+        # INVERSÃO CORES: Positivo=Vermelho, Negativo=Verde
         if val_saldo > 0.01: color = colors.red
         elif val_saldo < -0.01: color = colors.darkgreen
         else: color = colors.black
-            
         table_style.append(('TEXTCOLOR', (4, i), (4, i), color))
         table_style.append(('FONTNAME', (4, i), (4, i), 'Helvetica-Bold'))
 
@@ -658,7 +659,7 @@ def gerar_tabela_html_geral(df_resultado):
     
     for _, r in df_resultado.iterrows():
         saldo = r['Saldo A Pagar']
-        # LÓGICA DE CORES INVERTIDA (TELA GERAL)
+        # INVERSÃO CORES: Positivo=Vermelho, Negativo=Verde
         style_saldo = "color: red; font-weight: bold;" if saldo > 0.01 else ("color: darkgreen; font-weight: bold;" if saldo < -0.01 else "color: black;")
         
         html += "<tr style='background-color: white;'>"
@@ -672,7 +673,7 @@ def gerar_tabela_html_geral(df_resultado):
     return html
 
 # ==============================================================================
-# 4. INTERFACE GRÁFICA
+# 2. INTERFACE GRÁFICA (AJUSTADA)
 # ==============================================================================
 
 st.markdown("<h1 style='text-align: center;'>Conciliação de Retenções</h1>", unsafe_allow_html=True)
@@ -686,7 +687,9 @@ with c_top_1:
 
 with c_top_2:
     st.markdown('<p class="big-label">2. Filtros e Saldos</p>', unsafe_allow_html=True)
-    
+    # CORREÇÃO: Placeholder definido aqui para não dar NameError
+    placeholder_filtros = st.empty()
+
     if 'modo_conciliacao' not in st.session_state: st.session_state['modo_conciliacao'] = 'individual'
 
     if 'df_saldos_geral' not in st.session_state:
@@ -699,37 +702,44 @@ if arquivo:
     df_dados = carregar_dados(arquivo)
     
     if not df_dados.empty:
+        opcoes_ug = LISTA_UGS
+        opcoes_conta = LISTA_CONTAS
+        
+        # PREENCHE O PLACEHOLDER
         with placeholder_filtros.container():
             r1_col1, r1_col2 = st.columns([1, 3]) 
             with r1_col1: 
-                ug_sel = st.selectbox("UG", LISTA_UGS)
+                ug_sel = st.selectbox("UG", opcoes_ug)
             with r1_col2: 
-                conta_sel = st.selectbox("Conta de Retenção", LISTA_CONTAS)
+                conta_sel = st.selectbox("Conta de Retenção", opcoes_conta)
             
             val_anterior_str = st.text_input("Saldo Anterior", value="0,00", help="Digite o saldo acumulado de períodos anteriores.")
             
             st.markdown("<br>", unsafe_allow_html=True)
             
+            # BOTÕES DE AÇÃO
             if st.button("PROCESSAR CONCILIAÇÃO INDIVIDUAL", use_container_width=True):
                 st.session_state['modo_conciliacao'] = 'individual'
-                
+
             if st.button("PROCESSAR CONCILIAÇÃO GERAL", use_container_width=True):
                 st.session_state['modo_conciliacao'] = 'geral'
+                # Reinicia saldos para garantir limpeza
                 st.session_state['df_saldos_geral'] = pd.DataFrame({
                     "CONTA DE RETENÇÃO": LISTA_CONTAS,
                     "SALDO ANTERIOR": 0.0
                 })
-
+        
         st.markdown("---")
-
+        
+        # --- MODO INDIVIDUAL ---
         if st.session_state['modo_conciliacao'] == 'individual':
             if 'modo_conciliacao' in st.session_state and st.session_state['modo_conciliacao'] == 'individual':
-                 saldo_ant_float = converter_moeda_input(val_anterior_str)
-                 
-                 with st.spinner("Processando..."):
+                saldo_ant_float = converter_moeda_input(val_anterior_str)
+                
+                with st.spinner("Processando..."):
                     df_res, resumo = processar_conciliacao(df_dados, ug_sel, conta_sel, saldo_ant_float)
-                 
-                 if not df_res.empty:
+                
+                if not df_res.empty:
                     c_k1, c_k2, c_k3 = st.columns(3)
                     with c_k1: st.markdown(f"""<div class="metric-card"><div class="metric-label">Retido s/ Pgto</div><div class="metric-value" style="color: #ff4b4b;">{resumo['ret_pendente']}</div></div>""", unsafe_allow_html=True)
                     with c_k2: st.markdown(f"""<div class="metric-card metric-card-orange"><div class="metric-label">Pago s/ Retenção</div><div class="metric-value" style="color: #ffc107;">{resumo['pag_sobra']}</div></div>""", unsafe_allow_html=True)
@@ -741,7 +751,8 @@ if arquivo:
                     with v3: st.markdown(f"""<div class="metric-card metric-card-green"><div class="metric-label">Total Retido e Pago</div><div class="metric-value" style="color: #28a745;">{formatar_moeda_br(resumo['val_ok'])}</div></div>""", unsafe_allow_html=True)
 
                     f1, f2, f3, f4 = st.columns(4)
-                    # LÓGICA DE CORES INVERTIDA (CARDS INDIVIDUAL)
+                    
+                    # COR INVERTIDA (Card Individual)
                     cor_saldo = "#ff4b4b" if resumo['saldo'] > 0.01 else ("#28a745" if resumo['saldo'] < -0.01 else "#343a40")
                     
                     with f1: st.markdown(f"""<div class="metric-card metric-card-dark"><div class="metric-label">Saldo Anterior</div><div class="metric-value" style="color: #343a40;">{formatar_moeda_br(saldo_ant_float)}</div></div>""", unsafe_allow_html=True)
@@ -763,7 +774,7 @@ if arquivo:
                     
                     for _, r in df_res.iterrows():
                         dif = r['Dif']
-                        # LÓGICA DE CORES INVERTIDA (TABELA INDIVIDUAL - COLUNA DIFERENÇA)
+                        # COR INVERTIDA (Tabela Individual)
                         style_dif = "color: red; font-weight: bold;" if dif > 0.01 else ("color: darkgreen; font-weight: bold;" if dif < -0.01 else "color: black;")
                         
                         data_exibicao = r['Data Pag'] if r['Status'] == "Pago s/ Retenção" else r['Data Emp']
@@ -796,9 +807,10 @@ if arquivo:
                     
                     pdf_bytes = gerar_pdf(df_res, ug_sel, conta_sel, resumo, saldo_ant_float)
                     st.download_button("BAIXAR RELATÓRIO EM PDF", pdf_bytes, f"{nome_base}.pdf", "application/pdf", use_container_width=True)
-                 else:
+                else:
                     st.warning("Nenhum dado encontrado.")
 
+        # --- MODO GERAL ---
         elif st.session_state['modo_conciliacao'] == 'geral':
             st.markdown("### Conciliação Geral (Múltiplas Contas)")
             st.info("Insira o Saldo Anterior para cada conta abaixo e clique em CONCILIAR.")
@@ -849,6 +861,5 @@ if arquivo:
                 
                 pdf_bytes_geral = gerar_pdf_geral(df_resultado_geral, ug_sel)
                 st.download_button("BAIXAR RELATÓRIO GERAL (PDF)", pdf_bytes_geral, f"{nome_base_geral}.pdf", "application/pdf", use_container_width=True)
-
     else:
         st.warning("Nenhum dado encontrado para os filtros selecionados.")
