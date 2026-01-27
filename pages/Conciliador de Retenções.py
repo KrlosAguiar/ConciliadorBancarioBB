@@ -234,11 +234,12 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     cod_conta = conta_sel.split(' - ')[0].strip()
 
     cols_map = identificar_colunas_dinamicas(df)
-    c_ug, c_data, c_dc, c_conta, c_valor = 0, 4, 5, 6, 8
+    # Adicionado c_status = 2 (Coluna C do Excel)
+    c_ug, c_status, c_data, c_dc, c_conta, c_valor = 0, 2, 4, 5, 6, 8
     c_empenho, c_tipo, c_hist = cols_map['empenho'], cols_map['tipo'], cols_map['hist']
 
     # FFILL APENAS ESTRUTURAL
-    colunas_para_preencher = [c_ug, c_data, c_conta, c_empenho, c_tipo]
+    colunas_para_preencher = [c_ug, c_status, c_data, c_conta, c_empenho, c_tipo]
     for col in colunas_para_preencher:
         if col < df.shape[1]:
             df[col] = df[col].ffill()
@@ -247,7 +248,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     if cod_ug == '9999':
         mask_ug = pd.Series(True, index=df.index)
     else:
-        # Normalização de UG para evitar erro com casas decimais (ex: 12.0)
+        # Normalização de UG para evitar erro com casas decimais
         mask_ug = df[c_ug].astype(str).str.split('.').str[0] == str(cod_ug)
         
     mask_conta = df[c_conta].astype(str).str.startswith(str(cod_conta))
@@ -257,19 +258,44 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     if df_base.empty: return pd.DataFrame(), {}
 
     df_base['Tipo_Norm'] = df_base[c_tipo].astype(str).str.strip()
+    
+    # Normaliza a Coluna C (Status) para string segura
+    df_base['Status_Lanc'] = df_base[c_status].astype(str).str.strip()
 
+    # 1. RETENÇÕES (CRÉDITO)
     mask_ret = (df_base['Tipo_Norm'].str.contains("Retenção Empenho", case=False)) & (df_base[c_dc] == 'C')
     df_ret = df_base[mask_ret].copy()
     
-    mask_estorno_ret = (df_base['Tipo_Norm'].str.contains("Retenção Empenho", case=False)) & (df_base[c_dc] == 'D')
+    # 2. ESTORNO DE RETENÇÃO (DÉBITO)
+    # Verifica se é Débito E (tem "Retenção" no tipo OU "Estorno" na coluna C)
+    mask_estorno_ret = (df_base[c_dc] == 'D') & (
+        df_base['Tipo_Norm'].str.contains("Retenção Empenho", case=False) | 
+        df_base['Status_Lanc'].str.contains("Estorno", case=False)
+    )
+    # Mas precisamos garantir que estamos falando de estorno de retenção, não pagamento
+    # Geralmente estorno de retenção mantém o tipo "Retenção" ou similar. 
+    # Para segurança, mantemos a lógica original para retenção + a verificação da coluna C se for explícita
     df_est_ret = df_base[mask_estorno_ret].copy()
     
-    mask_pag = (df_base['Tipo_Norm'].str.contains("Pagamento de Documento Extra", case=False)) & (df_base[c_dc] == 'D')
+    # 3. PAGAMENTOS (DÉBITO)
+    mask_pag = (df_base['Tipo_Norm'].str.contains("Pagamento", case=False)) & (df_base[c_dc] == 'D')
     df_pag = df_base[mask_pag].copy()
 
-    mask_estorno_pag = ((df_base[c_dc] == 'C') & (df_base['Tipo_Norm'].str.contains("Estorno", case=False) | df_base[c_hist].astype(str).str.contains("Estorno", case=False)))
+    # 4. ESTORNO DE PAGAMENTO (CRÉDITO) - AQUI ESTÁ A CORREÇÃO PRINCIPAL
+    # É estorno SE: For Crédito (C) E (Tiver "Estorno" na Coluna C OU "Estorno" no Tipo/Histórico)
+    condicao_credito = (df_base[c_dc] == 'C')
+    condicao_nome_estorno = (
+        df_base['Status_Lanc'].str.contains("Estorno", case=False) | 
+        df_base['Tipo_Norm'].str.contains("Estorno", case=False) | 
+        df_base[c_hist].astype(str).str.contains("Estorno", case=False)
+    )
+    
+    mask_estorno_pag = condicao_credito & condicao_nome_estorno
     df_est_pag = df_base[mask_estorno_pag].copy()
 
+    # --- LIMPEZA DOS PARES (DÉBITO x CRÉDITO) ---
+
+    # Limpeza de RETENÇÕES estornadas
     idx_ret_cancel = set()
     for _, r_est in df_est_ret.iterrows():
         v, e = r_est[c_valor], r_est[c_empenho]
@@ -277,11 +303,15 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
         if not cand.empty: idx_ret_cancel.add(cand.index[0])
     df_ret_limpa = df_ret[~df_ret.index.isin(idx_ret_cancel)]
 
+    # Limpeza de PAGAMENTOS estornados
     idx_pag_cancel = set()
     for _, r_est in df_est_pag.iterrows():
         v, e = r_est[c_valor], r_est[c_empenho]
+        # Procura um pagamento (Débito) original para "matar" com este Estorno (Crédito)
         cand = df_pag[(df_pag[c_empenho] == e) & (abs(df_pag[c_valor] - v) < 0.01) & (~df_pag.index.isin(idx_pag_cancel))]
         if not cand.empty: idx_pag_cancel.add(cand.index[0])
+    
+    # Remove da lista de pagamentos aqueles que foram estornados
     df_pag_limpa = df_pag[~df_pag.index.isin(idx_pag_cancel)]
 
     resultados = []
@@ -294,6 +324,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
         "tot_ret": 0.0, "tot_pag": 0.0, "saldo": 0.0
     }
 
+    # CRUSAMENTO: RETENÇÕES x PAGAMENTOS
     for _, r in df_ret_limpa.iterrows():
         val = r[c_valor]
         dt_retencao = r['Data_Dt']
@@ -302,6 +333,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
         condicao_usado = (~df_pag_limpa.index.isin(idx_pag_usado))
         
         if pd.notna(dt_retencao):
+            # Tenta encontrar pagamento com data igual ou posterior
             condicao_data = (df_pag_limpa['Data_Dt'] >= dt_retencao) | (df_pag_limpa['Data_Dt'].isna())
             cand = df_pag_limpa[condicao_valor & condicao_data & condicao_usado]
         else:
@@ -345,13 +377,14 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
             "Status": "Conciliado" if match else "Retido s/ Pagto"
         })
 
+    # ITENS QUE SOBRARAM (PAGO SEM RETENÇÃO)
     for _, r in df_pag_limpa[~df_pag_limpa.index.isin(idx_pag_usado)].iterrows():
         resumo["pag_sobra"] += 1
         resumo["val_pag_sobra"] += r[c_valor]
         
         resultados.append({
             "Empenho": r[c_empenho], 
-            "Data Emp": "-",  # MANTIDO "-" PARA EXCEL CONFORME SOLICITADO
+            "Data Emp": "-", 
             "Vlr Retido": 0.0, 
             "Vlr Pago": r[c_valor],
             "Dif": 0.0 - r[c_valor], 
