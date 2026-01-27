@@ -152,6 +152,7 @@ def converter_moeda_input(texto):
         return 0.0
 
 def formatar_data(dt):
+    """Formata datetime para string dd/mm/aaaa ou retorna o próprio valor se não for data."""
     if pd.isna(dt): return "-"
     try:
         return dt.strftime("%d/%m/%Y")
@@ -159,6 +160,7 @@ def formatar_data(dt):
         return str(dt)
 
 def limpar_nome_arquivo(texto):
+    """Remove caracteres inválidos para nome de arquivo e acentos."""
     nfkd_form = unicodedata.normalize('NFKD', str(texto))
     texto_sem_acento = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
     texto_limpo = re.sub(r'[\\/*?:"<>|]', '_', texto_sem_acento)
@@ -228,21 +230,26 @@ def sanitizar_historico(val):
     return str(val).strip()
 
 def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
+    # Extrai códigos dos filtros
     cod_ug = ug_sel.split(' - ')[0].strip()
     cod_conta = conta_sel.split(' - ')[0].strip()
 
     cols_map = identificar_colunas_dinamicas(df)
+    # Adicionado c_status = 2 (Coluna C do Excel)
     c_ug, c_status, c_data, c_dc, c_conta, c_valor = 0, 2, 4, 5, 6, 8
     c_empenho, c_tipo, c_hist = cols_map['empenho'], cols_map['tipo'], cols_map['hist']
 
+    # FFILL APENAS ESTRUTURAL
     colunas_para_preencher = [c_ug, c_status, c_data, c_conta, c_empenho, c_tipo]
     for col in colunas_para_preencher:
         if col < df.shape[1]:
             df[col] = df[col].ffill()
 
+    # LÓGICA DE FILTRAGEM
     if cod_ug == '9999':
         mask_ug = pd.Series(True, index=df.index)
     else:
+        # Normalização de UG para evitar erro com casas decimais
         mask_ug = df[c_ug].astype(str).str.split('.').str[0] == str(cod_ug)
         
     mask_conta = df[c_conta].astype(str).str.startswith(str(cod_conta))
@@ -252,20 +259,26 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     if df_base.empty: return pd.DataFrame(), {}
 
     df_base['Tipo_Norm'] = df_base[c_tipo].astype(str).str.strip()
+    
+    # Normaliza a Coluna C (Status) para string segura
     df_base['Status_Lanc'] = df_base[c_status].astype(str).str.strip()
 
+    # 1. RETENÇÕES (CRÉDITO)
     mask_ret = (df_base['Tipo_Norm'].str.contains("Retenção Empenho", case=False)) & (df_base[c_dc] == 'C')
     df_ret = df_base[mask_ret].copy()
     
+    # 2. ESTORNO DE RETENÇÃO (DÉBITO)
     mask_estorno_ret = (df_base[c_dc] == 'D') & (
         df_base['Tipo_Norm'].str.contains("Retenção Empenho", case=False) | 
         df_base['Status_Lanc'].str.contains("Estorno", case=False)
     )
     df_est_ret = df_base[mask_estorno_ret].copy()
     
+    # 3. PAGAMENTOS (DÉBITO)
     mask_pag = (df_base['Tipo_Norm'].str.contains("Pagamento", case=False)) & (df_base[c_dc] == 'D')
     df_pag = df_base[mask_pag].copy()
 
+    # 4. ESTORNO DE PAGAMENTO (CRÉDITO)
     condicao_credito = (df_base[c_dc] == 'C')
     condicao_nome_estorno = (
         df_base['Status_Lanc'].str.contains("Estorno", case=False) | 
@@ -276,6 +289,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     mask_estorno_pag = condicao_credito & condicao_nome_estorno
     df_est_pag = df_base[mask_estorno_pag].copy()
 
+    # --- LIMPEZA DOS PARES (DÉBITO x CRÉDITO) ---
     idx_ret_cancel = set()
     for _, r_est in df_est_ret.iterrows():
         v, e = r_est[c_valor], r_est[c_empenho]
@@ -301,6 +315,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
         "tot_ret": 0.0, "tot_pag": 0.0, "saldo": 0.0
     }
 
+    # CRUSAMENTO: RETENÇÕES x PAGAMENTOS
     for _, r in df_ret_limpa.iterrows():
         val = r[c_valor]
         dt_retencao = r['Data_Dt']
@@ -352,6 +367,7 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
             "Status": "Conciliado" if match else "Retido s/ Pagto"
         })
 
+    # ITENS QUE SOBRARAM (PAGO SEM RETENÇÃO)
     for _, r in df_pag_limpa[~df_pag_limpa.index.isin(idx_pag_usado)].iterrows():
         resumo["pag_sobra"] += 1
         resumo["val_pag_sobra"] += r[c_valor]
