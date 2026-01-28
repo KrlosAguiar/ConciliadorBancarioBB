@@ -962,13 +962,12 @@ if arquivo:
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # O botão deve ficar DENTRO do form
-                submit_btn = st.form_submit_button("CONCILIAR", type="primary", use_container_width=True)
+                # Removido o type="primary" para pegar o estilo do seu CSS (cinza escuro)
+                submit_btn = st.form_submit_button("CONCILIAR", use_container_width=True)
 
             # --- LÓGICA APÓS CLICAR NO BOTÃO ---
             if submit_btn:
                 # 1. Primeiro passo: Salvar o que foi digitado no estado geral
-                # Isso garante que se você fizer outra ação depois, os valores continuam lá
                 st.session_state['df_saldos_geral'] = edited_df
                 
                 resultados_gerais = []
