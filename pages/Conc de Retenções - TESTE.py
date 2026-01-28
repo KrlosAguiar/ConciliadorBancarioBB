@@ -276,62 +276,52 @@ def sanitizar_historico(val):
 def inserir_subtotais_diarios(df):
     """
     Insere linhas de subtotal diário para os itens com Status 'Retido s/ Pagto'.
+    Configuração:
+    - Empenho: "TOTAL"
+    - Data: Data formatada
+    - Histórico, Pago, Dif, Status: "-"
     """
     if df.empty: return df
     
-    # Separa os retidos pendentes
     df_ret = df[df['Status'] == 'Retido s/ Pagto'].copy()
     df_others = df[df['Status'] != 'Retido s/ Pagto'].copy()
     
     if df_ret.empty:
         return df
     
-    # Ordena por data (o campo _dt_sort é datetime)
+    # Ordena por data
     df_ret = df_ret.sort_values(by=['_dt_sort'])
     
     new_rows = []
-    
-    # Agrupa por data
-    # Normaliza a data para remover horas, se houver, e tratar NaT
     df_ret['temp_date'] = df_ret['_dt_sort'].dt.date
-    
     datas_unicas = df_ret['temp_date'].dropna().unique()
     
-    # Processa data por data
     for dt in datas_unicas:
         df_dia = df_ret[df_ret['temp_date'] == dt]
         
-        # Adiciona as linhas originais do dia
         for _, row in df_dia.iterrows():
             new_rows.append(row.drop('temp_date'))
             
-        # Calcula subtotal
         subtotal = df_dia['Vlr Retido'].sum()
         
-        # Cria linha de subtotal baseada na primeira linha do dia para manter estrutura
         row_sub = df_dia.iloc[0].drop('temp_date').copy()
-        row_sub['Empenho'] = ""
-        row_sub['Data Emp'] = "" 
+        row_sub['Empenho'] = "TOTAL"
+        row_sub['Data Emp'] = formatar_data(pd.to_datetime(dt))
         row_sub['Vlr Retido'] = subtotal
-        row_sub['Vlr Pago'] = 0.0 # Formatação tratará de esconder se zero
-        row_sub['Dif'] = 0.0 # Formatação tratará
-        row_sub['Data Pag'] = ""
-        row_sub['Histórico'] = f"SUBTOTAL DO DIA {formatar_data(pd.to_datetime(dt))}"
+        row_sub['Vlr Pago'] = 0.0 
+        row_sub['Dif'] = 0.0 
+        row_sub['Data Pag'] = "-"
+        row_sub['Histórico'] = "-"
         row_sub['Status'] = "SUBTOTAL"
         
         new_rows.append(row_sub)
         
-    # Adiciona linhas que não tinham data válida (se houver em retidos, improvável)
     df_ret_sem_data = df_ret[df_ret['temp_date'].isna()]
     if not df_ret_sem_data.empty:
         for _, row in df_ret_sem_data.iterrows():
             new_rows.append(row.drop('temp_date'))
 
     df_ret_final = pd.DataFrame(new_rows)
-    
-    # Junta de volta com os outros (pagos, conciliados)
-    # A ordem final será Retidos (com subtotais) -> Pagos Sobra -> Conciliados
-    # Isso porque df_others tem _sort > 0
     return pd.concat([df_ret_final, df_others], ignore_index=True)
 
 def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
@@ -490,27 +480,19 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
 
     if not resultados: return pd.DataFrame(), resumo
 
+    # Retorna DataFrame SEM subtotais (Raw) para o Excel
     df_res = pd.DataFrame(resultados).sort_values(by=['_sort', '_dt_sort'])
+    df_final = df_res.drop(columns=['_dt_sort'])
     
-    # --- INJEÇÃO DE SUBTOTAL DIÁRIO ---
-    # Processa df_res para adicionar linhas de subtotal onde Status == "Retido s/ Pagto"
-    df_res_com_subtotal = inserir_subtotais_diarios(df_res)
-    
-    # Remove as colunas auxiliares
-    df_final = df_res_com_subtotal.drop(columns=['_dt_sort'])
-    
-    # Recalcula totais para o resumo (baseado apenas nas linhas de dados, ignorando subtotais)
-    # Mas como o resumo já foi calculado no loop, mantemos o objeto resumo original.
-    # O df_final contém as linhas de subtotal apenas para exibição/exportação.
-    
-    resumo["tot_ret"] = df_res[df_res['Status'] != 'SUBTOTAL']["Vlr Retido"].sum()
-    resumo["tot_pag"] = df_res[df_res['Status'] != 'SUBTOTAL']["Vlr Pago"].sum()
-    diferenca_tabela = df_res[df_res['Status'] != 'SUBTOTAL']["Dif"].sum()
+    resumo["tot_ret"] = df_final["Vlr Retido"].sum()
+    resumo["tot_pag"] = df_final["Vlr Pago"].sum()
+    diferenca_tabela = df_final["Dif"].sum()
     resumo["saldo"] = diferenca_tabela + saldo_anterior_val
     
     return df_final, resumo
 
 def gerar_excel(df, resumo, saldo_anterior, ug, conta):
+    # Recebe o DF "Limpo" (sem subtotais)
     out = io.BytesIO()
     df_exp = df.drop(columns=['_sort', 'Status'])
     start_row_table = 8 
@@ -527,10 +509,6 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
         fmt_red = wb.add_format({'font_color': '#FF0000', 'bold': True, 'num_format': '#,##0.00', 'align': 'center', 'valign': 'vcenter'})
         fmt_hist = wb.add_format({'text_wrap': True, 'valign': 'vcenter', 'font_size': 10, 'align': 'left'})
         
-        # Formatação para Subtotal (Negrito e Cinza Claro)
-        fmt_subtotal = wb.add_format({'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'num_format': '#,##0.00'})
-        fmt_subtotal_hist = wb.add_format({'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
-
         fmt_tot_label = wb.add_format({'bold': True, 'bg_color': '#E6E6E6', 'border': 1, 'align': 'left', 'valign': 'vcenter'})
         fmt_tot_val_green = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'font_color': '#006400', 'valign': 'vcenter'})
         fmt_tot_val_red = wb.add_format({'bold': True, 'num_format': '#,##0.00', 'border': 1, 'align': 'right', 'font_color': '#FF0000', 'valign': 'vcenter'})
@@ -575,49 +553,15 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
             else: ws.set_column(i, i, 15, fmt_center)
         
         first_row = start_row_table + 1
+        last_row = start_row_table + len(df_exp)
         
-        # Itera sobre os dados para aplicar formatação de Subtotal
-        for idx, row in df.iterrows():
-            row_num = first_row + idx
-            if row['Status'] == 'SUBTOTAL':
-                # Aplica formato de subtotal na linha inteira
-                ws.write(row_num, 0, row['Empenho'], fmt_subtotal) # Vazio
-                ws.write(row_num, 1, row['Data Emp'], fmt_subtotal) # Vazio
-                ws.write(row_num, 2, row['Vlr Retido'], fmt_subtotal) # Valor Subtotal
-                ws.write(row_num, 3, row['Vlr Pago'], fmt_subtotal) # Zero
-                ws.write(row_num, 4, row['Dif'], fmt_subtotal) # Zero
-                ws.write(row_num, 5, row['Histórico'], fmt_subtotal_hist) # Label
-                # Status não vai pro excel, mas se fosse:
-            else:
-                # Formatação condicional normal para linhas que não são subtotal
-                # Aplicamos condicional apenas se não for subtotal, para não sobrepor
-                # A formatação condicional do xlsxwriter é aplicada em range, mas subtotais quebram o range.
-                # Como subtotais são intercalados, melhor aplicar linha a linha ou range ignorando.
-                # Simplificação: Aplicar condicional em tudo, depois sobrescrever subtotais.
-                pass
-
-        # Aplica condicional geral (Excel prioriza a última formatação aplicada na célula se for direta, mas conditional format fica "por cima")
-        # Para garantir que o Subtotal fique cinza, o Conditional Format não deve pegar na linha dele ou a regra deve excluir.
-        # Maneira mais fácil: Loop de escrita manual das células se for subtotal.
-        # Re-escrevemos as células de subtotal para garantir.
-        
-        ws.conditional_format(first_row, 4, first_row + len(df) - 1, 4, {'type': 'cell', 'criteria': '>', 'value': 0.001, 'format': fmt_red})
-        ws.conditional_format(first_row, 4, first_row + len(df) - 1, 4, {'type': 'cell', 'criteria': '<', 'value': -0.001, 'format': fmt_green})
-        
-        # Sobrescreve visualmente os subtotais
-        for idx, row in df.iterrows():
-            if row['Status'] == 'SUBTOTAL':
-                row_num = first_row + idx
-                ws.write(row_num, 0, "", fmt_subtotal)
-                ws.write(row_num, 1, "", fmt_subtotal)
-                ws.write(row_num, 2, row['Vlr Retido'], fmt_subtotal)
-                ws.write(row_num, 3, "-", fmt_subtotal)
-                ws.write(row_num, 4, "-", fmt_subtotal)
-                ws.write(row_num, 5, row['Histórico'], fmt_subtotal_hist)
+        ws.conditional_format(first_row, 4, last_row, 4, {'type': 'cell', 'criteria': '>', 'value': 0.001, 'format': fmt_red})
+        ws.conditional_format(first_row, 4, last_row, 4, {'type': 'cell', 'criteria': '<', 'value': -0.001, 'format': fmt_green})
         
     return out.getvalue()
 
 def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
+    # Recebe o DF com subtotais
     buffer = io.BytesIO()
     doc_title = f"Conciliação de Retenções - UG {ug} - Retenção {conta}"
     doc = SimpleDocTemplate(
@@ -684,8 +628,13 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
         if r['Status'] == 'SUBTOTAL':
             # Linha de Subtotal
             row_data = [
-                "", "", formatar_moeda_br(r['Vlr Retido']), "-", "-", 
-                Paragraph(f"<b>{r['Histórico']}</b>", style_hist), ""
+                "TOTAL", 
+                r['Data Emp'], # Já vem formatado da função inserir_subtotais_diarios
+                formatar_moeda_br(r['Vlr Retido']), 
+                "-", 
+                "-", 
+                "-", 
+                "-"
             ]
             data.append(row_data)
             
@@ -890,13 +839,6 @@ if arquivo:
             if st.button("PROCESSAR CONCILIAÇÃO GERAL", use_container_width=True):
                 st.session_state['modo_conciliacao'] = 'geral'
                 st.session_state['executar_individual'] = False
-                # Reinicia apenas se necessário, mas o data_editor abaixo mantém o estado via key se não for resetado aqui.
-                # Se o usuário clicar aqui, ele quer explicitamente ir para o modo geral. 
-                # Se ele já editou valores, resetar aqui apagaria. 
-                # Vamos verificar se já existe dados editados. Se sim, mantemos.
-                # Mas se ele quer "Processar", talvez queira reiniciar? Normalmente abas funcionam sem reset.
-                # Vou comentar o reset forçado para preservar os dados se o usuário clicar sem querer.
-                # st.session_state['df_saldos_geral'] = ... (Mantém o estado atual)
                 pass
         
         with c_btn_indiv:
@@ -912,7 +854,11 @@ if arquivo:
                 saldo_ant_float = converter_moeda_input(val_anterior_str)
                 
                 with st.spinner("Processando..."):
+                    # Retorna dados BRUTOS (para Excel)
                     df_res, resumo = processar_conciliacao(df_dados, ug_sel, conta_sel, saldo_ant_float)
+                    
+                    # Cria versão COM SUBTOTAIS (para Tela e PDF)
+                    df_res_visual = inserir_subtotais_diarios(df_res)
                 
                 if not df_res.empty:
                     c_k1, c_k2, c_k3 = st.columns(3)
@@ -946,27 +892,31 @@ if arquivo:
                     html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Status</th>"
                     html += "</tr>"
                     
-                    # Exibição na tela (Tabela HTML)
-                    for _, r in df_res.iterrows():
-                        # Exibe linha normal (ignora subtotais na visualização HTML simples para não poluir, ou inclui?)
-                        # O pedido foi "nos relatórios". Vamos incluir na visualização se desejar, mas a lógica de HTML manual é complexa.
-                        # Vou manter a visualização HTML limpa (sem subtotais) e deixar subtotais para Excel/PDF conforme pedido explícito.
-                        # Se quiser ver na tela, basta remover o filtro abaixo.
+                    # Exibição na tela (Tabela HTML) usa df_res_visual (com subtotais)
+                    for _, r in df_res_visual.iterrows():
                         if r['Status'] == 'SUBTOTAL':
-                            continue
-                            
-                        dif = r['Dif']
-                        style_dif = "color: red; font-weight: bold;" if dif > 0.01 else ("color: darkgreen; font-weight: bold;" if dif < -0.01 else "color: black;")
-                        data_exibicao = r['Data Pag'] if r['Status'] == "Pago s/ Retenção" else r['Data Emp']
-                        html += "<tr style='background-color: white;'>"
-                        html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Empenho']}</td>"
-                        html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{data_exibicao}</td>"
-                        html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
-                        html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
-                        html += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
-                        html += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 11px; word-wrap: break-word; white-space: normal;'>{r['Histórico']}</td>"
-                        html += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px;'>{r['Status']}</td>"
-                        html += "</tr>"
+                            html += "<tr style='background-color: #E6E6E6; font-weight: bold;'>"
+                            html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>TOTAL</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Data Emp']}</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>-</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>-</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>-</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>-</td>"
+                            html += "</tr>"
+                        else:
+                            dif = r['Dif']
+                            style_dif = "color: red; font-weight: bold;" if dif > 0.01 else ("color: darkgreen; font-weight: bold;" if dif < -0.01 else "color: black;")
+                            data_exibicao = r['Data Pag'] if r['Status'] == "Pago s/ Retenção" else r['Data Emp']
+                            html += "<tr style='background-color: white;'>"
+                            html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Empenho']}</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{data_exibicao}</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 11px; word-wrap: break-word; white-space: normal;'>{r['Histórico']}</td>"
+                            html += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px;'>{r['Status']}</td>"
+                            html += "</tr>"
                     
                     html += f"<tr style='font-weight: bold; background-color: lightgrey; color: black;'>"
                     html += "<td colspan='2' style='padding: 10px; text-align: center; border: 1px solid #000;'>TOTAL PERÍODO</td>"
@@ -982,23 +932,20 @@ if arquivo:
                     conta_limpa = limpar_nome_arquivo(str(conta_sel).split(' ')[0])
                     nome_base = f"Conciliacao_Retencoes_UG_{ug_limpa}_Retencao_{conta_limpa}"
                     
-                    # Gera Excel e PDF com os subtotais incluídos no df_res
+                    # Excel usa df_res (SEM subtotais)
                     excel_bytes = gerar_excel(df_res, resumo, saldo_ant_float, ug_sel, conta_sel)
                     st.download_button("BAIXAR RELATÓRIO EM EXCEL", excel_bytes, f"{nome_base}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                     
-                    pdf_bytes = gerar_pdf(df_res, ug_sel, conta_sel, resumo, saldo_ant_float)
+                    # PDF usa df_res_visual (COM subtotais)
+                    pdf_bytes = gerar_pdf(df_res_visual, ug_sel, conta_sel, resumo, saldo_ant_float)
                     st.download_button("BAIXAR RELATÓRIO EM PDF", pdf_bytes, f"{nome_base}.pdf", "application/pdf", use_container_width=True)
                 else:
                     st.warning("Nenhum dado encontrado.")
 
         # MODO GERAL
         elif st.session_state['modo_conciliacao'] == 'geral':
-            st.markdown("### Conciliação Geral (Múltiplas Contas)")
+            st.markdown("### Conciliação Geral de Retenções")
             st.info("Insira o Saldo Anterior para cada conta abaixo e clique em CONCILIAR.")
-            
-            # CORREÇÃO DE PERSISTÊNCIA: Usar key para o widget e atualizar o state
-            # A atribuição direta st.session_state['df_saldos_geral'] = ... funciona, 
-            # mas requer que o widget tenha key para não perder foco/dados no rerun.
             
             edited_df = st.data_editor(
                 st.session_state['df_saldos_geral'], 
@@ -1008,10 +955,9 @@ if arquivo:
                     "SALDO ANTERIOR": st.column_config.NumberColumn(format="R$ %.2f", min_value=0.0)
                 },
                 hide_index=True,
-                key="editor_saldos" # Chave fundamental para persistência
+                key="editor_saldos"
             )
             
-            # Atualiza o estado com o retorno do editor
             st.session_state['df_saldos_geral'] = edited_df
             
             if st.button("CONCILIAR", type="primary", use_container_width=True):
