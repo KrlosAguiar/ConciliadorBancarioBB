@@ -276,10 +276,6 @@ def sanitizar_historico(val):
 def inserir_subtotais_diarios(df):
     """
     Insere linhas de subtotal diário para os itens com Status 'Retido s/ Pagto'.
-    Configuração:
-    - Empenho: "TOTAL"
-    - Data: Data formatada
-    - Histórico, Pago, Dif, Status: "-"
     """
     if df.empty: return df
     
@@ -289,7 +285,7 @@ def inserir_subtotais_diarios(df):
     if df_ret.empty:
         return df
     
-    # Ordena por data
+    # Ordena por data (o campo _dt_sort é datetime e deve existir aqui)
     df_ret = df_ret.sort_values(by=['_dt_sort'])
     
     new_rows = []
@@ -304,6 +300,8 @@ def inserir_subtotais_diarios(df):
             
         subtotal = df_dia['Vlr Retido'].sum()
         
+        # Cria linha de subtotal
+        # Copia a última linha para preservar _dt_sort para ordenação futura se necessário
         row_sub = df_dia.iloc[0].drop('temp_date').copy()
         row_sub['Empenho'] = "TOTAL"
         row_sub['Data Emp'] = formatar_data(pd.to_datetime(dt))
@@ -322,6 +320,7 @@ def inserir_subtotais_diarios(df):
             new_rows.append(row.drop('temp_date'))
 
     df_ret_final = pd.DataFrame(new_rows)
+    # Reconcatena. df_others também deve ter _dt_sort preservado do processar_conciliacao
     return pd.concat([df_ret_final, df_others], ignore_index=True)
 
 def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
@@ -480,21 +479,23 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
 
     if not resultados: return pd.DataFrame(), resumo
 
-    # Retorna DataFrame SEM subtotais (Raw) para o Excel
+    # Retorna o DataFrame contendo _dt_sort para que possa ser usado depois
     df_res = pd.DataFrame(resultados).sort_values(by=['_sort', '_dt_sort'])
-    df_final = df_res.drop(columns=['_dt_sort'])
     
-    resumo["tot_ret"] = df_final["Vlr Retido"].sum()
-    resumo["tot_pag"] = df_final["Vlr Pago"].sum()
-    diferenca_tabela = df_final["Dif"].sum()
+    # Cálculos finais de resumo usando dados brutos (excluindo subtotais pois eles não existem aqui)
+    resumo["tot_ret"] = df_res["Vlr Retido"].sum()
+    resumo["tot_pag"] = df_res["Vlr Pago"].sum()
+    diferenca_tabela = df_res["Dif"].sum()
     resumo["saldo"] = diferenca_tabela + saldo_anterior_val
     
-    return df_final, resumo
+    return df_res, resumo
 
 def gerar_excel(df, resumo, saldo_anterior, ug, conta):
     # Recebe o DF "Limpo" (sem subtotais)
     out = io.BytesIO()
-    df_exp = df.drop(columns=['_sort', 'Status'])
+    # Remove colunas auxiliares
+    df_exp = df.drop(columns=['_sort', '_dt_sort', 'Status'], errors='ignore')
+    
     start_row_table = 8 
     with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
         df_exp.to_excel(writer, sheet_name='Conciliacao', index=False, startrow=start_row_table)
@@ -629,7 +630,7 @@ def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
             # Linha de Subtotal
             row_data = [
                 "TOTAL", 
-                r['Data Emp'], # Já vem formatado da função inserir_subtotais_diarios
+                r['Data Emp'], 
                 formatar_moeda_br(r['Vlr Retido']), 
                 "-", 
                 "-", 
