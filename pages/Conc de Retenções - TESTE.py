@@ -342,6 +342,7 @@ def preparar_dados_resumo_superior(df):
     if df.empty: return pd.DataFrame()
     
     # 1. Subtotais Diários de Retido s/ Pagto
+    # Label alterada para "Retenção"
     df_ret = df[df['Status'] == 'Retido s/ Pagto'].copy()
     rows_ret = []
     if not df_ret.empty:
@@ -350,7 +351,7 @@ def preparar_dados_resumo_superior(df):
         for dt in dates:
             d = df_ret[df_ret['temp_date'] == dt]
             rows_ret.append({
-                "Empenho": "SUBTOTAL",
+                "Empenho": "Retenção", # Label alterada
                 "Data": formatar_data(pd.to_datetime(dt)),
                 "Vlr Retido": d['Vlr Retido'].sum(),
                 "Vlr Pago": 0.0,
@@ -378,6 +379,7 @@ def preparar_dados_resumo_superior(df):
         })
 
     # 3. Subtotais Diários de Conciliados
+    # Label alterada para "Conciliado"
     df_conc = df[df['Status'] == 'Conciliado'].copy()
     rows_conc = []
     if not df_conc.empty:
@@ -386,7 +388,7 @@ def preparar_dados_resumo_superior(df):
         for dt in dates:
             d = df_conc[df_conc['temp_date'] == dt]
             rows_conc.append({
-                "Empenho": "SUBTOTAL",
+                "Empenho": "Conciliado", # Label alterada
                 "Data": formatar_data(pd.to_datetime(dt)),
                 "Vlr Retido": d['Vlr Retido'].sum(),
                 "Vlr Pago": d['Vlr Pago'].sum(),
@@ -401,8 +403,8 @@ def preparar_dados_resumo_superior(df):
     if not all_rows: return pd.DataFrame()
     
     df_final = pd.DataFrame(all_rows)
-    # Ordena por Data e depois por Tipo (opcional)
-    df_final = df_final.sort_values(by=['_dt_sort', '_sort_order'])
+    # Ordena PRIMEIRO pelo grupo (Retido -> Pago -> Conciliado) e DEPOIS pela Data
+    df_final = df_final.sort_values(by=['_sort_order', '_dt_sort'])
     return df_final
 
 def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
@@ -963,7 +965,7 @@ if arquivo:
                     with f3: st.markdown(f"""<div class="metric-card metric-card-blue"><div class="metric-label">Total Pago (Período)</div><div class="metric-value" style="color: #004085;">{formatar_moeda_br(resumo['tot_pag'])}</div></div>""", unsafe_allow_html=True)
                     with f4: st.markdown(f"""<div class="metric-card metric-card-dark"><div class="metric-label">Saldo a Pagar</div><div class="metric-value" style="color: {cor_saldo};">{formatar_moeda_br(resumo['saldo'])}</div></div>""", unsafe_allow_html=True)
 
-                    # --- 1. RELATÓRIO RESUMIDO (NOVO) ---
+                    # --- 1. RELATÓRIO RESUMIDO (ATUALIZADO) ---
                     st.markdown("### RESUMO DE RETENÇÕES E PAGAMENTOS")
                     html_resumo = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
                     html_resumo += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
@@ -979,19 +981,36 @@ if arquivo:
                     
                     if not df_resumo_superior.empty:
                         for _, r in df_resumo_superior.iterrows():
-                            # Se for Subtotal (Retido ou Conciliado), destacamos a linha
-                            if "SUBTOTAL" in str(r['Empenho']) or "Subtotal" in str(r['Status']):
+                            # Se for Subtotal de "Retenção" (Pendente)
+                            if r['Empenho'] == "Retenção":
                                 html_resumo += "<tr style='background-color: #E6E6E6; font-weight: bold;'>"
-                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Empenho']}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>Retenção</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Data']}</td>"
+                                # Valor Vermelho
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: red;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Dif'])}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>-</td>"
+                                # Status sem negrito
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-weight: normal !important;'>{r['Status']}</td>"
+                                html_resumo += "</tr>"
+
+                            # Se for Subtotal de "Conciliado"
+                            elif r['Empenho'] == "Conciliado":
+                                html_resumo += "<tr style='background-color: #E6E6E6; font-weight: bold;'>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>Conciliado</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Data']}</td>"
+                                # Valor Preto
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Dif'])}</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>-</td>"
-                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Status']}</td>"
+                                # Status sem negrito
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-weight: normal !important;'>{r['Status']}</td>"
                                 html_resumo += "</tr>"
+
+                            # Linha normal (Pago s/ Retenção)
                             else:
-                                # Linha normal (Pago s/ Retenção)
                                 dif = r['Dif']
                                 style_dif = "color: red; font-weight: bold;" if dif > 0.01 else ("color: darkgreen; font-weight: bold;" if dif < -0.01 else "color: black;")
                                 html_resumo += "<tr style='background-color: white;'>"
@@ -1001,7 +1020,8 @@ if arquivo:
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 11px; word-wrap: break-word; white-space: normal;'>{r['Histórico']}</td>"
-                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px;'>{r['Status']}</td>"
+                                # Status sem negrito
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px; font-weight: normal !important;'>{r['Status']}</td>"
                                 html_resumo += "</tr>"
                     else:
                          html_resumo += "<tr><td colspan='7' style='text-align:center; padding:10px; border:1px solid #000;'>Nenhum dado para o resumo.</td></tr>"
