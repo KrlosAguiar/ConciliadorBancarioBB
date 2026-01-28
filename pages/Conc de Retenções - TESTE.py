@@ -322,6 +322,79 @@ def inserir_subtotais_diarios(df):
     # Reconcatena
     return pd.concat([df_ret_final, df_others], ignore_index=True)
 
+def preparar_dados_resumo_superior(df):
+    """
+    Prepara os dados para o novo relatório resumido.
+    1. Subtotais diários de 'Retido s/ Pagto'.
+    2. Valores individuais de 'Pago s/ Retenção'.
+    3. Subtotais diários de 'Conciliado'.
+    """
+    if df.empty: return pd.DataFrame()
+    
+    # 1. Subtotais Diários de Retido s/ Pagto
+    df_ret = df[df['Status'] == 'Retido s/ Pagto'].copy()
+    rows_ret = []
+    if not df_ret.empty:
+        df_ret['temp_date'] = df_ret['_dt_sort'].dt.date
+        dates = df_ret['temp_date'].unique()
+        for dt in dates:
+            d = df_ret[df_ret['temp_date'] == dt]
+            rows_ret.append({
+                "Empenho": "SUBTOTAL",
+                "Data": formatar_data(pd.to_datetime(dt)),
+                "Vlr Retido": d['Vlr Retido'].sum(),
+                "Vlr Pago": 0.0,
+                "Dif": 0.0,
+                "Histórico": "-",
+                "Status": "Retido s/ Pagto",
+                "_dt_sort": pd.to_datetime(dt),
+                "_sort_order": 1
+            })
+            
+    # 2. Itens individuais de Pago s/ Retenção (como no relatório atual)
+    df_pag = df[df['Status'] == 'Pago s/ Retenção'].copy()
+    rows_pag = []
+    for _, row in df_pag.iterrows():
+        rows_pag.append({
+            "Empenho": row['Empenho'],
+            "Data": row['Data Pag'], 
+            "Vlr Retido": 0.0,
+            "Vlr Pago": row['Vlr Pago'],
+            "Dif": row['Dif'],
+            "Histórico": row['Histórico'],
+            "Status": "Pago s/ Retenção",
+            "_dt_sort": row['_dt_sort'],
+            "_sort_order": 2
+        })
+
+    # 3. Subtotais Diários de Conciliados
+    df_conc = df[df['Status'] == 'Conciliado'].copy()
+    rows_conc = []
+    if not df_conc.empty:
+        df_conc['temp_date'] = df_conc['_dt_sort'].dt.date
+        dates = df_conc['temp_date'].unique()
+        for dt in dates:
+            d = df_conc[df_conc['temp_date'] == dt]
+            rows_conc.append({
+                "Empenho": "SUBTOTAL",
+                "Data": formatar_data(pd.to_datetime(dt)),
+                "Vlr Retido": d['Vlr Retido'].sum(),
+                "Vlr Pago": d['Vlr Pago'].sum(),
+                "Dif": d['Dif'].sum(),
+                "Histórico": "-",
+                "Status": "Conciliado (Subtotal)",
+                "_dt_sort": pd.to_datetime(dt),
+                "_sort_order": 3
+            })
+
+    all_rows = rows_ret + rows_pag + rows_conc
+    if not all_rows: return pd.DataFrame()
+    
+    df_final = pd.DataFrame(all_rows)
+    # Ordena por Data e depois por Tipo (opcional)
+    df_final = df_final.sort_values(by=['_dt_sort', '_sort_order'])
+    return df_final
+
 def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     cod_ug = ug_sel.split(' - ')[0].strip()
     cod_conta = conta_sel.split(' - ')[0].strip()
@@ -852,10 +925,13 @@ if arquivo:
                 saldo_ant_float = converter_moeda_input(val_anterior_str)
                 
                 with st.spinner("Processando..."):
-                    # Retorna dados BRUTOS (para Excel)
+                    # Retorna dados BRUTOS
                     df_res, resumo = processar_conciliacao(df_dados, ug_sel, conta_sel, saldo_ant_float)
                     
-                    # Cria versão COM SUBTOTAIS (para Tela e PDF)
+                    # Cria versão para o NOVO RELATÓRIO DE CIMA (Resumido)
+                    df_resumo_superior = preparar_dados_resumo_superior(df_res)
+                    
+                    # Cria versão para o RELATÓRIO DE BAIXO (Detalhado - já existente)
                     df_res_visual = inserir_subtotais_diarios(df_res)
                 
                 if not df_res.empty:
@@ -870,7 +946,6 @@ if arquivo:
                     with v3: st.markdown(f"""<div class="metric-card metric-card-green"><div class="metric-label">Total Retido e Pago</div><div class="metric-value" style="color: #28a745;">{formatar_moeda_br(resumo['val_ok'])}</div></div>""", unsafe_allow_html=True)
 
                     f1, f2, f3, f4 = st.columns(4)
-                    
                     cor_saldo = "#ff4b4b" if resumo['saldo'] > 0.01 else ("#28a745" if resumo['saldo'] < -0.01 else "#343a40")
                     
                     with f1: st.markdown(f"""<div class="metric-card metric-card-dark"><div class="metric-label">Saldo Anterior</div><div class="metric-value" style="color: #343a40;">{formatar_moeda_br(saldo_ant_float)}</div></div>""", unsafe_allow_html=True)
@@ -878,6 +953,55 @@ if arquivo:
                     with f3: st.markdown(f"""<div class="metric-card metric-card-blue"><div class="metric-label">Total Pago (Período)</div><div class="metric-value" style="color: #004085;">{formatar_moeda_br(resumo['tot_pag'])}</div></div>""", unsafe_allow_html=True)
                     with f4: st.markdown(f"""<div class="metric-card metric-card-dark"><div class="metric-label">Saldo a Pagar</div><div class="metric-value" style="color: {cor_saldo};">{formatar_moeda_br(resumo['saldo'])}</div></div>""", unsafe_allow_html=True)
 
+                    # --- 1. RELATÓRIO RESUMIDO (NOVO) ---
+                    st.markdown("### RESUMO DE RETENÇÕES E PAGAMENTOS")
+                    html_resumo = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
+                    html_resumo += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
+                    html_resumo += "<tr style='background-color: black; color: white !important;'>"
+                    html_resumo += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Empenho</th>"
+                    html_resumo += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Data</th>"
+                    html_resumo += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Retido</th>"
+                    html_resumo += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Vlr Pago</th>"
+                    html_resumo += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 12%;'>Diferença</th>"
+                    html_resumo += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 34%;'>Histórico</th>"
+                    html_resumo += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Status</th>"
+                    html_resumo += "</tr>"
+                    
+                    if not df_resumo_superior.empty:
+                        for _, r in df_resumo_superior.iterrows():
+                            # Se for Subtotal (Retido ou Conciliado), destacamos a linha
+                            if "SUBTOTAL" in str(r['Empenho']) or "Subtotal" in str(r['Status']):
+                                html_resumo += "<tr style='background-color: #E6E6E6; font-weight: bold;'>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Empenho']}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Data']}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Dif'])}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>-</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Status']}</td>"
+                                html_resumo += "</tr>"
+                            else:
+                                # Linha normal (Pago s/ Retenção)
+                                dif = r['Dif']
+                                style_dif = "color: red; font-weight: bold;" if dif > 0.01 else ("color: darkgreen; font-weight: bold;" if dif < -0.01 else "color: black;")
+                                html_resumo += "<tr style='background-color: white;'>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Empenho']}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Data']}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 11px; word-wrap: break-word; white-space: normal;'>{r['Histórico']}</td>"
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px;'>{r['Status']}</td>"
+                                html_resumo += "</tr>"
+                    else:
+                         html_resumo += "<tr><td colspan='7' style='text-align:center; padding:10px; border:1px solid #000;'>Nenhum dado para o resumo.</td></tr>"
+                         
+                    html_resumo += "</table></div>"
+                    st.markdown(html_resumo, unsafe_allow_html=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+
+                    # --- 2. RELATÓRIO DETALHADO (EXISTENTE) ---
+                    st.markdown("### RELATÓRIO DETALHADO DE RETENÇÕES")
                     html = "<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>"
                     html += "<table style='width:100%; border-collapse: collapse; color: black !important; background-color: white !important; table-layout: fixed;'>"
                     html += "<tr style='background-color: black; color: white !important;'>"
@@ -890,7 +1014,6 @@ if arquivo:
                     html += "<th style='padding: 8px; border: 1px solid #000; text-align: center; width: 10%;'>Status</th>"
                     html += "</tr>"
                     
-                    # Exibição na tela (Tabela HTML) usa df_res_visual (com subtotais)
                     for _, r in df_res_visual.iterrows():
                         if r['Status'] == 'SUBTOTAL':
                             html += "<tr style='background-color: #E6E6E6; font-weight: bold;'>"
@@ -934,15 +1057,15 @@ if arquivo:
                     excel_bytes = gerar_excel(df_res, resumo, saldo_ant_float, ug_sel, conta_sel)
                     st.download_button("BAIXAR RELATÓRIO EM EXCEL", excel_bytes, f"{nome_base}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                     
-                    # PDF usa df_res_visual (COM subtotais)
+                    # PDF usa df_res_visual (COM subtotais do relatório detalhado)
                     pdf_bytes = gerar_pdf(df_res_visual, ug_sel, conta_sel, resumo, saldo_ant_float)
                     st.download_button("BAIXAR RELATÓRIO EM PDF", pdf_bytes, f"{nome_base}.pdf", "application/pdf", use_container_width=True)
                 else:
                     st.warning("Nenhum dado encontrado.")
 
-# MODO GERAL
+        # MODO GERAL
         elif st.session_state['modo_conciliacao'] == 'geral':
-            st.markdown("### Conciliação Geral de Retenções por UG")
+            st.markdown("### Conciliação Geral (Múltiplas Contas)")
             st.info("Insira o Saldo Anterior para cada conta abaixo. Os valores só serão processados ao clicar em CONCILIAR.")
             
             # --- INÍCIO DO FORMULÁRIO ---
@@ -962,7 +1085,8 @@ if arquivo:
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # Removido o type="primary" para pegar o estilo do seu CSS (cinza escuro)
+                # O botão deve ficar DENTRO do form
+                # Mantido o padrão dos demais botões, sem o estilo 'primary'
                 submit_btn = st.form_submit_button("CONCILIAR", use_container_width=True)
 
             # --- LÓGICA APÓS CLICAR NO BOTÃO ---
