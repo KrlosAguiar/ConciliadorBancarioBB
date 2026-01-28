@@ -342,7 +342,6 @@ def preparar_dados_resumo_superior(df):
     if df.empty: return pd.DataFrame()
     
     # 1. Subtotais Diários de Retido s/ Pagto
-    # Label alterada para "Retenção"
     df_ret = df[df['Status'] == 'Retido s/ Pagto'].copy()
     rows_ret = []
     if not df_ret.empty:
@@ -350,12 +349,15 @@ def preparar_dados_resumo_superior(df):
         dates = df_ret['temp_date'].unique()
         for dt in dates:
             d = df_ret[df_ret['temp_date'] == dt]
+            # CALCULA A SOMA DE DIFERENÇA (Para itens retidos s/ pagto, Dif = Vlr Retido)
+            soma_dif = d['Dif'].sum()
+            
             rows_ret.append({
                 "Empenho": "Retenção", 
                 "Data": formatar_data(pd.to_datetime(dt)),
                 "Vlr Retido": d['Vlr Retido'].sum(),
                 "Vlr Pago": 0.0,
-                "Dif": 0.0,
+                "Dif": soma_dif, # Usa a soma real das diferenças
                 "Histórico": "-",
                 "Status": "Retido s/ Pagto",
                 "_dt_sort": pd.to_datetime(dt),
@@ -379,7 +381,6 @@ def preparar_dados_resumo_superior(df):
         })
 
     # 3. Subtotais Diários de Conciliados
-    # Label alterada para "Conciliado"
     df_conc = df[df['Status'] == 'Conciliado'].copy()
     rows_conc = []
     if not df_conc.empty:
@@ -387,14 +388,17 @@ def preparar_dados_resumo_superior(df):
         dates = df_conc['temp_date'].unique()
         for dt in dates:
             d = df_conc[df_conc['temp_date'] == dt]
+            # CALCULA A SOMA DE DIFERENÇA
+            soma_dif = d['Dif'].sum()
+            
             rows_conc.append({
                 "Empenho": "Conciliado", 
                 "Data": formatar_data(pd.to_datetime(dt)),
                 "Vlr Retido": d['Vlr Retido'].sum(),
                 "Vlr Pago": d['Vlr Pago'].sum(),
-                "Dif": d['Dif'].sum(),
+                "Dif": soma_dif, # Usa a soma real das diferenças
                 "Histórico": "-",
-                "Status": "Conciliado", # Alterado de "Conciliado (Subtotal)" para "Conciliado"
+                "Status": "Conciliado", 
                 "_dt_sort": pd.to_datetime(dt),
                 "_sort_order": 3
             })
@@ -986,10 +990,11 @@ if arquivo:
                                 html_resumo += "<tr style='background-color: white;'>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>Retenção</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Data']}</td>"
-                                # Valor Vermelho
-                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: red;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
+                                # Valor Retido PRETO
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
-                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Dif'])}</td>"
+                                # Diferença VERMELHA E NEGRITO
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: red; font-weight: bold;'>{formatar_moeda_br(r['Dif'])}</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>-</td>"
                                 # Status sem negrito
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-weight: normal !important;'>{r['Status']}</td>"
@@ -1003,7 +1008,12 @@ if arquivo:
                                 # Valor Preto
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Retido'])}</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
-                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Dif'])}</td>"
+                                
+                                # Diferença com cor condicional padrão
+                                dif_conc = r['Dif']
+                                style_dif_conc = "color: red; font-weight: bold;" if dif_conc > 0.01 else ("color: darkgreen; font-weight: bold;" if dif_conc < -0.01 else "color: black;")
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: right; {style_dif_conc}'>{formatar_moeda_br(dif_conc)}</td>"
+                                
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>-</td>"
                                 # Status sem negrito
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-weight: normal !important;'>{r['Status']}</td>"
