@@ -78,18 +78,20 @@ st.markdown("""
     .metric-value { font-size: 22px; font-weight: bold; }
     .metric-label { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    /* TENTATIVA DE AUMENTO DA FONTE DO DATA EDITOR */
-    /* Cabeçalhos da tabela */
-    [data-testid="stDataEditor"] div[role="columnheader"] {
-        font-size: 18px !important;
-        font-weight: bold !important;
-    }
-    /* Células durante a edição (Input) */
-    [data-testid="stDataEditor"] input {
+/* AJUSTE FORÇADO DE FONTE DO DATA EDITOR */
+    [data-testid="stDataEditor"] table {
         font-size: 18px !important;
     }
-    /* Container geral (pode afetar a altura das linhas) */
-    [data-testid="stDataEditor"] {
+    [data-testid="stDataEditor"] th {
+        font-size: 18px !important;
+        background-color: black !important;
+        color: white !important;
+    }
+    [data-testid="stDataEditor"] td {
+        font-size: 18px !important;
+    }
+    /* Aumenta a fonte especificamente na hora que você clica para digitar */
+    div[data-testid="stDataEditor"] input {
         font-size: 18px !important;
     }
 </style>
@@ -938,17 +940,14 @@ if arquivo:
                 else:
                     st.warning("Nenhum dado encontrado.")
 
-        # MODO GERAL
+# MODO GERAL
         elif st.session_state['modo_conciliacao'] == 'geral':
-            st.markdown("### Conciliação Geral (Múltiplas Contas)")
+            st.markdown("### Conciliação Geral de Retenções")
             st.info("Insira o Saldo Anterior para cada conta abaixo e clique em CONCILIAR.")
             
-            # --- FUNÇÃO DE CALLBACK PARA GARANTIR A PERSISTÊNCIA DOS DADOS ---
-            def callback_att_saldos():
-                # Atualiza o estado principal imediatamente quando há uma edição
-                st.session_state['df_saldos_geral'] = st.session_state['editor_saldos']
-
-            st.data_editor(
+            # Removemos o callback manual que causava o erro.
+            # Agora capturamos o retorno do data_editor diretamente.
+            edited_df = st.data_editor(
                 st.session_state['df_saldos_geral'], 
                 use_container_width=True, 
                 column_config={
@@ -956,20 +955,20 @@ if arquivo:
                     "SALDO ANTERIOR": st.column_config.NumberColumn(format="R$ %.2f", min_value=0.0)
                 },
                 hide_index=True,
-                key="editor_saldos", # Chave para o estado do widget
-                on_change=callback_att_saldos # Chama o callback ao alterar
+                key="editor_saldos"
             )
             
-            # Removemos a atribuição manual que causava o erro de reset
+            # Atualizamos o session_state com o dataframe editado (que o data_editor devolveu)
+            # Isso garante que o valor não suma na próxima interação
+            st.session_state['df_saldos_geral'] = edited_df
             
             if st.button("CONCILIAR", type="primary", use_container_width=True):
                 resultados_gerais = []
                 progresso = st.progress(0)
-                # Usa o dataframe do session_state que já foi atualizado pelo callback
-                df_processar = st.session_state['df_saldos_geral']
-                total_contas = len(df_processar)
+                # Usamos o edited_df que contém os valores digitados
+                total_contas = len(edited_df)
                 
-                for idx, row in df_processar.iterrows():
+                for idx, row in edited_df.iterrows():
                     conta = row['CONTA DE RETENÇÃO']
                     saldo_ant = row['SALDO ANTERIOR']
                     _, resumo = processar_conciliacao(df_dados, ug_sel, conta, saldo_ant)
