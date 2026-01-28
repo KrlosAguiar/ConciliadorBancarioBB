@@ -996,8 +996,8 @@ if arquivo:
                                 # Diferença VERMELHA E NEGRITO
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: red; font-weight: bold;'>{formatar_moeda_br(r['Dif'])}</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>-</td>"
-                                # Status sem negrito
-                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-weight: normal !important;'>{r['Status']}</td>"
+                                # Status sem negrito e com fonte 12px
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px; font-weight: normal !important;'>{r['Status']}</td>"
                                 html_resumo += "</tr>"
 
                             # Se for Subtotal de "Conciliado"
@@ -1015,8 +1015,8 @@ if arquivo:
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; {style_dif_conc}'>{formatar_moeda_br(dif_conc)}</td>"
                                 
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>-</td>"
-                                # Status sem negrito
-                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-weight: normal !important;'>{r['Status']}</td>"
+                                # Status sem negrito e com fonte 12px
+                                html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px; font-weight: normal !important;'>{r['Status']}</td>"
                                 html_resumo += "</tr>"
 
                             # Linha normal (Pago s/ Retenção)
@@ -1030,7 +1030,7 @@ if arquivo:
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; color: black;'>{formatar_moeda_br(r['Vlr Pago'])}</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: right; {style_dif}'>{formatar_moeda_br(dif)}</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: left; color: black; font-size: 11px; word-wrap: break-word; white-space: normal;'>{r['Histórico']}</td>"
-                                # Status sem negrito
+                                # Status sem negrito e com fonte 12px
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black; font-size: 12px; font-weight: normal !important;'>{r['Status']}</td>"
                                 html_resumo += "</tr>"
                     else:
