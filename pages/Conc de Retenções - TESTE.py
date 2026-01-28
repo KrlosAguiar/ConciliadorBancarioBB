@@ -45,7 +45,10 @@ except: pass
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
-    div.stButton > button {
+    
+    /* CSS PARA TODOS OS BOTÕES (INCLUINDO DENTRO DO FORMULÁRIO) */
+    div.stButton > button, 
+    div[data-testid="stForm"] button {
         background-color: rgb(38, 39, 48) !important;
         color: white !important;
         font-weight: bold !important;
@@ -56,7 +59,14 @@ st.markdown("""
         height: 50px; 
         margin-top: 10px;
     }
-    div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
+    
+    /* CSS HOVER PARA TODOS OS BOTÕES */
+    div.stButton > button:hover, 
+    div[data-testid="stForm"] button:hover {
+        background-color: rgb(20, 20, 25) !important;
+        border-color: white;
+    }
+
     .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
     
     /* Cards de Resumo */
@@ -78,7 +88,7 @@ st.markdown("""
     .metric-value { font-size: 22px; font-weight: bold; }
     .metric-label { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
 
-/* AJUSTE FORÇADO DE FONTE DO DATA EDITOR */
+    /* AJUSTE FORÇADO DE FONTE DO DATA EDITOR */
     [data-testid="stDataEditor"] table {
         font-size: 18px !important;
     }
