@@ -351,7 +351,7 @@ def preparar_dados_resumo_superior(df):
         for dt in dates:
             d = df_ret[df_ret['temp_date'] == dt]
             rows_ret.append({
-                "Empenho": "Retenção", # Label alterada
+                "Empenho": "Retenção", 
                 "Data": formatar_data(pd.to_datetime(dt)),
                 "Vlr Retido": d['Vlr Retido'].sum(),
                 "Vlr Pago": 0.0,
@@ -388,13 +388,13 @@ def preparar_dados_resumo_superior(df):
         for dt in dates:
             d = df_conc[df_conc['temp_date'] == dt]
             rows_conc.append({
-                "Empenho": "Conciliado", # Label alterada
+                "Empenho": "Conciliado", 
                 "Data": formatar_data(pd.to_datetime(dt)),
                 "Vlr Retido": d['Vlr Retido'].sum(),
                 "Vlr Pago": d['Vlr Pago'].sum(),
                 "Dif": d['Dif'].sum(),
                 "Histórico": "-",
-                "Status": "Conciliado (Subtotal)",
+                "Status": "Conciliado", # Alterado de "Conciliado (Subtotal)" para "Conciliado"
                 "_dt_sort": pd.to_datetime(dt),
                 "_sort_order": 3
             })
@@ -983,7 +983,7 @@ if arquivo:
                         for _, r in df_resumo_superior.iterrows():
                             # Se for Subtotal de "Retenção" (Pendente)
                             if r['Empenho'] == "Retenção":
-                                html_resumo += "<tr style='background-color: #E6E6E6; font-weight: bold;'>"
+                                html_resumo += "<tr style='background-color: white;'>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>Retenção</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Data']}</td>"
                                 # Valor Vermelho
@@ -997,7 +997,7 @@ if arquivo:
 
                             # Se for Subtotal de "Conciliado"
                             elif r['Empenho'] == "Conciliado":
-                                html_resumo += "<tr style='background-color: #E6E6E6; font-weight: bold;'>"
+                                html_resumo += "<tr style='background-color: white;'>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>Conciliado</td>"
                                 html_resumo += f"<td style='border: 1px solid #000; text-align: center; color: black;'>{r['Data']}</td>"
                                 # Valor Preto
