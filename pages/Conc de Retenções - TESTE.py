@@ -942,30 +942,39 @@ if arquivo:
 
 # MODO GERAL
         elif st.session_state['modo_conciliacao'] == 'geral':
-            st.markdown("### Conciliação Geral de Retenções")
-            st.info("Insira o Saldo Anterior para cada conta abaixo e clique em CONCILIAR.")
+            st.markdown("### Conciliação Geral de Retenções por UG")
+            st.info("Insira o Saldo Anterior para cada conta abaixo. Os valores só serão processados ao clicar em CONCILIAR.")
             
-            # Removemos o callback manual que causava o erro.
-            # Agora capturamos o retorno do data_editor diretamente.
-            edited_df = st.data_editor(
-                st.session_state['df_saldos_geral'], 
-                use_container_width=True, 
-                column_config={
-                    "CONTA DE RETENÇÃO": st.column_config.TextColumn(disabled=True),
-                    "SALDO ANTERIOR": st.column_config.NumberColumn(format="R$ %.2f", min_value=0.0)
-                },
-                hide_index=True,
-                key="editor_saldos"
-            )
-            
-            # Atualizamos o session_state com o dataframe editado (que o data_editor devolveu)
-            # Isso garante que o valor não suma na próxima interação
-            st.session_state['df_saldos_geral'] = edited_df
-            
-            if st.button("CONCILIAR", type="primary", use_container_width=True):
+            # --- INÍCIO DO FORMULÁRIO ---
+            # O 'st.form' impede que a página recarregue a cada dígito inserido
+            with st.form("form_conciliacao_geral"):
+                
+                edited_df = st.data_editor(
+                    st.session_state['df_saldos_geral'], 
+                    use_container_width=True, 
+                    column_config={
+                        "CONTA DE RETENÇÃO": st.column_config.TextColumn(disabled=True),
+                        "SALDO ANTERIOR": st.column_config.NumberColumn(format="R$ %.2f", min_value=0.0)
+                    },
+                    hide_index=True,
+                    key="editor_saldos_form" # Chave única para este widget
+                )
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # O botão deve ficar DENTRO do form
+                submit_btn = st.form_submit_button("CONCILIAR", type="primary", use_container_width=True)
+
+            # --- LÓGICA APÓS CLICAR NO BOTÃO ---
+            if submit_btn:
+                # 1. Primeiro passo: Salvar o que foi digitado no estado geral
+                # Isso garante que se você fizer outra ação depois, os valores continuam lá
+                st.session_state['df_saldos_geral'] = edited_df
+                
                 resultados_gerais = []
                 progresso = st.progress(0)
-                # Usamos o edited_df que contém os valores digitados
+                
+                # Usamos o edited_df que veio direto do formulário
                 total_contas = len(edited_df)
                 
                 for idx, row in edited_df.iterrows():
