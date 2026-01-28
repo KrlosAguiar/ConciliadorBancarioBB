@@ -78,21 +78,19 @@ st.markdown("""
     .metric-value { font-size: 22px; font-weight: bold; }
     .metric-label { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    /* AUMENTO DA FONTE DA TABELA DE INPUT (20px) */
-    [data-testid="stDataEditor"] table {
-        border-collapse: collapse !important;
-        font-size: 20px !important; 
-    }
-    [data-testid="stDataEditor"] thead tr th {
-        background-color: black !important;
-        color: white !important;
+    /* TENTATIVA DE AUMENTO DA FONTE DO DATA EDITOR */
+    /* Cabeçalhos da tabela */
+    [data-testid="stDataEditor"] div[role="columnheader"] {
+        font-size: 18px !important;
         font-weight: bold !important;
-        text-align: center !important;
-        font-size: 20px !important; 
-        border: 1px solid #444 !important;
     }
-    [data-testid="stDataEditor"] td {
-        border: 1px solid #ddd !important;
+    /* Células durante a edição (Input) */
+    [data-testid="stDataEditor"] input {
+        font-size: 18px !important;
+    }
+    /* Container geral (pode afetar a altura das linhas) */
+    [data-testid="stDataEditor"] {
+        font-size: 18px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -301,7 +299,6 @@ def inserir_subtotais_diarios(df):
         subtotal = df_dia['Vlr Retido'].sum()
         
         # Cria linha de subtotal
-        # Copia a última linha para preservar _dt_sort para ordenação futura se necessário
         row_sub = df_dia.iloc[0].drop('temp_date').copy()
         row_sub['Empenho'] = "TOTAL"
         row_sub['Data Emp'] = formatar_data(pd.to_datetime(dt))
@@ -320,7 +317,7 @@ def inserir_subtotais_diarios(df):
             new_rows.append(row.drop('temp_date'))
 
     df_ret_final = pd.DataFrame(new_rows)
-    # Reconcatena. df_others também deve ter _dt_sort preservado do processar_conciliacao
+    # Reconcatena
     return pd.concat([df_ret_final, df_others], ignore_index=True)
 
 def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
@@ -472,17 +469,17 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
             "Dif": 0.0 - r[c_valor], 
             "Data Pag": formatar_data(r[c_data]), 
             "Histórico": sanitizar_historico(r[c_hist]), 
-            "_sort": 1,
+            "_sort": 1, 
             "_dt_sort": r['Data_Dt'], 
             "Status": "Pago s/ Retenção"
         })
 
     if not resultados: return pd.DataFrame(), resumo
 
-    # Retorna o DataFrame contendo _dt_sort para que possa ser usado depois
+    # Retorna o DataFrame contendo _dt_sort
     df_res = pd.DataFrame(resultados).sort_values(by=['_sort', '_dt_sort'])
     
-    # Cálculos finais de resumo usando dados brutos (excluindo subtotais pois eles não existem aqui)
+    # Resumo com dados brutos
     resumo["tot_ret"] = df_res["Vlr Retido"].sum()
     resumo["tot_pag"] = df_res["Vlr Pago"].sum()
     diferenca_tabela = df_res["Dif"].sum()
@@ -491,7 +488,6 @@ def processar_conciliacao(df, ug_sel, conta_sel, saldo_anterior_val):
     return df_res, resumo
 
 def gerar_excel(df, resumo, saldo_anterior, ug, conta):
-    # Recebe o DF "Limpo" (sem subtotais)
     out = io.BytesIO()
     # Remove colunas auxiliares
     df_exp = df.drop(columns=['_sort', '_dt_sort', 'Status'], errors='ignore')
@@ -562,7 +558,6 @@ def gerar_excel(df, resumo, saldo_anterior, ug, conta):
     return out.getvalue()
 
 def gerar_pdf(df_f, ug, conta, resumo, saldo_anterior):
-    # Recebe o DF com subtotais
     buffer = io.BytesIO()
     doc_title = f"Conciliação de Retenções - UG {ug} - Retenção {conta}"
     doc = SimpleDocTemplate(
@@ -945,10 +940,15 @@ if arquivo:
 
         # MODO GERAL
         elif st.session_state['modo_conciliacao'] == 'geral':
-            st.markdown("### Conciliação Geral de Retenções")
+            st.markdown("### Conciliação Geral (Múltiplas Contas)")
             st.info("Insira o Saldo Anterior para cada conta abaixo e clique em CONCILIAR.")
             
-            edited_df = st.data_editor(
+            # --- FUNÇÃO DE CALLBACK PARA GARANTIR A PERSISTÊNCIA DOS DADOS ---
+            def callback_att_saldos():
+                # Atualiza o estado principal imediatamente quando há uma edição
+                st.session_state['df_saldos_geral'] = st.session_state['editor_saldos']
+
+            st.data_editor(
                 st.session_state['df_saldos_geral'], 
                 use_container_width=True, 
                 column_config={
@@ -956,17 +956,20 @@ if arquivo:
                     "SALDO ANTERIOR": st.column_config.NumberColumn(format="R$ %.2f", min_value=0.0)
                 },
                 hide_index=True,
-                key="editor_saldos"
+                key="editor_saldos", # Chave para o estado do widget
+                on_change=callback_att_saldos # Chama o callback ao alterar
             )
             
-            st.session_state['df_saldos_geral'] = edited_df
+            # Removemos a atribuição manual que causava o erro de reset
             
             if st.button("CONCILIAR", type="primary", use_container_width=True):
                 resultados_gerais = []
                 progresso = st.progress(0)
-                total_contas = len(st.session_state['df_saldos_geral'])
+                # Usa o dataframe do session_state que já foi atualizado pelo callback
+                df_processar = st.session_state['df_saldos_geral']
+                total_contas = len(df_processar)
                 
-                for idx, row in st.session_state['df_saldos_geral'].iterrows():
+                for idx, row in df_processar.iterrows():
                     conta = row['CONTA DE RETENÇÃO']
                     saldo_ant = row['SALDO ANTERIOR']
                     _, resumo = processar_conciliacao(df_dados, ug_sel, conta, saldo_ant)
