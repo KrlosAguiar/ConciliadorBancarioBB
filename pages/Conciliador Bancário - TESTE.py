@@ -165,7 +165,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             df = pd.read_excel(io.BytesIO(file_bytes), header=None)
         
         # --- AJUSTE INTELIGENTE DE COLUNAS ---
-        # Coluna C do Excel = Índice 2 no Pandas
+        # Coluna C do Excel = Índice 2 no Pandas (Status: Original/Estorno)
         col_status = 2 
         
         # Coluna Valor (I=8 ou J=9)
@@ -186,7 +186,6 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             df = df.iloc[:, [1, col_status, 4, 5, col_valor, c_z, c_aa, c_ab]].copy()
             df.columns = ['Lancamento', 'Status', 'Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
         except: 
-            # Fallback seguro caso índices não existam
             return pd.DataFrame()
         
         # Limpeza
@@ -207,14 +206,14 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_ded].copy()
         
         # ==============================================================================
-        # >>> LÓGICA DE ESTORNO PELA COLUNA C (STATUS) <<<
+        # >>> LÓGICA DE ESTORNO PELA COLUNA C (STATUS) + DATA <<<
         # ==============================================================================
         
         # 1. Identificar Estornos e Originais
         mask_estorno = df_filtered['Status'].str.contains('Estorno', case=False, na=False)
         
         df_estornos = df_filtered[mask_estorno].copy()
-        df_originais = df_filtered[~mask_estorno].copy() # Pode ser 'Original' ou outro status
+        df_originais = df_filtered[~mask_estorno].copy()
         
         # Conjunto de índices a remover (inicia com TODOS os estornos)
         indices_remover = set(df_estornos.index)
@@ -222,18 +221,20 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         # Conjunto para controlar quais originais já foram "anulados"
         originais_anulados = set()
         
-        # 2. Para cada estorno, procurar um "irmão" nos originais com mesmo VALOR
+        # 2. Para cada estorno, procurar um "irmão" nos originais
         for idx_est, row_est in df_estornos.iterrows():
             valor_estorno = row_est['Valor_Razao']
+            data_estorno = row_est['Data'] # Ex: "21/01/2026"
             
-            # Busca originais com mesmo valor (margem 0.01) que ainda não foram anulados
+            # Busca originais com mesmo VALOR e mesma DATA
             cand = df_originais[
+                (df_originais['Data'] == data_estorno) & # Trava de Data
                 (abs(df_originais['Valor_Razao'] - valor_estorno) < 0.01) &
                 (~df_originais.index.isin(originais_anulados))
             ]
             
             if not cand.empty:
-                # Encontrou correspondência!
+                # Encontrou correspondência Exata (Data + Valor)
                 idx_original = cand.index[0]
                 indices_remover.add(idx_original)   # Marca original para remoção
                 originais_anulados.add(idx_original) # Marca como usado
@@ -248,7 +249,6 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         df_final = df_final.dropna(subset=['Data_dt'])
         df_final['Data'] = df_final['Data_dt'].dt.strftime('%d/%m/%Y')
         
-        # Lookup de Documentos (Baseado na data do PDF)
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
         lookup_fundeb = {}
         lookup_pasep = {}
