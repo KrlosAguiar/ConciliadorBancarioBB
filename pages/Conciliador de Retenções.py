@@ -1105,7 +1105,7 @@ if arquivo:
 
         # MODO GERAL
         elif st.session_state['modo_conciliacao'] == 'geral':
-            st.markdown("### Conciliação Geral (Múltiplas Contas)")
+            st.markdown("### Conciliação Geral de Retenções por UG")
             st.info("Insira o Saldo Anterior para cada conta abaixo. Os valores só serão processados ao clicar em CONCILIAR.")
             
             # --- INÍCIO DO FORMULÁRIO ---
