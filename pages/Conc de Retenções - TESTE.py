@@ -89,40 +89,48 @@ st.markdown("""
 
     /* --- ESTILIZAÇÃO ESPECÍFICA PARA A TABELA (DATA EDITOR) --- */
     
-    /* 1. Força o container da tabela a ser branco */
+    /* 1. Força o container da tabela a ser branco com borda */
     div[data-testid="stDataEditor"] {
         background-color: white !important;
-        border-radius: 10px !important;
+        border-radius: 8px !important;
         padding: 10px !important;
         border: 1px solid #ccc !important;
     }
 
-    /* 2. Força o texto dentro da tabela a ser PRETO e MAIOR */
+    /* 2. Força TODO texto dentro da tabela a ser PRETO e MAIOR */
     div[data-testid="stDataEditor"] * {
         color: black !important;
         font-size: 18px !important; /* Aumentado para 18px */
         font-family: sans-serif !important;
     }
 
-    /* 3. Ajusta inputs dentro da tabela (quando você clica para editar) */
-    div[data-testid="stDataEditor"] input {
+    /* 3. Estiliza o cabeçalho (th) */
+    div[data-testid="stDataEditor"] [data-testid="stDataFrameResizable"] th {
+        background-color: #e0e0e0 !important; /* Cinza claro para diferenciar */
         color: black !important;
-        background-color: #f0f0f0 !important;
-        font-size: 18px !important;
+        font-weight: bold !important;
+        border-bottom: 2px solid #ccc !important;
     }
 
-    /* 4. Tenta forçar a cor dos ícones SVG dentro da tabela para preto */
+    /* 4. Estiliza as células de dados (td) */
+    div[data-testid="stDataEditor"] [data-testid="stDataFrameResizable"] td {
+        background-color: white !important;
+        color: black !important;
+        border-bottom: 1px solid #f0f0f0 !important;
+    }
+
+    /* 5. Ajusta o input quando você clica para editar (fundo cinza claro, texto preto) */
+    div[data-testid="stDataEditor"] input {
+        color: black !important;
+        background-color: #f8f9fa !important; 
+        font-size: 18px !important;
+        caret-color: black !important; /* Cor do cursor piscando */
+    }
+
+    /* 6. Força ícones (setas de ordenação, etc) a serem pretos */
     div[data-testid="stDataEditor"] svg {
         fill: black !important;
         color: black !important;
-    }
-
-    /* 5. Ajuste dos cabeçalhos da tabela */
-    div[data-testid="stDataEditor"] th {
-        font-size: 18px !important;
-        font-weight: bold !important;
-        color: black !important;
-        background-color: #e0e0e0 !important; /* Um cinza claro para destacar o cabeçalho */
     }
 </style>
 """, unsafe_allow_html=True)
