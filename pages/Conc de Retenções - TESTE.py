@@ -1103,44 +1103,92 @@ if arquivo:
                 else:
                     st.warning("Nenhum dado encontrado.")
 
-        # MODO GERAL
+# MODO GERAL (SUBSTITUA O BLOCO ANTIGO POR ESTE)
         elif st.session_state['modo_conciliacao'] == 'geral':
             st.markdown("### Conciliação Geral (Múltiplas Contas)")
             st.info("Insira o Saldo Anterior para cada conta abaixo. Os valores só serão processados ao clicar em CONCILIAR.")
             
-            # --- INÍCIO DO FORMULÁRIO ---
-            # O 'st.form' impede que a página recarregue a cada dígito inserido
+            # CSS PARA FORÇAR O VISUAL BRANCO E GRANDE NOS INPUTS
+            st.markdown("""
+            <style>
+                /* Aumenta a fonte e muda as cores dos inputs numéricos */
+                div[data-testid="stNumberInput"] input {
+                    background-color: white !important;
+                    color: black !important;
+                    font-size: 22px !important; /* Fonte bem grande */
+                    font-weight: bold !important;
+                    border: 2px solid #ccc !important;
+                    border-radius: 5px;
+                    height: 50px;
+                }
+                /* Botões de + e - dentro do input ficam pretos */
+                div[data-testid="stNumberInput"] button {
+                    color: black !important;
+                }
+                /* Tira o rótulo padrão pequeno para usarmos o nosso personalizado */
+                label[data-testid="stWidgetLabel"] {
+                    display: none;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+
+            # --- INÍCIO DO FORMULÁRIO (ISSO GARANTE QUE OS DADOS NÃO SUMAM) ---
             with st.form("form_conciliacao_geral"):
                 
-                edited_df = st.data_editor(
-                    st.session_state['df_saldos_geral'], 
-                    use_container_width=True, 
-                    column_config={
-                        "CONTA DE RETENÇÃO": st.column_config.TextColumn(disabled=True),
-                        "SALDO ANTERIOR": st.column_config.NumberColumn(format="R$ %.2f", min_value=0.0)
-                    },
-                    hide_index=True,
-                    key="editor_saldos_form" # Chave única para este widget
-                )
+                # Cabeçalho da "Tabela Falsa"
+                c_h1, c_h2 = st.columns([3, 1])
+                c_h1.markdown("**CONTA DE RETENÇÃO**", unsafe_allow_html=True)
+                c_h2.markdown("**SALDO ANTERIOR**", unsafe_allow_html=True)
+                st.markdown("---")
+
+                df_editor = st.session_state['df_saldos_geral'].copy()
+                
+                # Dicionário para guardar temporariamente as referências dos inputs
+                inputs_temp = {}
+
+                # CRIA UMA LINHA PARA CADA CONTA
+                for index, row in df_editor.iterrows():
+                    c_nome, c_valor = st.columns([3, 1])
+                    
+                    with c_nome:
+                        # Exibe o nome da conta com letra maior e alinhado
+                        st.markdown(f"<div style='padding-top: 15px; font-size: 18px;'>{row['CONTA DE RETENÇÃO']}</div>", unsafe_allow_html=True)
+                    
+                    with c_valor:
+                        # Input numérico GRANDE e BRANCO
+                        # A 'key' única garante que o Streamlit não perca o valor
+                        chave_unica = f"input_saldo_{index}"
+                        val = st.number_input(
+                            "Saldo", 
+                            value=float(row['SALDO ANTERIOR']),
+                            key=chave_unica,
+                            format="%.2f",
+                            label_visibility="collapsed"
+                        )
+                        # Guardamos o valor digitado no dicionário usando o índice
+                        inputs_temp[index] = val
+                    
+                    # Uma linha fina para separar visualmente
+                    st.markdown("<hr style='margin: 5px 0; border-color: #444;'>", unsafe_allow_html=True)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                
-                # O botão deve ficar DENTRO do form
-                # Mantido o padrão dos demais botões, sem o estilo 'primary'
-                submit_btn = st.form_submit_button("CONCILIAR", use_container_width=True)
+                submit_btn = st.form_submit_button("CONCILIAR TODOS OS ITENS", use_container_width=True)
 
             # --- LÓGICA APÓS CLICAR NO BOTÃO ---
             if submit_btn:
-                # 1. Primeiro passo: Salvar o que foi digitado no estado geral
-                st.session_state['df_saldos_geral'] = edited_df
+                # 1. Atualiza o DataFrame na memória com o que foi coletado no loop
+                # Isso "Salva" os dados igual você fazia na tabela
+                for idx, valor_digitado in inputs_temp.items():
+                    df_editor.at[idx, 'SALDO ANTERIOR'] = valor_digitado
                 
+                st.session_state['df_saldos_geral'] = df_editor
+                
+                # DAQUI PARA BAIXO É O PROCESSAMENTO NORMAL
                 resultados_gerais = []
                 progresso = st.progress(0)
+                total_contas = len(df_editor)
                 
-                # Usamos o edited_df que veio direto do formulário
-                total_contas = len(edited_df)
-                
-                for idx, row in edited_df.iterrows():
+                for idx, row in df_editor.iterrows():
                     conta = row['CONTA DE RETENÇÃO']
                     saldo_ant = row['SALDO ANTERIOR']
                     _, resumo = processar_conciliacao(df_dados, ug_sel, conta, saldo_ant)
