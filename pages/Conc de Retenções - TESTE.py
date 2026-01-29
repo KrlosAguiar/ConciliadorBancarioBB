@@ -46,7 +46,7 @@ st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
     
-    /* CSS PARA TODOS OS BOTÕES */
+    /* CSS DOS BOTÕES (Mantido igual) */
     div.stButton > button, 
     div[data-testid="stForm"] button {
         background-color: rgb(38, 39, 48) !important;
@@ -59,7 +59,6 @@ st.markdown("""
         height: 50px; 
         margin-top: 10px;
     }
-    
     div.stButton > button:hover, 
     div[data-testid="stForm"] button:hover {
         background-color: rgb(20, 20, 25) !important;
@@ -68,7 +67,7 @@ st.markdown("""
 
     .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
     
-    /* Cards de Resumo */
+    /* Cards de Resumo (Mantido igual) */
     .metric-card {
         background-color: #f8f9fa;
         border-left: 5px solid #ff4b4b;
@@ -83,54 +82,27 @@ st.markdown("""
     .metric-card-orange { border-left: 5px solid #ffc107; }
     .metric-card-blue { border-left: 5px solid #007bff; }
     .metric-card-dark { border-left: 5px solid #343a40; }
-    
     .metric-value { font-size: 22px; font-weight: bold; }
     .metric-label { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    /* --- ESTILIZAÇÃO ESPECÍFICA PARA A TABELA (DATA EDITOR) --- */
+    /* --- TRUQUE PARA AUMENTAR A TABELA --- */
     
-    /* 1. Força o container da tabela a ser branco com borda */
     div[data-testid="stDataEditor"] {
-        background-color: white !important;
-        border-radius: 8px !important;
-        padding: 10px !important;
-        border: 1px solid #ccc !important;
+        /* Aumenta o tamanho visual de tudo na tabela em 30% */
+        zoom: 1.3 !important;
+        
+        /* Tenta inverter as cores para Fundo Claro / Texto Escuro */
+        /* Se as cores verde/vermelho ficarem estranhas, remova a linha abaixo */
+        filter: invert(1) hue-rotate(180deg) !important; 
+        
+        /* Margem para não colar nos lados quando der zoom */
+        margin-top: 10px;
+        margin-bottom: 10px;
     }
 
-    /* 2. Força TODO texto dentro da tabela a ser PRETO e MAIOR */
-    div[data-testid="stDataEditor"] * {
-        color: black !important;
-        font-size: 18px !important; /* Aumentado para 18px */
-        font-family: sans-serif !important;
-    }
-
-    /* 3. Estiliza o cabeçalho (th) */
-    div[data-testid="stDataEditor"] [data-testid="stDataFrameResizable"] th {
-        background-color: #e0e0e0 !important; /* Cinza claro para diferenciar */
-        color: black !important;
-        font-weight: bold !important;
-        border-bottom: 2px solid #ccc !important;
-    }
-
-    /* 4. Estiliza as células de dados (td) */
-    div[data-testid="stDataEditor"] [data-testid="stDataFrameResizable"] td {
-        background-color: white !important;
-        color: black !important;
-        border-bottom: 1px solid #f0f0f0 !important;
-    }
-
-    /* 5. Ajusta o input quando você clica para editar (fundo cinza claro, texto preto) */
+    /* Ajuste para quando você clica para digitar (Input) */
     div[data-testid="stDataEditor"] input {
-        color: black !important;
-        background-color: #f8f9fa !important; 
         font-size: 18px !important;
-        caret-color: black !important; /* Cor do cursor piscando */
-    }
-
-    /* 6. Força ícones (setas de ordenação, etc) a serem pretos */
-    div[data-testid="stDataEditor"] svg {
-        fill: black !important;
-        color: black !important;
     }
 </style>
 """, unsafe_allow_html=True)
