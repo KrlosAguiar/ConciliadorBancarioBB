@@ -158,30 +158,42 @@ def processar_pdf(file_bytes):
 
 def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
     try:
-        df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
+        # Carregar DataFrame
+        if is_csv:
+            df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python')
+        else:
+            df = pd.read_excel(io.BytesIO(file_bytes), header=None)
         
-        # --- AJUSTE INTELIGENTE: Detecção da Coluna de Valor (Coluna I vs J) ---
-        col_valor = 8  # Padrão: Coluna I (índice 8)
+        # --- AJUSTE INTELIGENTE DE COLUNAS ---
+        # Coluna C do Excel = Índice 2 no Pandas (Status: Original/Estorno)
+        col_status = 2 
+        
+        # Coluna Valor (I=8 ou J=9)
+        col_valor = 8 
         try:
             n_val_8 = df.iloc[:, 8].dropna().astype(str).str.strip().replace('', pd.NA).count()
             n_val_9 = df.iloc[:, 9].dropna().astype(str).str.strip().replace('', pd.NA).count()
             if n_val_8 == 0 and n_val_9 > 0: col_valor = 9
         except: pass
         
-        # --- AJUSTE DE LAYOUT (CORREÇÃO PARA ARQUIVO NOVO) ---
-        # Arquivo Antigo (~32 colunas): Info em 25, 26, 27
-        # Arquivo Novo (~26 colunas): Info em 19, 20, 21 (Deslocamento de -6)
+        # Colunas de Informação
         c_z, c_aa, c_ab = 25, 26, 27
         if df.shape[1] < 30: 
             c_z, c_aa, c_ab = 19, 20, 21
 
-        try: df = df.iloc[:, [1, 4, 5, col_valor, c_z, c_aa, c_ab]].copy()
-        except: df = df.iloc[:, [1, 4, 5, col_valor, -4, -2, -1]].copy()
+        # Selecionar e Renomear colunas
+        try: 
+            df = df.iloc[:, [1, col_status, 4, 5, col_valor, c_z, c_aa, c_ab]].copy()
+            df.columns = ['Lancamento', 'Status', 'Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
+        except: 
+            return pd.DataFrame()
         
-        df.columns = ['Lancamento', 'Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
+        # Limpeza
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
         df['Lancamento'] = df['Lancamento'].astype(str).str.replace(r'\.0$', '', regex=True)
+        df['Status'] = df['Status'].astype(str).str.strip() # Remove espaços
         
+        # Filtros de negócio (linhas relevantes)
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
         mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
         mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268|262", case=False, regex=True, na=False)
@@ -190,32 +202,49 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         mask_250_restrict = cond_250_z & cond_ab_text
         mask_aa_ded = df['Info_AA'].astype(str).str.contains(r"Ded\.", case=False, regex=True, na=False)
         
+        # Filtra linhas válidas preliminares
         df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_ded].copy()
         
-        termos_estorno = r"Est Pgto Ext|Est Pagto"
-        mask_eh_estorno = df_filtered['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True, na=False)
-        df_estornos = df_filtered[mask_eh_estorno].copy()
-        df_validos = df_filtered[~mask_eh_estorno].copy()
+        # ==============================================================================
+        # >>> LÓGICA DE ESTORNO PELA COLUNA C (STATUS) + DATA <<<
+        # ==============================================================================
         
-        indices_para_remover = []
-        indices_usados_validos = set()
+        # 1. Identificar Estornos e Originais
+        mask_estorno = df_filtered['Status'].str.contains('Estorno', case=False, na=False)
         
+        df_estornos = df_filtered[mask_estorno].copy()
+        df_originais = df_filtered[~mask_estorno].copy()
+        
+        # Conjunto de índices a remover (inicia com TODOS os estornos)
+        indices_remover = set(df_estornos.index)
+        
+        # Conjunto para controlar quais originais já foram "anulados"
+        originais_anulados = set()
+        
+        # 2. Para cada estorno, procurar um "irmão" nos originais
         for idx_est, row_est in df_estornos.iterrows():
-            valor_est = row_est['Valor_Razao']
-            candidatos = df_validos[
-                (abs(df_validos['Valor_Razao'] - valor_est) < 0.01) & 
-                (~df_validos.index.isin(indices_usados_validos))
+            valor_estorno = row_est['Valor_Razao']
+            data_estorno = row_est['Data'] # Ex: "21/01/2026"
+            
+            # Busca originais com mesmo VALOR e mesma DATA
+            cand = df_originais[
+                (df_originais['Data'] == data_estorno) & # Trava de Data
+                (abs(df_originais['Valor_Razao'] - valor_estorno) < 0.01) &
+                (~df_originais.index.isin(originais_anulados))
             ]
-            if not candidatos.empty:
-                idx_par = candidatos.index[0]
-                indices_para_remover.append(idx_par)
-                indices_usados_validos.add(idx_par)
-                indices_para_remover.append(idx_est)
-            else:
-                indices_para_remover.append(idx_est)
-
-        df_final = df_filtered.drop(indices_para_remover, errors='ignore').copy()
+            
+            if not cand.empty:
+                # Encontrou correspondência Exata (Data + Valor)
+                idx_original = cand.index[0]
+                indices_remover.add(idx_original)   # Marca original para remoção
+                originais_anulados.add(idx_original) # Marca como usado
+                
+        # 3. Remover linhas filtradas
+        df_final = df_filtered.drop(list(indices_remover)).copy()
         
+        # ==============================================================================
+        
+        # Ajuste de Datas e Documentos
         df_final['Data_dt'] = df_final['Data'].apply(parse_br_date)
         df_final = df_final.dropna(subset=['Data_dt'])
         df_final['Data'] = df_final['Data_dt'].dt.strftime('%d/%m/%Y')
@@ -251,13 +280,10 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
             if dt not in lookup: return "S/D"
             if "TARIFA" in txt_ab and "Tarifas Bancárias" in lookup[dt].values(): return "Tarifas Bancárias"
             
-            # --- AJUSTE: Limpeza de pontos no número do documento do Excel ---
-            # Busca qualquer sequência de dígitos e pontos (ex: 123.456)
             for token in re.findall(r'[\d\.]+', txt_ab):
                 clean_n = token.replace('.', '')
                 if clean_n.lstrip('0') in lookup[dt]: 
                     return lookup[dt][clean_n.lstrip('0')]
-            # -----------------------------------------------------------------
             
             return "NÃO LOCALIZADO"
             
@@ -517,7 +543,7 @@ def gerar_excel_final(df_f):
                 worksheet.write(excel_row, 6, '', fmt_detalhe)
             else:
                 if abs(row['Diferença']) >= 0.01:
-                      worksheet.write(excel_row, 6, row['Diferença'], fmt_red_bold)
+                       worksheet.write(excel_row, 6, row['Diferença'], fmt_red_bold)
 
         df_mestre = df_export[df_export['Tipo'] == 'Mestre']
         last_row = len(df_export) + 1
