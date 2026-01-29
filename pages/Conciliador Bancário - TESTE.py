@@ -158,29 +158,43 @@ def processar_pdf(file_bytes):
 
 def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
     try:
-        df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python') if is_csv else pd.read_excel(io.BytesIO(file_bytes), header=None)
+        # Carregar DataFrame
+        if is_csv:
+            df = pd.read_csv(io.BytesIO(file_bytes), header=None, encoding='latin1', sep=None, engine='python')
+        else:
+            df = pd.read_excel(io.BytesIO(file_bytes), header=None)
         
-        # --- AJUSTE INTELIGENTE: Detecção da Coluna de Valor (Coluna I vs J) ---
-        col_valor = 8  # Padrão: Coluna I (índice 8)
+        # --- AJUSTE INTELIGENTE DE COLUNAS ---
+        # Coluna C do Excel = Índice 2 no Pandas
+        col_status = 2 
+        
+        # Coluna Valor (I=8 ou J=9)
+        col_valor = 8 
         try:
             n_val_8 = df.iloc[:, 8].dropna().astype(str).str.strip().replace('', pd.NA).count()
             n_val_9 = df.iloc[:, 9].dropna().astype(str).str.strip().replace('', pd.NA).count()
             if n_val_8 == 0 and n_val_9 > 0: col_valor = 9
         except: pass
         
-        # --- AJUSTE DE LAYOUT (CORREÇÃO PARA ARQUIVO NOVO) ---
+        # Colunas de Informação
         c_z, c_aa, c_ab = 25, 26, 27
         if df.shape[1] < 30: 
             c_z, c_aa, c_ab = 19, 20, 21
 
-        try: df = df.iloc[:, [1, 4, 5, col_valor, c_z, c_aa, c_ab]].copy()
-        except: df = df.iloc[:, [1, 4, 5, col_valor, -4, -2, -1]].copy()
+        # Selecionar e Renomear colunas
+        try: 
+            df = df.iloc[:, [1, col_status, 4, 5, col_valor, c_z, c_aa, c_ab]].copy()
+            df.columns = ['Lancamento', 'Status', 'Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
+        except: 
+            # Fallback seguro caso índices não existam
+            return pd.DataFrame()
         
-        df.columns = ['Lancamento', 'Data', 'DC', 'Valor_Razao', 'Info_Z', 'Info_AA', 'Info_AB']
+        # Limpeza
         df['Valor_Razao'] = df['Valor_Razao'].apply(lambda x: float(str(x).replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
         df['Lancamento'] = df['Lancamento'].astype(str).str.replace(r'\.0$', '', regex=True)
+        df['Status'] = df['Status'].astype(str).str.strip() # Remove espaços
         
-        # Filtros básicos para pegar as linhas relevantes
+        # Filtros de negócio (linhas relevantes)
         mask_pagto = df['Info_Z'].astype(str).str.contains("Pagamento", case=False, na=False)
         mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
         mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268|262", case=False, regex=True, na=False)
@@ -189,63 +203,52 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         mask_250_restrict = cond_250_z & cond_ab_text
         mask_aa_ded = df['Info_AA'].astype(str).str.contains(r"Ded\.", case=False, regex=True, na=False)
         
+        # Filtra linhas válidas preliminares
         df_filtered = df[mask_pagto | mask_transf_std | mask_codes_z | mask_250_restrict | mask_aa_ded].copy()
         
         # ==============================================================================
-        # >>> NOVA LÓGICA DE ESTORNOS (Cancelamento de Pares) <<<
+        # >>> LÓGICA DE ESTORNO PELA COLUNA C (STATUS) <<<
         # ==============================================================================
         
-        # 1. Normalizar Natureza
-        df_filtered['DC'] = df_filtered['DC'].astype(str).str.strip().str.upper()
-
-        # 2. Identificar Universos: Pagamentos (Crédito) e Estornos (Débito + Palavras Chave)
-        # Conta Banco Setor Público: Crédito (C) = Saída de Recurso (Pagamento)
-        #                            Débito (D)  = Entrada de Recurso (Estorno/Devolução)
+        # 1. Identificar Estornos e Originais
+        mask_estorno = df_filtered['Status'].str.contains('Estorno', case=False, na=False)
         
-        termos_estorno = r"ESTORNO|EST PGTO|EST PAGTO|DEVOLUCAO|CANCELAMENTO|ANULACAO|RETORNO"
+        df_estornos = df_filtered[mask_estorno].copy()
+        df_originais = df_filtered[~mask_estorno].copy() # Pode ser 'Original' ou outro status
         
-        # Identifica linhas que parecem estorno pelo texto e são Débitos (D)
-        mask_eh_estorno = (df_filtered['DC'] == 'D') & (
-            df_filtered['Info_AA'].astype(str).str.contains(termos_estorno, case=False, regex=True) | 
-            df_filtered['Info_Z'].astype(str).str.contains(termos_estorno, case=False, regex=True)
-        )
+        # Conjunto de índices a remover (inicia com TODOS os estornos)
+        indices_remover = set(df_estornos.index)
         
-        df_estornos = df_filtered[mask_eh_estorno].copy()
-        df_pagamentos = df_filtered[df_filtered['DC'] == 'C'].copy()
+        # Conjunto para controlar quais originais já foram "anulados"
+        originais_anulados = set()
         
-        indices_para_remover = set()
-        
-        # Por padrão, TODOS os estornos identificados devem sumir do relatório
-        indices_para_remover.update(df_estornos.index.tolist())
-        
-        idx_pag_cancelados = set()
-
-        # 3. Loop de Cancelamento: Mata o Pagamento (C) correspondente ao Estorno (D)
+        # 2. Para cada estorno, procurar um "irmão" nos originais com mesmo VALOR
         for idx_est, row_est in df_estornos.iterrows():
-            valor_est = row_est['Valor_Razao']
+            valor_estorno = row_est['Valor_Razao']
             
-            # Busca Pagamento (Crédito) com mesmo valor que ainda não foi cancelado
-            cand = df_pagamentos[
-                (abs(df_pagamentos['Valor_Razao'] - valor_est) < 0.01) & 
-                (~df_pagamentos.index.isin(idx_pag_cancelados))
+            # Busca originais com mesmo valor (margem 0.01) que ainda não foram anulados
+            cand = df_originais[
+                (abs(df_originais['Valor_Razao'] - valor_estorno) < 0.01) &
+                (~df_originais.index.isin(originais_anulados))
             ]
             
             if not cand.empty:
-                idx_orig = cand.index[0]
-                idx_pag_cancelados.add(idx_orig)
-                indices_para_remover.add(idx_orig) # Adiciona o pagamento à lista de remoção
-
-        # Aplica a limpeza
-        df_final = df_filtered.drop(list(indices_para_remover), errors='ignore').copy()
+                # Encontrou correspondência!
+                idx_original = cand.index[0]
+                indices_remover.add(idx_original)   # Marca original para remoção
+                originais_anulados.add(idx_original) # Marca como usado
+                
+        # 3. Remover linhas filtradas
+        df_final = df_filtered.drop(list(indices_remover)).copy()
         
         # ==============================================================================
-        # FIM DA NOVA LÓGICA
-        # ==============================================================================
         
+        # Ajuste de Datas e Documentos
         df_final['Data_dt'] = df_final['Data'].apply(parse_br_date)
         df_final = df_final.dropna(subset=['Data_dt'])
         df_final['Data'] = df_final['Data_dt'].dt.strftime('%d/%m/%Y')
         
+        # Lookup de Documentos (Baseado na data do PDF)
         lookup = {dt: {str(doc).lstrip('0'): doc for doc in g['Documento'].unique()} for dt, g in df_pdf_ref.groupby('Data')}
         lookup_fundeb = {}
         lookup_pasep = {}
