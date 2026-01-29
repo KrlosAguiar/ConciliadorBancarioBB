@@ -46,7 +46,7 @@ st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
     
-    /* CSS PARA TODOS OS BOTÕES (INCLUINDO DENTRO DO FORMULÁRIO) */
+    /* CSS PARA TODOS OS BOTÕES */
     div.stButton > button, 
     div[data-testid="stForm"] button {
         background-color: rgb(38, 39, 48) !important;
@@ -60,7 +60,6 @@ st.markdown("""
         margin-top: 10px;
     }
     
-    /* CSS HOVER PARA TODOS OS BOTÕES */
     div.stButton > button:hover, 
     div[data-testid="stForm"] button:hover {
         background-color: rgb(20, 20, 25) !important;
@@ -88,21 +87,42 @@ st.markdown("""
     .metric-value { font-size: 22px; font-weight: bold; }
     .metric-label { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    /* AJUSTE FORÇADO DE FONTE DO DATA EDITOR */
-    [data-testid="stDataEditor"] table {
-        font-size: 18px !important;
+    /* --- ESTILIZAÇÃO ESPECÍFICA PARA A TABELA (DATA EDITOR) --- */
+    
+    /* 1. Força o container da tabela a ser branco */
+    div[data-testid="stDataEditor"] {
+        background-color: white !important;
+        border-radius: 10px !important;
+        padding: 10px !important;
+        border: 1px solid #ccc !important;
     }
-    [data-testid="stDataEditor"] th {
-        font-size: 18px !important;
-        background-color: black !important;
-        color: white !important;
+
+    /* 2. Força o texto dentro da tabela a ser PRETO e MAIOR */
+    div[data-testid="stDataEditor"] * {
+        color: black !important;
+        font-size: 18px !important; /* Aumentado para 18px */
+        font-family: sans-serif !important;
     }
-    [data-testid="stDataEditor"] td {
-        font-size: 18px !important;
-    }
-    /* Aumenta a fonte especificamente na hora que você clica para digitar */
+
+    /* 3. Ajusta inputs dentro da tabela (quando você clica para editar) */
     div[data-testid="stDataEditor"] input {
+        color: black !important;
+        background-color: #f0f0f0 !important;
         font-size: 18px !important;
+    }
+
+    /* 4. Tenta forçar a cor dos ícones SVG dentro da tabela para preto */
+    div[data-testid="stDataEditor"] svg {
+        fill: black !important;
+        color: black !important;
+    }
+
+    /* 5. Ajuste dos cabeçalhos da tabela */
+    div[data-testid="stDataEditor"] th {
+        font-size: 18px !important;
+        font-weight: bold !important;
+        color: black !important;
+        background-color: #e0e0e0 !important; /* Um cinza claro para destacar o cabeçalho */
     }
 </style>
 """, unsafe_allow_html=True)
