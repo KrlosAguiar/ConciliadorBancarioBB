@@ -145,29 +145,17 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
         return pd.DataFrame()
 
 # ==============================================================================
-# 2. EXTRAÇÃO DE PDFS (CORRIGIDA COM FILTRO DE MÊS)
+# 2. EXTRAÇÃO DE PDFS (AJUSTADA)
 # ==============================================================================
 
 def obter_mes_referencia_extrato(texto_pdf):
-    """
-    Busca a string 'Mês: Novembro/2025' e retorna '11/2025'
-    """
-    mapa_meses = {
-        'JANEIRO': '01', 'FEVEREIRO': '02', 'MARÇO': '03', 'ABRIL': '04', 
-        'MAIO': '05', 'JUNHO': '06', 'JULHO': '07', 'AGOSTO': '08', 
-        'SETEMBRO': '09', 'OUTUBRO': '10', 'NOVEMBRO': '11', 'DEZEMBRO': '12'
-    }
-    # Remove quebras de linha para facilitar o regex em textos multilinhas quebrados
-    texto_limpo = texto_pdf.replace('\n', ' ').replace('\r', ' ')
-    
-    # Regex flexível para pegar "Mês:" seguido de espaço e NomeDoMês/Ano
-    match = re.search(r'Mês:\s*([A-Za-zçÇ]+)\s*/\s*(\d{4})', texto_limpo, re.IGNORECASE)
-    
+    mapa_meses = {'JANEIRO': '01', 'FEVEREIRO': '02', 'MARÇO': '03', 'ABRIL': '04', 'MAIO': '05', 'JUNHO': '06', 'JULHO': '07', 'AGOSTO': '08', 'SETEMBRO': '09', 'OUTUBRO': '10', 'NOVEMBRO': '11', 'DEZEMBRO': '12'}
+    texto_limpo = texto_pdf.replace('"', ' ').replace('\n', ' ').replace('\r', ' ')
+    match = re.search(r'Mês:.*?([A-Za-zçÇ]+)\s*/\s*(\d{4})', texto_limpo, re.IGNORECASE)
     if match:
         nome_mes, ano = match.groups()
         mes_num = mapa_meses.get(nome_mes.upper())
-        if mes_num: 
-            return f"{mes_num}/{ano}"
+        if mes_num: return f"{mes_num}/{ano}"
     return None
 
 def extrair_bb(arquivo_bytes):
@@ -177,12 +165,20 @@ def extrair_bb(arquivo_bytes):
             for pagina in pdf.pages:
                 texto = pagina.extract_text() or ""
                 for linha in texto.split('\n'):
-                    # CORREÇÃO BB: Aceita códigos e 'COBRANÇA' se for Crédito
-                    termos_ok = ["14109", "14020", "624", "COBRANCA", "COBRANÇA"]
-                    if any(t in linha.upper() for t in termos_ok):
-                        if " C" in linha or linha.strip().endswith("C"):
-                            matches = re.findall(r'([\d\.]+,\d{2})', linha)
-                            if matches: total += limpar_numero(matches[0])
+                    # 1. Lista de Códigos/Termos Válidos (Incluindo 617, 624, 14109, 14020)
+                    codigos_validos = ["14109", "14020", "617", "624", "RECEBIMENTO DE GUIAS", "COBRANCA", "COBRANÇA"]
+                    
+                    # 2. Lista de Exclusão (Para não pegar tarifas de débito)
+                    termos_exclusao = ["13113", "DÉBITO SERVIÇO", "DEBITO SERVICO", "TAR ", "ESTORNO"]
+                    
+                    linha_upper = linha.upper()
+                    
+                    if any(cod in linha_upper for cod in codigos_validos):
+                        if not any(exc in linha_upper for exc in termos_exclusao):
+                             # 3. Trava de Crédito: Verifica se tem " C" ou termina com "C"
+                            if " C" in linha or linha.strip().endswith("C"):
+                                matches = re.findall(r'([\d\.]+,\d{2})', linha)
+                                if matches: total += limpar_numero(matches[0])
     except: return None
     return total
 
@@ -196,7 +192,8 @@ def extrair_banpara(arquivo_bytes):
                 for linha in texto.split('\n'):
                     if termo in linha:
                         matches = re.findall(r'([\d\.]+,\d{2})', linha)
-                        if matches: total += limpar_numero(matches[-1])
+                        if matches: 
+                            total += limpar_numero(matches[-1])
     except: return None
     return total
 
@@ -207,22 +204,16 @@ def extrair_caixa(arquivo_bytes):
             texto_completo = ""
             for pagina in pdf.pages: texto_completo += (pagina.extract_text() or "") + "\n"
             
-            # 1. Obtém o mês de referência do cabeçalho (Ex: "11/2025")
+            # Filtro de Mês (Mantido conforme solicitado)
             mes_ref = obter_mes_referencia_extrato(texto_completo)
-            
             texto_limpo = texto_completo.replace('"', ' ') 
-            termos_regex = r"ARR\s+CCV\s+DH|ARR\s+CV\s+INT|ARR\s+DH\s+AG"
             
-            # Regex captura: Data, Descrição, Valor, Tipo (D/C)
+            termos_regex = r"ARR\s+CCV\s+DH|ARR\s+CV\s+INT|ARR\s+DH\s+AG"
             regex = r'(\d{2}/\d{2}/\d{4}).*?(' + termos_regex + r')[^\d]+(\d{1,3}(?:\.\d{3})*,\d{2})\s*([CD])'
             matches = re.findall(regex, texto_limpo, re.IGNORECASE)
             
             for data_str, _, valor_str, tipo in matches:
-                # 2. Extrai o mês da transação (dd/mm/yyyy -> mm/yyyy)
                 mes_lancamento = data_str[3:] 
-                
-                # 3. FILTRO RIGOROSO: Só soma se o mês bater com o cabeçalho
-                # Se não conseguiu ler o cabeçalho (None), soma tudo (comportamento padrão de segurança)
                 if mes_ref is None or mes_lancamento == mes_ref:
                     valor_num = limpar_numero(valor_str)
                     if tipo.upper() == 'D': total -= valor_num
