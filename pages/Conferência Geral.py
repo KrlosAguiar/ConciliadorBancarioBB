@@ -135,6 +135,7 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
 
         if col_fato: df = df.rename(columns={col_fato: 'Fato Contábil'})
         if col_lcp: df = df.rename(columns={col_lcp: 'LCP'})
+        if 'Data' not in df.columns and 4 in df.columns: df = df.rename(columns={4: 'Data'}) # Garante Data
         
         if 'Fato Contábil' not in df.columns: df['Fato Contábil'] = ''
         if 'LCP' not in df.columns: df['LCP'] = ''
@@ -145,7 +146,7 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
         return pd.DataFrame()
 
 # ==============================================================================
-# 2. EXTRAÇÃO DE PDFS (AJUSTADA)
+# 2. EXTRAÇÃO DE PDFS (COM DIÁRIO)
 # ==============================================================================
 
 def obter_mes_referencia_extrato(texto_pdf):
@@ -160,51 +161,73 @@ def obter_mes_referencia_extrato(texto_pdf):
 
 def extrair_bb(arquivo_bytes):
     total = 0.0
+    diario = {}
     try:
         with pdfplumber.open(io.BytesIO(arquivo_bytes)) as pdf:
             for pagina in pdf.pages:
                 texto = pagina.extract_text() or ""
+                # Tenta capturar data da linha ou manter a última data vista
+                data_atual = None
+                
                 for linha in texto.split('\n'):
-                    # 1. Lista de Códigos/Termos Válidos (Incluindo 617, 624, 14109, 14020)
+                    # Tenta achar data no início da linha (Padrão BB)
+                    match_data = re.match(r'(\d{2}/\d{2}/\d{4})', linha)
+                    if match_data:
+                        data_atual = match_data.group(1)
+
                     codigos_validos = ["14109", "14020", "617", "624", "RECEBIMENTO DE GUIAS", "COBRANCA", "COBRANÇA"]
-                    
-                    # 2. Lista de Exclusão (Para não pegar tarifas de débito)
                     termos_exclusao = ["13113", "DÉBITO SERVIÇO", "DEBITO SERVICO", "TAR ", "ESTORNO"]
-                    
                     linha_upper = linha.upper()
                     
                     if any(cod in linha_upper for cod in codigos_validos):
                         if not any(exc in linha_upper for exc in termos_exclusao):
-                             # 3. Trava de Crédito: Verifica se tem " C" ou termina com "C"
                             if " C" in linha or linha.strip().endswith("C"):
                                 matches = re.findall(r'([\d\.]+,\d{2})', linha)
-                                if matches: total += limpar_numero(matches[0])
-    except: return None
-    return total
+                                if matches: 
+                                    val = limpar_numero(matches[0])
+                                    total += val
+                                    if data_atual:
+                                        diario[data_atual] = diario.get(data_atual, 0.0) + val
+    except: return None, {}
+    return total, diario
 
 def extrair_banpara(arquivo_bytes):
     total = 0.0
+    diario = {}
     termo = "REPAS ARRE PREF"
+    # Ano corrente como fallback se não achar
+    ano_atual = datetime.now().year
+    
     try:
         with pdfplumber.open(io.BytesIO(arquivo_bytes)) as pdf:
             for pagina in pdf.pages:
                 texto = pagina.extract_text() or ""
                 for linha in texto.split('\n'):
+                    # Banpará geralmente tem data DD/MM no inicio
+                    data_str = None
+                    match_dt = re.match(r'(\d{2}/\d{2})', linha)
+                    if match_dt:
+                        # Assume ano corrente ou tenta pegar do cabeçalho (simplificado aqui)
+                        data_str = f"{match_dt.group(1)}/{ano_atual}"
+
                     if termo in linha:
                         matches = re.findall(r'([\d\.]+,\d{2})', linha)
                         if matches: 
-                            total += limpar_numero(matches[-1])
-    except: return None
-    return total
+                            val = limpar_numero(matches[-1])
+                            total += val
+                            if data_str:
+                                diario[data_str] = diario.get(data_str, 0.0) + val
+    except: return None, {}
+    return total, diario
 
 def extrair_caixa(arquivo_bytes):
     total = 0.0
+    diario = {}
     try:
         with pdfplumber.open(io.BytesIO(arquivo_bytes)) as pdf:
             texto_completo = ""
             for pagina in pdf.pages: texto_completo += (pagina.extract_text() or "") + "\n"
             
-            # Filtro de Mês (Mantido conforme solicitado)
             mes_ref = obter_mes_referencia_extrato(texto_completo)
             texto_limpo = texto_completo.replace('"', ' ') 
             
@@ -216,13 +239,18 @@ def extrair_caixa(arquivo_bytes):
                 mes_lancamento = data_str[3:] 
                 if mes_ref is None or mes_lancamento == mes_ref:
                     valor_num = limpar_numero(valor_str)
-                    if tipo.upper() == 'D': total -= valor_num
-                    else: total += valor_num
-    except: return None
-    return total
+                    
+                    val_final = 0.0
+                    if tipo.upper() == 'D': val_final = -valor_num
+                    else: val_final = valor_num
+                    
+                    total += val_final
+                    diario[data_str] = diario.get(data_str, 0.0) + val_final
+    except: return None, {}
+    return total, diario
 
 # ==============================================================================
-# 3. PDF FINAL
+# 3. PDF FINAL (Mantido igual)
 # ==============================================================================
 
 def criar_tabela_card_pdf(titulo, lbl1, v1, lbl2, v2, larguras_colunas=[12*mm, 36*mm]):
@@ -367,6 +395,11 @@ if arquivo_excel:
                 df['Valor'] = df['Valor'].astype(str).str.strip().fillna('0')
                 df['Valor'] = df['Valor'].apply(lambda x: float(x.replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
                 df['Conta'] = df['Conta'].astype(str).str.replace(r'\.0$', '', regex=True)
+                
+                # Garante formato de data DD/MM/YYYY para conferência
+                if 'Data' in df.columns:
+                    # Tenta converter para datetime e depois formatar string padrão BR
+                    df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce').dt.strftime('%d/%m/%Y')
 
                 def get_vals(col, v1, v2):
                     if col not in df.columns: return 0.0, 0.0
@@ -394,7 +427,7 @@ if arquivo_excel:
                     t2_duo = df.loc[f2, 'Valor'].sum()
                 dados_c2.append({'titulo': "TRANSF. DUODÉCIMO", 'l1': "Concedida", 'v1': t1_duo, 'l2': "Recebida", 'v2': t2_duo})
 
-                # RENDER
+                # RENDER CARDS
                 def render_card(d):
                     ok = round(d['v1'], 2) == round(d['v2'], 2)
                     dif = abs(d['v1'] - d['v2'])
@@ -416,7 +449,7 @@ if arquivo_excel:
 
                 st.markdown("---")
 
-                # TABELA
+                # TABELA RECEITAS
                 mapa = {
                     '8346': {'key': '105628', 'f': extrair_bb, 'nome': '105628-X'},
                     '8416': {'key': '112005', 'f': extrair_bb, 'nome': '112005-0'},
@@ -427,26 +460,42 @@ if arquivo_excel:
                 }
                 ks = list(mapa.keys())
                 
+                # Filtra Receitas do Excel (Contábil)
                 if 'Fato Contábil' in df.columns:
-                    df_res = df[(df['Fato Contábil'].astype(str).str.contains("Arrecadação", case=False, na=False)) & (df['Conta'].isin(ks))].groupby('Conta')['Valor'].sum().reset_index()
-                    if df_res.empty: df_res = df[df['Conta'].isin(ks)].groupby('Conta')['Valor'].sum().reset_index()
+                    df_sub = df[(df['Fato Contábil'].astype(str).str.contains("Arrecadação", case=False, na=False)) & (df['Conta'].isin(ks))]
+                    if df_sub.empty: df_sub = df[df['Conta'].isin(ks)]
                 else:
-                    df_res = df[df['Conta'].isin(ks)].groupby('Conta')['Valor'].sum().reset_index()
+                    df_sub = df[df['Conta'].isin(ks)]
+                
+                # Agrupamento Global (Mensal)
+                df_res_total = df_sub.groupby('Conta')['Valor'].sum().reset_index()
 
-                df_final = pd.merge(pd.DataFrame({'Conta': ks}), df_res, on='Conta', how='left').fillna(0)
+                df_final = pd.merge(pd.DataFrame({'Conta': ks}), df_res_total, on='Conta', how='left').fillna(0)
 
                 recs = []
                 for _, r in df_final.iterrows():
                     c_orig, vc = r['Conta'], r['Valor']
                     cfg = mapa.get(c_orig)
                     ve, stt = 0.0, "Sem PDF"
+                    diario_banco = {}
                     
                     arq = encontrar_arquivo_no_upload(arquivos_pdf, cfg['key'])
                     if arq:
-                        val = cfg['f'](arq.read())
+                        val, diario_banco = cfg['f'](arq.read()) # Agora retorna Tupla
                         if val is not None: ve, stt = val, "OK"
                         else: stt = "Erro Leitura"
-                    recs.append({"Conta": cfg['nome'], "PDF Ref": cfg['key'], "Valor Contábil": vc, "Valor Extrato": ve, "Diferença": vc - ve, "Status": stt})
+                    
+                    # Prepara dados diários do Contábil para esta conta específica
+                    diario_contabil = {}
+                    df_conta_dia = df_sub[df_sub['Conta'] == c_orig].groupby('Data')['Valor'].sum()
+                    diario_contabil = df_conta_dia.to_dict()
+
+                    recs.append({
+                        "Conta": cfg['nome'], "Conta_Original": c_orig, "PDF Ref": cfg['key'], 
+                        "Valor Contábil": vc, "Valor Extrato": ve, 
+                        "Diferença": vc - ve, "Status": stt,
+                        "Diario_Banco": diario_banco, "Diario_Contabil": diario_contabil
+                    })
                 
                 df_rec = pd.DataFrame(recs)
                 tot_c = df_rec['Valor Contábil'].sum()
@@ -456,14 +505,39 @@ if arquivo_excel:
                 rows_html = ""
                 for _, r in df_rec.iterrows():
                     dif = r['Diferença']
-                    style_dif = "color:#28a745;font-weight:bold;" if abs(dif)<0.01 else "color:#dc3545;font-weight:bold;"
-                    txt_dif = "CONCILIADO" if abs(dif)<0.01 else formatar_moeda(dif)
+                    conciliado = abs(dif) < 0.01
+                    style_dif = "color:#28a745;font-weight:bold;" if conciliado else "color:#dc3545;font-weight:bold;"
+                    txt_dif = "CONCILIADO" if conciliado else formatar_moeda(dif)
                     ve_str = formatar_moeda(r['Valor Extrato'])
                     if r['Status'] == "Sem PDF": 
                         ve_str = "<span style='color:#999;font-style:italic;'>(Falta PDF)</span>"
                         if r['Valor Contábil'] > 0: txt_dif = "PENDENTE"
                     
                     rows_html += f"<tr style='border-bottom:1px solid #eee;'><td style='font-weight:bold;'>{r['Conta']}</td><td style='color:#666;font-size:12px;'>{r['PDF Ref']}</td><td style='text-align:right;'>{formatar_moeda(r['Valor Contábil'])}</td><td style='text-align:right;'>{ve_str}</td><td style='text-align:center;{style_dif}'>{txt_dif}</td></tr>"
+
+                    # --- SUBFUNÇÃO: DETALHAMENTO DIÁRIO SE HOUVER DIFERENÇA ---
+                    if not conciliado and r['Status'] == "OK":
+                        d_banco = r['Diario_Banco']
+                        d_contabil = r['Diario_Contabil']
+                        
+                        # Une todas as datas presentes em ambos
+                        todas_datas = sorted(set(list(d_banco.keys()) + list(d_contabil.keys())), key=lambda x: datetime.strptime(x, "%d/%m/%Y") if len(x)==10 else datetime.max)
+                        
+                        for dia in todas_datas:
+                            v_b = d_banco.get(dia, 0.0)
+                            v_c = d_contabil.get(dia, 0.0)
+                            dif_dia = v_c - v_b
+                            
+                            if abs(dif_dia) > 0.01:
+                                rows_html += f"""
+                                <tr style='background-color:#f9f9f9; color:#555; font-size:12px;'>
+                                    <td style='text-align:center;'>-</td>
+                                    <td style='text-align:center;'>{dia}</td>
+                                    <td style='text-align:right;'>{formatar_moeda(v_c)}</td>
+                                    <td style='text-align:right;'>{formatar_moeda(v_b)}</td>
+                                    <td style='text-align:center; color:#c00;'>{formatar_moeda(dif_dia)}</td>
+                                </tr>
+                                """
 
                 tbl_html = textwrap.dedent(f"""<div style='background-color:white;padding:15px;border-radius:5px;border:1px solid #ddd;'><table style='width:100%;border-collapse:collapse;color:black !important;'><tr style='background-color:black;color:white;'><th>Conta</th><th>Ref. PDF</th><th style='text-align:right;'>Valor Contábil</th><th style='text-align:right;'>Valor Extrato</th><th style='text-align:center;'>Diferença</th></tr>{rows_html}<tr style='background-color:#f0f0f0;border-top:2px solid black;'><td colspan='2'><b>TOTAL GERAL</b></td><td style='text-align:right;'><b>{formatar_moeda(tot_c)}</b></td><td style='text-align:right;'><b>{formatar_moeda(tot_e)}</b></td><td></td></tr></table></div>""").strip()
                 st.markdown(tbl_html, unsafe_allow_html=True)
