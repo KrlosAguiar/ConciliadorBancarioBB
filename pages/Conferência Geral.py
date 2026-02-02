@@ -104,15 +104,9 @@ def encontrar_arquivo_no_upload(lista_arquivos, termo_nome):
     return None
 
 def padronizar_data(data_str):
-    """
-    Remove espaços, converte para datetime e retorna string DD/MM/YYYY.
-    Garante que '03/12/2025 ' e '3/12/2025' virem '03/12/2025'.
-    """
     if not data_str: return None
     try:
-        # Remove espaços extras
-        d = data_str.strip()
-        # Tenta converter
+        d = str(data_str).strip()
         dt = pd.to_datetime(d, dayfirst=True, errors='coerce')
         if pd.notnull(dt):
             return dt.strftime('%d/%m/%Y')
@@ -143,7 +137,8 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
             count9 = df[9].dropna().astype(str).str.strip().replace('', None).count()
             if count9 > count8: col_valor = 9
         
-        mapa_colunas = {0: 'UG', 6: 'Conta', col_valor: 'Valor'}
+        # Mapeamento com a coluna 5 (D/C)
+        mapa_colunas = {0: 'UG', 5: 'Tipo_DC', 6: 'Conta', col_valor: 'Valor'}
         df = df.rename(columns=mapa_colunas)
         
         if 'UG' in df.columns:
@@ -153,7 +148,7 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
         col_fato = None
         col_lcp = None
         for col in df.columns:
-            if col in ['UG', 'Conta', 'Valor']: continue
+            if col in ['UG', 'Conta', 'Valor', 'Tipo_DC']: continue
             try:
                 amostra = df[col].dropna().astype(str).head(30).str.cat(sep=' ')
                 if any(x in amostra for x in ["Arrecadação", "Transferência Financeira", "Liquidação"]):
@@ -168,13 +163,14 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
         if 'Fato Contábil' not in df.columns: df['Fato Contábil'] = ''
         if 'LCP' not in df.columns: df['LCP'] = ''
         if 'UG' not in df.columns: df['UG'] = '' 
+        if 'Tipo_DC' not in df.columns: df['Tipo_DC'] = ''
         
         return df
     except Exception as e:
         return pd.DataFrame()
 
 # ==============================================================================
-# 2. EXTRAÇÃO DE PDFS (COM PADRONIZAÇÃO DE DATA)
+# 2. EXTRAÇÃO DE PDFS
 # ==============================================================================
 
 def obter_mes_referencia_extrato(texto_pdf):
@@ -197,10 +193,8 @@ def extrair_bb(arquivo_bytes, ano_ref):
                 data_atual = None
                 
                 for linha in texto.split('\n'):
-                    # Regex mais permissiva: 1 ou 2 digitos pro dia, ignora espaços
                     match_data = re.search(r'^\s*(\d{1,2}/\d{2}/\d{4})', linha)
                     if match_data:
-                        # Padroniza imediatamente (ex: 3/12/2025 -> 03/12/2025)
                         data_atual = padronizar_data(match_data.group(1))
 
                     codigos_validos = ["14109", "14020", "617", "624", "RECEBIMENTO DE GUIAS", "COBRANCA", "COBRANÇA"]
@@ -275,7 +269,7 @@ def extrair_caixa(arquivo_bytes, ano_ref):
     return total, diario
 
 # ==============================================================================
-# 3. PDF FINAL (COM ALINHAMENTO PERFEITO)
+# 3. PDF FINAL
 # ==============================================================================
 
 def criar_tabela_card_pdf(titulo, lbl1, v1, lbl2, v2, larguras_colunas=[12*mm, 36*mm]):
@@ -422,7 +416,7 @@ st.markdown("---")
 
 c1, c2 = st.columns(2)
 with c1:
-    st.markdown("### 1. Razão Contábil (.xlsx/.csv)")
+    st.markdown("### 1. Razão Contábil (.xlsx/)")
     arquivo_excel = st.file_uploader("", type=["xlsx", "csv"], key="up_excel", label_visibility="collapsed")
 with c2:
     st.markdown("### 2. Extratos Bancários (.pdf)")
@@ -444,7 +438,6 @@ if arquivo_excel:
                 df['Valor'] = df['Valor'].apply(lambda x: float(x.replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
                 df['Conta'] = df['Conta'].astype(str).str.replace(r'\.0$', '', regex=True)
                 
-                # Detecta ano do Razão para corrigir Extratos
                 ano_referencia = datetime.now().year
                 if 'Data' in df.columns:
                     datas_validas = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce').dropna()
@@ -452,7 +445,6 @@ if arquivo_excel:
                         c = Counter(datas_validas.dt.year)
                         ano_referencia = c.most_common(1)[0][0]
                     
-                    # Padroniza Data Excel
                     df['Data'] = df['Data'].apply(padronizar_data)
 
                 def get_vals(col, v1, v2):
@@ -513,11 +505,25 @@ if arquivo_excel:
                 }
                 ks = list(mapa.keys())
                 
-                if 'Fato Contábil' in df.columns:
-                    df_sub = df[(df['Fato Contábil'].astype(str).str.contains("Arrecadação", case=False, na=False)) & (df['Conta'].isin(ks))]
-                    if df_sub.empty: df_sub = df[df['Conta'].isin(ks)]
-                else:
-                    df_sub = df[df['Conta'].isin(ks)]
+                # --- FILTRAGEM BLINDADA (SEM FALLBACK) ---
+                df_sub = pd.DataFrame()
+                
+                # 1. Filtra contas de interesse
+                temp = df[df['Conta'].isin(ks)]
+                
+                # 2. Filtro 1: Apenas o que for "Arrecadação" no Fato Contábil
+                mask_fato = pd.Series([False] * len(temp), index=temp.index) # Inicia False
+                if 'Fato Contábil' in temp.columns:
+                     # Garante string e busca "Arrecadação"
+                     mask_fato = temp['Fato Contábil'].astype(str).str.contains("Arrecadação", case=False, na=False)
+                
+                # 3. Filtro 2: Apenas Débito (D) na coluna Tipo_DC (para garantir que é entrada de receita)
+                mask_debito = pd.Series([False] * len(temp), index=temp.index)
+                if 'Tipo_DC' in temp.columns:
+                     mask_debito = temp['Tipo_DC'].astype(str).str.upper().str.strip() == 'D'
+                
+                # Aplica AMBOS os filtros. Se não tiver Arrecadação OU não for Débito, está fora.
+                df_sub = temp[mask_fato & mask_debito]
                 
                 df_res_total = df_sub.groupby('Conta')['Valor'].sum().reset_index()
                 df_final = pd.merge(pd.DataFrame({'Conta': ks}), df_res_total, on='Conta', how='left').fillna(0)
@@ -570,7 +576,6 @@ if arquivo_excel:
                         d_banco = r['Diario_Banco']
                         d_contabil = r['Diario_Contabil']
                         
-                        # Garante chaves únicas e ordenadas
                         todas_datas = sorted(set(list(d_banco.keys()) + list(d_contabil.keys())), key=lambda x: datetime.strptime(x, "%d/%m/%Y") if len(x)==10 else datetime.max)
                         
                         for dia in todas_datas:
@@ -578,7 +583,6 @@ if arquivo_excel:
                             v_c = d_contabil.get(dia, 0.0)
                             dif_dia = v_c - v_b
                             
-                            # Exibe linha apenas se houver diferença no dia
                             if abs(dif_dia) > 0.01:
                                 rows_html += f"<tr style='background-color:#f9f9f9; color:#555; font-size:12px;'><td style='text-align:center;'>-</td><td style='text-align:center;'>{dia}</td><td style='text-align:right;'>{formatar_moeda(v_c)}</td><td style='text-align:right;'>{formatar_moeda(v_b)}</td><td style='text-align:center; color:#c00;'>{formatar_moeda(dif_dia)}</td></tr>"
                                 
@@ -600,4 +604,4 @@ if arquivo_excel:
             except Exception as e:
                 st.error(f"Ocorreu um erro no processamento: {e}")
 else:
-    st.info("Aguardando upload do Razão Contábil (.xlsx/.csv) para habilitar o início.")
+    st.info("Aguardando upload do Razão Contábil (.xlsx) para habilitar o início.")
