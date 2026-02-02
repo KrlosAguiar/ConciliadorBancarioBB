@@ -25,7 +25,6 @@ st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
     
-    /* ESTILO BOTÃO (BASEADO NO SEU CÓDIGO DE REFERÊNCIA) */
     div.stButton > button {
         background-color: rgb(38, 39, 48) !important;
         color: white !important;
@@ -43,7 +42,6 @@ st.markdown("""
         border-color: white;
     }
 
-    /* CARDS */
     .metric-card {
         background-color: #f8f9fa;
         border-left: 5px solid #ccc;
@@ -64,7 +62,6 @@ st.markdown("""
     
     .metric-status { margin-top: 10px; padding: 5px; text-align: center; border-radius: 4px; font-weight: bold; font-size: 14px; }
     
-    /* TABELAS */
     table { width: 100%; border-collapse: collapse; }
     th { background-color: black; color: white; padding: 10px; text-align: center; }
     td { padding: 8px; border-bottom: 1px solid #ddd; color: black; }
@@ -95,17 +92,8 @@ def encontrar_arquivo_no_upload(lista_arquivos, termo_nome):
         if termo_nome in arq.name: return arq
     return None
 
-# ==============================================================================
-# 2. MOTOR DE LEITURA ROBUSTO (ADAPTADO DO SEU CÓDIGO)
-# ==============================================================================
-
 def carregar_razao_robust(arquivo_bytes, is_csv=False):
-    """
-    Função híbrida: Usa a capacidade de leitura do seu código 'Conciliador Bancário'
-    mas mapeia para as colunas necessárias do 'Conciliador de Receitas'.
-    """
     try:
-        # 1. TENTATIVA PADRÃO (EXCEL COM CABEÇALHO)
         if not is_csv:
             try:
                 df = pd.read_excel(io.BytesIO(arquivo_bytes), skiprows=6, dtype=str)
@@ -116,72 +104,71 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
             except:
                 pass
 
-        # 2. TENTATIVA ROBUSTA (SEM CABEÇALHO / CSV)
-        # Usa o engine='python' e sep=None para autodetectar separadores, igual ao seu código
         if is_csv:
             df = pd.read_csv(io.BytesIO(arquivo_bytes), header=None, encoding='latin1', sep=None, engine='python', dtype=str)
         else:
             df = pd.read_excel(io.BytesIO(arquivo_bytes), header=None, dtype=str)
 
-        # --- LÓGICA DE DETECÇÃO DE COLUNAS (DO SEU CÓDIGO) ---
-        # No seu código de referência, você verifica se o valor está na col 8 ou 9.
         col_valor = 8
         if df.shape[1] > 9:
-            # Conta quantos valores não nulos existem na 8 e na 9
             count8 = df[8].dropna().astype(str).str.strip().replace('', None).count()
             count9 = df[9].dropna().astype(str).str.strip().replace('', None).count()
-            # Se a 9 tiver mais dados que a 8, assume que houve deslocamento
             if count9 > count8: col_valor = 9
         
-        # --- MAPEAMENTO PARA O CONTEXTO DE RECEITAS ---
-        # Baseado nos arquivos que você enviou: 
-        # 0=UG, 6=Conta, col_valor=Valor
         mapa_colunas = {0: 'UG', 6: 'Conta', col_valor: 'Valor'}
-        
-        # Renomeia as colunas conhecidas
         df = df.rename(columns=mapa_colunas)
         
-        # Remove linhas de totalizadores (segurança)
         if 'UG' in df.columns:
             mask = df['UG'].astype(str).str.contains("Totalizadores", case=False, na=False)
             if mask.any(): df = df.iloc[:mask.idxmax()].copy()
 
-        # --- SCANNER DE COLUNAS VARIÁVEIS (LCP / FATO) ---
-        # Como essas colunas mudam de lugar, escaneamos o restante
         col_fato = None
         col_lcp = None
-
         for col in df.columns:
             if col in ['UG', 'Conta', 'Valor']: continue
-            
             try:
-                # Amostra para detecção
                 amostra = df[col].dropna().astype(str).head(30).str.cat(sep=' ')
-                
-                # Procura Fato Contábil (Arrecadação, Transferência, Liquidação)
                 if any(x in amostra for x in ["Arrecadação", "Transferência Financeira", "Liquidação"]):
                      if col_fato is None or "Arrecadação" in amostra: col_fato = col
-                
-                # Procura LCP (Padrão: "000 - Texto")
                 if re.search(r'\b\d{3}\s*-\s*', amostra): col_lcp = col
             except: continue
 
         if col_fato: df = df.rename(columns={col_fato: 'Fato Contábil'})
         if col_lcp: df = df.rename(columns={col_lcp: 'LCP'})
         
-        # Garante colunas mínimas
         if 'Fato Contábil' not in df.columns: df['Fato Contábil'] = ''
         if 'LCP' not in df.columns: df['LCP'] = ''
-        if 'UG' not in df.columns: df['UG'] = '' # Fallback
+        if 'UG' not in df.columns: df['UG'] = '' 
         
         return df
-
     except Exception as e:
         return pd.DataFrame()
 
 # ==============================================================================
-# 3. EXTRAÇÃO DE PDFS
+# 2. EXTRAÇÃO DE PDFS (CORRIGIDA COM FILTRO DE MÊS)
 # ==============================================================================
+
+def obter_mes_referencia_extrato(texto_pdf):
+    """
+    Busca a string 'Mês: Novembro/2025' e retorna '11/2025'
+    """
+    mapa_meses = {
+        'JANEIRO': '01', 'FEVEREIRO': '02', 'MARÇO': '03', 'ABRIL': '04', 
+        'MAIO': '05', 'JUNHO': '06', 'JULHO': '07', 'AGOSTO': '08', 
+        'SETEMBRO': '09', 'OUTUBRO': '10', 'NOVEMBRO': '11', 'DEZEMBRO': '12'
+    }
+    # Remove quebras de linha para facilitar o regex em textos multilinhas quebrados
+    texto_limpo = texto_pdf.replace('\n', ' ').replace('\r', ' ')
+    
+    # Regex flexível para pegar "Mês:" seguido de espaço e NomeDoMês/Ano
+    match = re.search(r'Mês:\s*([A-Za-zçÇ]+)\s*/\s*(\d{4})', texto_limpo, re.IGNORECASE)
+    
+    if match:
+        nome_mes, ano = match.groups()
+        mes_num = mapa_meses.get(nome_mes.upper())
+        if mes_num: 
+            return f"{mes_num}/{ano}"
+    return None
 
 def extrair_bb(arquivo_bytes):
     total = 0.0
@@ -190,9 +177,12 @@ def extrair_bb(arquivo_bytes):
             for pagina in pdf.pages:
                 texto = pagina.extract_text() or ""
                 for linha in texto.split('\n'):
-                    if "14109" in linha or "14020" in linha:
-                        matches = re.findall(r'([\d\.]+,\d{2})', linha)
-                        if matches: total += limpar_numero(matches[0])
+                    # CORREÇÃO BB: Aceita códigos e 'COBRANÇA' se for Crédito
+                    termos_ok = ["14109", "14020", "624", "COBRANCA", "COBRANÇA"]
+                    if any(t in linha.upper() for t in termos_ok):
+                        if " C" in linha or linha.strip().endswith("C"):
+                            matches = re.findall(r'([\d\.]+,\d{2})', linha)
+                            if matches: total += limpar_numero(matches[0])
     except: return None
     return total
 
@@ -217,21 +207,31 @@ def extrair_caixa(arquivo_bytes):
             texto_completo = ""
             for pagina in pdf.pages: texto_completo += (pagina.extract_text() or "") + "\n"
             
+            # 1. Obtém o mês de referência do cabeçalho (Ex: "11/2025")
+            mes_ref = obter_mes_referencia_extrato(texto_completo)
+            
             texto_limpo = texto_completo.replace('"', ' ') 
-            # Regex ajustada para capturar melhor os formatos do CAIXA
             termos_regex = r"ARR\s+CCV\s+DH|ARR\s+CV\s+INT|ARR\s+DH\s+AG"
+            
+            # Regex captura: Data, Descrição, Valor, Tipo (D/C)
             regex = r'(\d{2}/\d{2}/\d{4}).*?(' + termos_regex + r')[^\d]+(\d{1,3}(?:\.\d{3})*,\d{2})\s*([CD])'
             matches = re.findall(regex, texto_limpo, re.IGNORECASE)
             
-            for _, _, valor_str, tipo in matches:
-                valor_num = limpar_numero(valor_str)
-                if tipo.upper() == 'D': total -= valor_num
-                else: total += valor_num
+            for data_str, _, valor_str, tipo in matches:
+                # 2. Extrai o mês da transação (dd/mm/yyyy -> mm/yyyy)
+                mes_lancamento = data_str[3:] 
+                
+                # 3. FILTRO RIGOROSO: Só soma se o mês bater com o cabeçalho
+                # Se não conseguiu ler o cabeçalho (None), soma tudo (comportamento padrão de segurança)
+                if mes_ref is None or mes_lancamento == mes_ref:
+                    valor_num = limpar_numero(valor_str)
+                    if tipo.upper() == 'D': total -= valor_num
+                    else: total += valor_num
     except: return None
     return total
 
 # ==============================================================================
-# 4. GERAÇÃO DE PDF (LAYOUT IDÊNTICO À TELA)
+# 3. PDF FINAL
 # ==============================================================================
 
 def criar_tabela_card_pdf(titulo, lbl1, v1, lbl2, v2, larguras_colunas=[12*mm, 36*mm]):
@@ -275,11 +275,9 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
     story.append(Paragraph("RELATÓRIO DE CONCILIAÇÃO CONTÁBIL", styles["Title"]))
     story.append(Spacer(1, 8*mm))
 
-    # --- CARDS ---
     story.append(Paragraph("<b>1. SITUAÇÃO DAS TRANSFERÊNCIAS</b>", styles["Heading3"]))
     story.append(Spacer(1, 2*mm))
 
-    # Linha 1 (4 colunas)
     row1_tables = []
     width_l1 = [13*mm, 32*mm]
     for item in dados_cards_1:
@@ -290,7 +288,6 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
     story.append(master_table_1)
     story.append(Spacer(1, 4*mm))
 
-    # Linha 2 (3 colunas)
     row2_tables = []
     width_l2 = [25*mm, 35*mm]
     for item in dados_cards_2:
@@ -301,7 +298,6 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
     story.append(master_table_2)
     story.append(Spacer(1, 8*mm))
 
-    # --- TABELA ---
     story.append(Paragraph("<b>2. CONCILIAÇÃO DE RECEITAS PRÓPRIAS</b>", styles["Heading3"]))
     story.append(Spacer(1, 3*mm))
 
@@ -331,7 +327,7 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('ALIGN', (1,1), (2,-1), 'RIGHT'), 
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTNAME', (0,1), (0,-2), 'Helvetica-Bold'), # Conta em Negrito
+        ('FONTNAME', (0,1), (0,-2), 'Helvetica-Bold'),
         ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
         ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey),
         ('TEXTCOLOR', (0,-1), (-1,-1), colors.black),
@@ -351,7 +347,7 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
     return buffer.getvalue()
 
 # ==============================================================================
-# 5. APLICAÇÃO
+# 4. APLICAÇÃO
 # ==============================================================================
 
 st.markdown("<h1 style='text-align: center;'>Painel de Conciliação Contábil</h1>", unsafe_allow_html=True)
@@ -371,27 +367,23 @@ if arquivo_excel:
     if st.button("INICIAR CONFERÊNCIA", use_container_width=True):
         with st.spinner("Processando dados e gerando relatórios..."):
             try:
-                # --- LEITURA ROBUSTA ---
+                # LEITURA
                 excel_bytes = arquivo_excel.read()
                 is_csv = arquivo_excel.name.lower().endswith('.csv')
-                
                 df = carregar_razao_robust(excel_bytes, is_csv=is_csv)
                 
-                # --- LIMPEZA E PADRONIZAÇÃO DE DADOS (DO SEU CÓDIGO) ---
-                # Garante que números venham limpos
+                # LIMPEZA
                 df['Valor'] = df['Valor'].astype(str).str.strip().fillna('0')
-                # A lógica replace('.', '').replace(',', '.') funciona bem para padrão BR
                 df['Valor'] = df['Valor'].apply(lambda x: float(x.replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
                 df['Conta'] = df['Conta'].astype(str).str.replace(r'\.0$', '', regex=True)
 
-                # --- FILTROS DE NEGÓCIO ---
                 def get_vals(col, v1, v2):
                     if col not in df.columns: return 0.0, 0.0
                     f1 = df[col].astype(str).str.startswith(str(v1), na=False)
                     f2 = df[col].astype(str).str.startswith(str(v2), na=False)
                     return df.loc[f1, 'Valor'].sum(), df.loc[f2, 'Valor'].sum()
 
-                # --- CARDS TRANSFERÊNCIAS ---
+                # CARDS
                 dados_c1 = []
                 for tit, col, c1, c2 in [("TRANSF. CONST. - FMS", 'LCP', 264, 265), ("TRANSF. CONST. - FME", 'LCP', 266, 267), ("TRANSF. CONST. - FMAS", 'LCP', 268, 269), ("TRANSF. PARA ARSEP", 'LCP', 270, 271)]:
                     v1, v2 = get_vals(col, c1, c2)
@@ -411,7 +403,7 @@ if arquivo_excel:
                     t2_duo = df.loc[f2, 'Valor'].sum()
                 dados_c2.append({'titulo': "TRANSF. DUODÉCIMO", 'l1': "Concedida", 'v1': t1_duo, 'l2': "Recebida", 'v2': t2_duo})
 
-                # --- RENDER CARDS ---
+                # RENDER
                 def render_card(d):
                     ok = round(d['v1'], 2) == round(d['v2'], 2)
                     dif = abs(d['v1'] - d['v2'])
@@ -419,24 +411,21 @@ if arquivo_excel:
                     txt_st = "CONCILIADO" if ok else "NÃO CONCILIADO"
                     bg_st = "#e8f5e9" if ok else "#fbe9eb"
                     col_st = "#28a745" if ok else "#dc3545"
-                    
                     dif_html = ""
                     if not ok: dif_html = f"<div style='font-size:11px; margin-top:2px; color:#c00'>(Dif: {formatar_moeda(dif)})</div>"
-
                     return textwrap.dedent(f"""<div class="metric-card {cls_cor}"><div class="metric-title">{d['titulo']}</div><div class="metric-row"><span>{d['l1']}</span><span class="metric-val">{formatar_moeda(d['v1'])}</span></div><div class="metric-row" style="border-bottom:1px dashed #ccc; padding-bottom:3px; margin-bottom:3px;"><span>{d['l2']}</span><span class="metric-val">{formatar_moeda(d['v2'])}</span></div><div class="metric-status" style="background:{bg_st}; color:{col_st};">{txt_st}{dif_html}</div></div>""").strip()
 
                 st.markdown("### 1. Situação das Transferências")
                 cols1 = st.columns(4)
                 for i, d in enumerate(dados_c1):
                     with cols1[i]: st.markdown(render_card(d), unsafe_allow_html=True)
-                
                 cols2 = st.columns(3)
                 for i, d in enumerate(dados_c2):
                     with cols2[i]: st.markdown(render_card(d), unsafe_allow_html=True)
 
                 st.markdown("---")
 
-                # --- TABELA DE RECEITAS ---
+                # TABELA
                 mapa = {
                     '8346': {'key': '105628', 'f': extrair_bb, 'nome': '105628-X'},
                     '8416': {'key': '112005', 'f': extrair_bb, 'nome': '112005-0'},
@@ -447,13 +436,9 @@ if arquivo_excel:
                 }
                 ks = list(mapa.keys())
                 
-                # Lógica de Filtro Híbrida
                 if 'Fato Contábil' in df.columns:
-                    # Tenta filtrar por arrecadação
                     df_res = df[(df['Fato Contábil'].astype(str).str.contains("Arrecadação", case=False, na=False)) & (df['Conta'].isin(ks))].groupby('Conta')['Valor'].sum().reset_index()
-                    # Fallback: Se não achou nada (talvez nome diferente), pega tudo da conta
-                    if df_res.empty:
-                         df_res = df[df['Conta'].isin(ks)].groupby('Conta')['Valor'].sum().reset_index()
+                    if df_res.empty: df_res = df[df['Conta'].isin(ks)].groupby('Conta')['Valor'].sum().reset_index()
                 else:
                     df_res = df[df['Conta'].isin(ks)].groupby('Conta')['Valor'].sum().reset_index()
 
@@ -467,7 +452,7 @@ if arquivo_excel:
                     
                     arq = encontrar_arquivo_no_upload(arquivos_pdf, cfg['key'])
                     if arq:
-                        val = cfg['f'](arq.read()) # .read() pois a função espera bytes
+                        val = cfg['f'](arq.read())
                         if val is not None: ve, stt = val, "OK"
                         else: stt = "Erro Leitura"
                     recs.append({"Conta": cfg['nome'], "PDF Ref": cfg['key'], "Valor Contábil": vc, "Valor Extrato": ve, "Diferença": vc - ve, "Status": stt})
@@ -477,7 +462,6 @@ if arquivo_excel:
                 tot_e = df_rec['Valor Extrato'].sum()
 
                 st.markdown("### 2. Conciliação de Receitas Próprias")
-                
                 rows_html = ""
                 for _, r in df_rec.iterrows():
                     dif = r['Diferença']
@@ -491,7 +475,6 @@ if arquivo_excel:
                     rows_html += f"<tr style='border-bottom:1px solid #eee;'><td style='font-weight:bold;'>{r['Conta']}</td><td style='color:#666;font-size:12px;'>{r['PDF Ref']}</td><td style='text-align:right;'>{formatar_moeda(r['Valor Contábil'])}</td><td style='text-align:right;'>{ve_str}</td><td style='text-align:center;{style_dif}'>{txt_dif}</td></tr>"
 
                 tbl_html = textwrap.dedent(f"""<div style='background-color:white;padding:15px;border-radius:5px;border:1px solid #ddd;'><table style='width:100%;border-collapse:collapse;color:black !important;'><tr style='background-color:black;color:white;'><th>Conta</th><th>Ref. PDF</th><th style='text-align:right;'>Valor Contábil</th><th style='text-align:right;'>Valor Extrato</th><th style='text-align:center;'>Diferença</th></tr>{rows_html}<tr style='background-color:#f0f0f0;border-top:2px solid black;'><td colspan='2'><b>TOTAL GERAL</b></td><td style='text-align:right;'><b>{formatar_moeda(tot_c)}</b></td><td style='text-align:right;'><b>{formatar_moeda(tot_e)}</b></td><td></td></tr></table></div>""").strip()
-                
                 st.markdown(tbl_html, unsafe_allow_html=True)
                 st.markdown("<br>", unsafe_allow_html=True)
 
