@@ -278,10 +278,6 @@ def criar_tabela_card_pdf(titulo, lbl1, v1, lbl2, v2, larguras_colunas=[12*mm, 3
     return t
 
 def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas, lista_detalhes_divergentes):
-    """
-    Recebe também 'lista_detalhes_divergentes', que contém as linhas diárias a serem impressas
-    apenas se houver diferença.
-    """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=5*mm, leftMargin=5*mm, topMargin=10*mm, bottomMargin=10*mm, title="Relatório Conciliação")
     story = []
@@ -320,7 +316,6 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas, lista_detalhes
     total_cont = 0.0
     total_ext = 0.0
     
-    # Prepara os estilos da tabela
     t_style = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('BACKGROUND', (0,0), (-1,0), colors.black),
@@ -342,10 +337,8 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas, lista_detalhes
         val_ext_str = formatar_moeda(row['Valor Extrato'])
         if row['Status'] == "Sem PDF": val_ext_str = "(Falta PDF)"
 
-        # Linha MESTRE (Conta)
         data.append([str(row['Conta']), formatar_moeda(row['Valor Contábil']), val_ext_str, val_dif_str])
         
-        # Estilo da Linha Mestre
         cor = colors.red if not conciliado else colors.darkgreen
         t_style.append(('TEXTCOLOR', (3, current_row_idx), (3, current_row_idx), cor))
         t_style.append(('FONTNAME', (3, current_row_idx), (3, current_row_idx), 'Helvetica-Bold'))
@@ -357,43 +350,26 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas, lista_detalhes
         total_ext += row['Valor Extrato']
         current_row_idx += 1
         
-        # --- LINHAS DE DETALHE (Se houver divergência) ---
-        # Procura se essa conta tem detalhes na lista de divergências
         conta_nome = row['Conta']
         detalhes = [d for d in lista_detalhes_divergentes if d['Conta'] == conta_nome]
         
         if detalhes:
             for det in detalhes:
-                # Linha de detalhe: Coluna 0 vazia ou traço, Coluna 1 data, etc
-                # Mas nossa tabela tem colunas: Conta | Valor Cont | Vlr Ext | Dif
-                # Vamos usar: Col 0: "-" | Col 1: Data (hack) | Col 2: Valores | Col 3: Dif
-                
-                # Layout adaptado para caber na tabela existente:
-                # Col 0: "-"
-                # Col 1: Data + " (Cont: R$ ...)"
-                # Col 2: "Ext: R$ ..."
-                # Col 3: Dif
-                
-                # Mas o ideal é seguir a estrutura:
-                # Data | Vlr Contabil | Vlr Extrato | Diferença
-                # Vamos colocar a Data na coluna 'Conta' com indentação
-                
+                # Remove "Data:" conforme solicitado
                 linha_det = [
-                    f"   Data: {det['Data']}", 
+                    f"   {det['Data']}", 
                     formatar_moeda(det['Vlr_Contabil']), 
                     formatar_moeda(det['Vlr_Banco']), 
                     formatar_moeda(det['Diferenca'])
                 ]
                 data.append(linha_det)
                 
-                # Estilo da Linha de Detalhe
                 t_style.append(('BACKGROUND', (0, current_row_idx), (-1, current_row_idx), colors.whitesmoke))
                 t_style.append(('FONTSIZE', (0, current_row_idx), (-1, current_row_idx), 8))
                 t_style.append(('TEXTCOLOR', (0, current_row_idx), (-1, current_row_idx), colors.darkgrey))
                 t_style.append(('TEXTCOLOR', (3, current_row_idx), (3, current_row_idx), colors.red))
                 current_row_idx += 1
 
-    # Linha Total
     data.append(["TOTAL GERAL", formatar_moeda(total_cont), formatar_moeda(total_ext), "-"])
     t_style.append(('FONTNAME', (0, current_row_idx), (-1, current_row_idx), 'Helvetica-Bold'))
     t_style.append(('BACKGROUND', (0, current_row_idx), (-1, current_row_idx), colors.lightgrey))
@@ -507,7 +483,6 @@ if arquivo_excel:
                 df_final = pd.merge(pd.DataFrame({'Conta': ks}), df_res_total, on='Conta', how='left').fillna(0)
 
                 recs = []
-                # Lista auxiliar para passar ao gerador de PDF
                 lista_detalhes_divergentes = []
 
                 for _, r in df_final.iterrows():
@@ -563,17 +538,8 @@ if arquivo_excel:
                             dif_dia = v_c - v_b
                             
                             if abs(dif_dia) > 0.01:
-                                # Adiciona HTML
-                                rows_html += f"""
-                                <tr style='background-color:#f9f9f9; color:#555; font-size:12px;'>
-                                    <td style='text-align:center;'>-</td>
-                                    <td style='text-align:center;'>{dia}</td>
-                                    <td style='text-align:right;'>{formatar_moeda(v_c)}</td>
-                                    <td style='text-align:right;'>{formatar_moeda(v_b)}</td>
-                                    <td style='text-align:center; color:#c00;'>{formatar_moeda(dif_dia)}</td>
-                                </tr>
-                                """
-                                # Salva para o PDF
+                                rows_html += f"<tr style='background-color:#f9f9f9; color:#555; font-size:12px;'><td style='text-align:center;'>-</td><td style='text-align:center;'>{dia}</td><td style='text-align:right;'>{formatar_moeda(v_c)}</td><td style='text-align:right;'>{formatar_moeda(v_b)}</td><td style='text-align:center; color:#c00;'>{formatar_moeda(dif_dia)}</td></tr>"
+                                
                                 lista_detalhes_divergentes.append({
                                     'Conta': r['Conta'],
                                     'Data': dia,
