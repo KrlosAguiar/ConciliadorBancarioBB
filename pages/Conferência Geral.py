@@ -135,7 +135,7 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
 
         if col_fato: df = df.rename(columns={col_fato: 'Fato Contábil'})
         if col_lcp: df = df.rename(columns={col_lcp: 'LCP'})
-        if 'Data' not in df.columns and 4 in df.columns: df = df.rename(columns={4: 'Data'}) # Garante Data
+        if 'Data' not in df.columns and 4 in df.columns: df = df.rename(columns={4: 'Data'}) 
         
         if 'Fato Contábil' not in df.columns: df['Fato Contábil'] = ''
         if 'LCP' not in df.columns: df['LCP'] = ''
@@ -166,11 +166,9 @@ def extrair_bb(arquivo_bytes):
         with pdfplumber.open(io.BytesIO(arquivo_bytes)) as pdf:
             for pagina in pdf.pages:
                 texto = pagina.extract_text() or ""
-                # Tenta capturar data da linha ou manter a última data vista
                 data_atual = None
                 
                 for linha in texto.split('\n'):
-                    # Tenta achar data no início da linha (Padrão BB)
                     match_data = re.match(r'(\d{2}/\d{2}/\d{4})', linha)
                     if match_data:
                         data_atual = match_data.group(1)
@@ -195,7 +193,6 @@ def extrair_banpara(arquivo_bytes):
     total = 0.0
     diario = {}
     termo = "REPAS ARRE PREF"
-    # Ano corrente como fallback se não achar
     ano_atual = datetime.now().year
     
     try:
@@ -203,11 +200,9 @@ def extrair_banpara(arquivo_bytes):
             for pagina in pdf.pages:
                 texto = pagina.extract_text() or ""
                 for linha in texto.split('\n'):
-                    # Banpará geralmente tem data DD/MM no inicio
                     data_str = None
                     match_dt = re.match(r'(\d{2}/\d{2})', linha)
                     if match_dt:
-                        # Assume ano corrente ou tenta pegar do cabeçalho (simplificado aqui)
                         data_str = f"{match_dt.group(1)}/{ano_atual}"
 
                     if termo in linha:
@@ -239,10 +234,7 @@ def extrair_caixa(arquivo_bytes):
                 mes_lancamento = data_str[3:] 
                 if mes_ref is None or mes_lancamento == mes_ref:
                     valor_num = limpar_numero(valor_str)
-                    
-                    val_final = 0.0
-                    if tipo.upper() == 'D': val_final = -valor_num
-                    else: val_final = valor_num
+                    val_final = -valor_num if tipo.upper() == 'D' else valor_num
                     
                     total += val_final
                     diario[data_str] = diario.get(data_str, 0.0) + val_final
@@ -250,7 +242,7 @@ def extrair_caixa(arquivo_bytes):
     return total, diario
 
 # ==============================================================================
-# 3. PDF FINAL (Mantido igual)
+# 3. PDF FINAL (COM DETALHAMENTO CORRIGIDO)
 # ==============================================================================
 
 def criar_tabela_card_pdf(titulo, lbl1, v1, lbl2, v2, larguras_colunas=[12*mm, 36*mm]):
@@ -285,7 +277,11 @@ def criar_tabela_card_pdf(titulo, lbl1, v1, lbl2, v2, larguras_colunas=[12*mm, 3
     ]))
     return t
 
-def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
+def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas, lista_detalhes_divergentes):
+    """
+    Recebe também 'lista_detalhes_divergentes', que contém as linhas diárias a serem impressas
+    apenas se houver diferença.
+    """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=5*mm, leftMargin=5*mm, topMargin=10*mm, bottomMargin=10*mm, title="Relatório Conciliação")
     story = []
@@ -323,22 +319,8 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
     data = [["Conta", "Valor Contábil", "Extrato Bancário", "Diferença"]]
     total_cont = 0.0
     total_ext = 0.0
-
-    for _, row in df_receitas.iterrows():
-        dif = row['Diferença']
-        val_dif_str = formatar_moeda(dif)
-        if abs(dif) < 0.01: val_dif_str = "OK"
-
-        val_ext_str = formatar_moeda(row['Valor Extrato'])
-        if row['Status'] == "Sem PDF": val_ext_str = "(Falta PDF)"
-
-        data.append([str(row['Conta']), formatar_moeda(row['Valor Contábil']), val_ext_str, val_dif_str])
-        total_cont += row['Valor Contábil']
-        total_ext += row['Valor Extrato']
-
-    data.append(["TOTAL GERAL", formatar_moeda(total_cont), formatar_moeda(total_ext), "-"])
-
-    t = Table(data, colWidths=[60*mm, 45*mm, 45*mm, 40*mm])
+    
+    # Prepara os estilos da tabela
     t_style = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('BACKGROUND', (0,0), (-1,0), colors.black),
@@ -346,20 +328,78 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('ALIGN', (1,1), (2,-1), 'RIGHT'), 
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTNAME', (0,1), (0,-2), 'Helvetica-Bold'),
-        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
-        ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey),
-        ('TEXTCOLOR', (0,-1), (-1,-1), colors.black),
     ]
 
-    for i in range(1, len(data)-1):
-        val_dif = df_receitas.iloc[i-1]['Diferença']
-        cor = colors.red if abs(val_dif) > 0.01 else colors.darkgreen
-        t_style.append(('TEXTCOLOR', (3, i), (3, i), cor))
-        t_style.append(('FONTNAME', (3, i), (3, i), 'Helvetica-Bold'))
-        if df_receitas.iloc[i-1]['Status'] == "Sem PDF":
-             t_style.append(('TEXTCOLOR', (2, i), (2, i), colors.grey))
+    current_row_idx = 1
+    
+    for i, row in df_receitas.iterrows():
+        dif = row['Diferença']
+        conciliado = abs(dif) < 0.01
+        
+        val_dif_str = formatar_moeda(dif)
+        if conciliado: val_dif_str = "OK"
 
+        val_ext_str = formatar_moeda(row['Valor Extrato'])
+        if row['Status'] == "Sem PDF": val_ext_str = "(Falta PDF)"
+
+        # Linha MESTRE (Conta)
+        data.append([str(row['Conta']), formatar_moeda(row['Valor Contábil']), val_ext_str, val_dif_str])
+        
+        # Estilo da Linha Mestre
+        cor = colors.red if not conciliado else colors.darkgreen
+        t_style.append(('TEXTCOLOR', (3, current_row_idx), (3, current_row_idx), cor))
+        t_style.append(('FONTNAME', (3, current_row_idx), (3, current_row_idx), 'Helvetica-Bold'))
+        t_style.append(('FONTNAME', (0, current_row_idx), (0, current_row_idx), 'Helvetica-Bold'))
+        if row['Status'] == "Sem PDF":
+             t_style.append(('TEXTCOLOR', (2, current_row_idx), (2, current_row_idx), colors.grey))
+        
+        total_cont += row['Valor Contábil']
+        total_ext += row['Valor Extrato']
+        current_row_idx += 1
+        
+        # --- LINHAS DE DETALHE (Se houver divergência) ---
+        # Procura se essa conta tem detalhes na lista de divergências
+        conta_nome = row['Conta']
+        detalhes = [d for d in lista_detalhes_divergentes if d['Conta'] == conta_nome]
+        
+        if detalhes:
+            for det in detalhes:
+                # Linha de detalhe: Coluna 0 vazia ou traço, Coluna 1 data, etc
+                # Mas nossa tabela tem colunas: Conta | Valor Cont | Vlr Ext | Dif
+                # Vamos usar: Col 0: "-" | Col 1: Data (hack) | Col 2: Valores | Col 3: Dif
+                
+                # Layout adaptado para caber na tabela existente:
+                # Col 0: "-"
+                # Col 1: Data + " (Cont: R$ ...)"
+                # Col 2: "Ext: R$ ..."
+                # Col 3: Dif
+                
+                # Mas o ideal é seguir a estrutura:
+                # Data | Vlr Contabil | Vlr Extrato | Diferença
+                # Vamos colocar a Data na coluna 'Conta' com indentação
+                
+                linha_det = [
+                    f"   Data: {det['Data']}", 
+                    formatar_moeda(det['Vlr_Contabil']), 
+                    formatar_moeda(det['Vlr_Banco']), 
+                    formatar_moeda(det['Diferenca'])
+                ]
+                data.append(linha_det)
+                
+                # Estilo da Linha de Detalhe
+                t_style.append(('BACKGROUND', (0, current_row_idx), (-1, current_row_idx), colors.whitesmoke))
+                t_style.append(('FONTSIZE', (0, current_row_idx), (-1, current_row_idx), 8))
+                t_style.append(('TEXTCOLOR', (0, current_row_idx), (-1, current_row_idx), colors.darkgrey))
+                t_style.append(('TEXTCOLOR', (3, current_row_idx), (3, current_row_idx), colors.red))
+                current_row_idx += 1
+
+    # Linha Total
+    data.append(["TOTAL GERAL", formatar_moeda(total_cont), formatar_moeda(total_ext), "-"])
+    t_style.append(('FONTNAME', (0, current_row_idx), (-1, current_row_idx), 'Helvetica-Bold'))
+    t_style.append(('BACKGROUND', (0, current_row_idx), (-1, current_row_idx), colors.lightgrey))
+    t_style.append(('TEXTCOLOR', (0, current_row_idx), (-1, current_row_idx), colors.black))
+
+    t = Table(data, colWidths=[60*mm, 45*mm, 45*mm, 40*mm])
     t.setStyle(TableStyle(t_style))
     story.append(t)
     doc.build(story)
@@ -396,9 +436,7 @@ if arquivo_excel:
                 df['Valor'] = df['Valor'].apply(lambda x: float(x.replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
                 df['Conta'] = df['Conta'].astype(str).str.replace(r'\.0$', '', regex=True)
                 
-                # Garante formato de data DD/MM/YYYY para conferência
                 if 'Data' in df.columns:
-                    # Tenta converter para datetime e depois formatar string padrão BR
                     df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce').dt.strftime('%d/%m/%Y')
 
                 def get_vals(col, v1, v2):
@@ -427,7 +465,6 @@ if arquivo_excel:
                     t2_duo = df.loc[f2, 'Valor'].sum()
                 dados_c2.append({'titulo': "TRANSF. DUODÉCIMO", 'l1': "Concedida", 'v1': t1_duo, 'l2': "Recebida", 'v2': t2_duo})
 
-                # RENDER CARDS
                 def render_card(d):
                     ok = round(d['v1'], 2) == round(d['v2'], 2)
                     dif = abs(d['v1'] - d['v2'])
@@ -460,19 +497,19 @@ if arquivo_excel:
                 }
                 ks = list(mapa.keys())
                 
-                # Filtra Receitas do Excel (Contábil)
                 if 'Fato Contábil' in df.columns:
                     df_sub = df[(df['Fato Contábil'].astype(str).str.contains("Arrecadação", case=False, na=False)) & (df['Conta'].isin(ks))]
                     if df_sub.empty: df_sub = df[df['Conta'].isin(ks)]
                 else:
                     df_sub = df[df['Conta'].isin(ks)]
                 
-                # Agrupamento Global (Mensal)
                 df_res_total = df_sub.groupby('Conta')['Valor'].sum().reset_index()
-
                 df_final = pd.merge(pd.DataFrame({'Conta': ks}), df_res_total, on='Conta', how='left').fillna(0)
 
                 recs = []
+                # Lista auxiliar para passar ao gerador de PDF
+                lista_detalhes_divergentes = []
+
                 for _, r in df_final.iterrows():
                     c_orig, vc = r['Conta'], r['Valor']
                     cfg = mapa.get(c_orig)
@@ -481,11 +518,10 @@ if arquivo_excel:
                     
                     arq = encontrar_arquivo_no_upload(arquivos_pdf, cfg['key'])
                     if arq:
-                        val, diario_banco = cfg['f'](arq.read()) # Agora retorna Tupla
+                        val, diario_banco = cfg['f'](arq.read())
                         if val is not None: ve, stt = val, "OK"
                         else: stt = "Erro Leitura"
                     
-                    # Prepara dados diários do Contábil para esta conta específica
                     diario_contabil = {}
                     df_conta_dia = df_sub[df_sub['Conta'] == c_orig].groupby('Data')['Valor'].sum()
                     diario_contabil = df_conta_dia.to_dict()
@@ -515,12 +551,10 @@ if arquivo_excel:
                     
                     rows_html += f"<tr style='border-bottom:1px solid #eee;'><td style='font-weight:bold;'>{r['Conta']}</td><td style='color:#666;font-size:12px;'>{r['PDF Ref']}</td><td style='text-align:right;'>{formatar_moeda(r['Valor Contábil'])}</td><td style='text-align:right;'>{ve_str}</td><td style='text-align:center;{style_dif}'>{txt_dif}</td></tr>"
 
-                    # --- SUBFUNÇÃO: DETALHAMENTO DIÁRIO SE HOUVER DIFERENÇA ---
                     if not conciliado and r['Status'] == "OK":
                         d_banco = r['Diario_Banco']
                         d_contabil = r['Diario_Contabil']
                         
-                        # Une todas as datas presentes em ambos
                         todas_datas = sorted(set(list(d_banco.keys()) + list(d_contabil.keys())), key=lambda x: datetime.strptime(x, "%d/%m/%Y") if len(x)==10 else datetime.max)
                         
                         for dia in todas_datas:
@@ -529,6 +563,7 @@ if arquivo_excel:
                             dif_dia = v_c - v_b
                             
                             if abs(dif_dia) > 0.01:
+                                # Adiciona HTML
                                 rows_html += f"""
                                 <tr style='background-color:#f9f9f9; color:#555; font-size:12px;'>
                                     <td style='text-align:center;'>-</td>
@@ -538,12 +573,20 @@ if arquivo_excel:
                                     <td style='text-align:center; color:#c00;'>{formatar_moeda(dif_dia)}</td>
                                 </tr>
                                 """
+                                # Salva para o PDF
+                                lista_detalhes_divergentes.append({
+                                    'Conta': r['Conta'],
+                                    'Data': dia,
+                                    'Vlr_Contabil': v_c,
+                                    'Vlr_Banco': v_b,
+                                    'Diferenca': dif_dia
+                                })
 
                 tbl_html = textwrap.dedent(f"""<div style='background-color:white;padding:15px;border-radius:5px;border:1px solid #ddd;'><table style='width:100%;border-collapse:collapse;color:black !important;'><tr style='background-color:black;color:white;'><th>Conta</th><th>Ref. PDF</th><th style='text-align:right;'>Valor Contábil</th><th style='text-align:right;'>Valor Extrato</th><th style='text-align:center;'>Diferença</th></tr>{rows_html}<tr style='background-color:#f0f0f0;border-top:2px solid black;'><td colspan='2'><b>TOTAL GERAL</b></td><td style='text-align:right;'><b>{formatar_moeda(tot_c)}</b></td><td style='text-align:right;'><b>{formatar_moeda(tot_e)}</b></td><td></td></tr></table></div>""").strip()
                 st.markdown(tbl_html, unsafe_allow_html=True)
                 st.markdown("<br>", unsafe_allow_html=True)
 
-                pdf_bytes = gerar_pdf_completo(dados_c1, dados_c2, df_rec)
+                pdf_bytes = gerar_pdf_completo(dados_c1, dados_c2, df_rec, lista_detalhes_divergentes)
                 st.download_button("BAIXAR RELATÓRIO PDF COMPLETO", pdf_bytes, "Relatorio_Conciliacao_Completo.pdf", "application/pdf", use_container_width=True)
 
             except Exception as e:
