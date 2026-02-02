@@ -15,6 +15,14 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.units import mm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
+# --- CONFIGURAÇÃO DA PÁGINA ---
+icon_path = os.path.join(os.getcwd(), "Barcarena.png")
+try:
+    icon_image = Image.open(icon_path)
+    st.set_page_config(page_title="Conciliador Bancário", page_icon=icon_image, layout="wide")
+except:
+    st.set_page_config(page_title="Conciliador Bancário", layout="wide")
+
 # ==============================================================================
 # 0. CONFIGURAÇÃO DA PÁGINA E CSS
 # ==============================================================================
@@ -146,7 +154,7 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
         return pd.DataFrame()
 
 # ==============================================================================
-# 2. EXTRAÇÃO DE PDFS (COM DIÁRIO)
+# 2. EXTRAÇÃO DE PDFS (COM SUPORTE A DIÁRIO)
 # ==============================================================================
 
 def obter_mes_referencia_extrato(texto_pdf):
@@ -169,7 +177,8 @@ def extrair_bb(arquivo_bytes):
                 data_atual = None
                 
                 for linha in texto.split('\n'):
-                    match_data = re.match(r'(\d{2}/\d{2}/\d{4})', linha)
+                    # MELHORIA: Regex procura data no início da linha, ignorando espaços
+                    match_data = re.search(r'^\s*(\d{2}/\d{2}/\d{4})', linha)
                     if match_data:
                         data_atual = match_data.group(1)
 
@@ -201,7 +210,8 @@ def extrair_banpara(arquivo_bytes):
                 texto = pagina.extract_text() or ""
                 for linha in texto.split('\n'):
                     data_str = None
-                    match_dt = re.match(r'(\d{2}/\d{2})', linha)
+                    # MELHORIA: Regex procura data no início da linha
+                    match_dt = re.search(r'^\s*(\d{2}/\d{2})', linha)
                     if match_dt:
                         data_str = f"{match_dt.group(1)}/{ano_atual}"
 
@@ -242,7 +252,7 @@ def extrair_caixa(arquivo_bytes):
     return total, diario
 
 # ==============================================================================
-# 3. PDF FINAL (COM DETALHAMENTO CORRIGIDO)
+# 3. PDF FINAL (COM DETALHAMENTO DIÁRIO)
 # ==============================================================================
 
 def criar_tabela_card_pdf(titulo, lbl1, v1, lbl2, v2, larguras_colunas=[12*mm, 36*mm]):
@@ -355,7 +365,6 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas, lista_detalhes
         
         if detalhes:
             for det in detalhes:
-                # Remove "Data:" conforme solicitado
                 linha_det = [
                     f"   {det['Data']}", 
                     formatar_moeda(det['Vlr_Contabil']), 
