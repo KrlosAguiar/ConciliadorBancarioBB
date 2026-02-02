@@ -16,23 +16,13 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.units import mm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
-from PIL import Image
-
-# --- CONFIGURAÇÃO DA PÁGINA ---
-icon_path = os.path.join(os.getcwd(), "Barcarena.png")
-try:
-    icon_image = Image.open(icon_path)
-    st.set_page_config(page_title="Conciliador Bancário", page_icon=icon_image, layout="wide")
-except:
-    st.set_page_config(page_title="Conciliador Bancário", layout="wide")
-
 # ==============================================================================
 # 0. CONFIGURAÇÃO DA PÁGINA E CSS
 # ==============================================================================
 
 st.set_page_config(page_title="Conciliador de Receitas", layout="wide")
 
-st.markdown(""")
+st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
     
@@ -425,7 +415,7 @@ st.markdown("---")
 
 c1, c2 = st.columns(2)
 with c1:
-    st.markdown("### 1. Razão Contábil (.xlsx)")
+    st.markdown("### 1. Razão Contábil (.xlsx/.csv)")
     arquivo_excel = st.file_uploader("", type=["xlsx", "csv"], key="up_excel", label_visibility="collapsed")
 with c2:
     st.markdown("### 2. Extratos Bancários (.pdf)")
@@ -613,4 +603,4 @@ if arquivo_excel:
             except Exception as e:
                 st.error(f"Ocorreu um erro no processamento: {e}")
 else:
-    st.info("Aguardando upload do Razão Contábil (.xlsx) para habilitar o início.")
+    st.info("Aguardando upload do Razão Contábil (.xlsx/.csv) para habilitar o início.")
