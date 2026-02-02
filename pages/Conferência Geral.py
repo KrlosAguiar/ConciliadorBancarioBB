@@ -4,13 +4,14 @@ import pdfplumber
 import re
 import io
 import os
+import textwrap
 from datetime import datetime
 
 # Bibliotecas para geração do PDF (ReportLab)
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import mm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
@@ -24,19 +25,22 @@ st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
     
-    /* BOTÃO INICIAR */
+    /* CSS PADRÃO DO DESIGN SOLICITADO PARA BOTÕES */
     div.stButton > button {
-        background-color: #000000 !important;
+        background-color: rgb(38, 39, 48) !important;
         color: white !important;
         font-weight: bold !important;
-        border: 1px solid #333;
+        border: 1px solid rgb(60, 60, 60);
         border-radius: 5px;
+        font-size: 16px;
+        transition: 0.3s;
         height: 50px; 
+        margin-top: 10px;
         width: 100%;
-        font-size: 18px;
     }
     div.stButton > button:hover {
-        background-color: #333 !important;
+        background-color: rgb(20, 20, 25) !important;
+        border-color: white;
     }
 
     /* CARDS DE RESUMO */
@@ -60,7 +64,7 @@ st.markdown("""
     
     .metric-status { margin-top: 10px; padding: 5px; text-align: center; border-radius: 4px; font-weight: bold; font-size: 14px; }
     
-    /* TABELAS */
+    /* TABELAS HTML */
     table { width: 100%; border-collapse: collapse; }
     th { background-color: black; color: white; padding: 10px; text-align: center; }
     td { padding: 8px; border-bottom: 1px solid #ddd; color: black; }
@@ -191,17 +195,19 @@ def criar_tabela_card_pdf(titulo, lbl1, v1, lbl2, v2):
         [Paragraph(texto_status, style_sts), '']
     ]
 
-    t = Table(data, colWidths=[20*mm, 23*mm], rowHeights=[10*mm, 6*mm, 6*mm, 10*mm])
+    # AJUSTE DE LARGURA: Aumentei a coluna 2 para o valor não quebrar
+    # Largura Total Card: ~45mm (13mm label + 32mm valor)
+    t = Table(data, colWidths=[13*mm, 32*mm], rowHeights=[10*mm, 6*mm, 6*mm, 10*mm])
     
     t.setStyle(TableStyle([
         ('SPAN', (0,0), (1,0)), # Mescla Título
         ('SPAN', (0,3), (1,3)), # Mescla Status
         ('BottomPadding', (0,0), (-1,0), 3),
-        ('LINEBELOW', (0,0), (-1,0), 0.5, colors.lightgrey), # Linha abaixo do titulo
-        ('BACKGROUND', (0,3), (-1,3), bg_status), # Cor de fundo status
+        ('LINEBELOW', (0,0), (-1,0), 0.5, colors.lightgrey),
+        ('BACKGROUND', (0,3), (-1,3), bg_status),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('BOX', (0,0), (-1,-1), 0.5, colors.grey), # Borda Externa
-        ('ROUNDEDCORNERS', [3, 3, 3, 3]), # (Funciona em versões recentes do RL, senão ignora)
+        ('BOX', (0,0), (-1,-1), 0.5, colors.grey),
+        ('ROUNDEDCORNERS', [3, 3, 3, 3]),
     ]))
     return t
 
@@ -215,7 +221,7 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
     story.append(Paragraph("RELATÓRIO DE CONCILIAÇÃO CONTÁBIL", styles["Title"]))
     story.append(Spacer(1, 8*mm))
 
-    # --- 1. CARDS (Imitando o Layout da Tela) ---
+    # --- 1. CARDS ---
     story.append(Paragraph("<b>1. SITUAÇÃO DAS TRANSFERÊNCIAS</b>", styles["Heading3"]))
     story.append(Spacer(1, 2*mm))
 
@@ -225,7 +231,7 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
         card = criar_tabela_card_pdf(item['titulo'], item['l1'], item['v1'], item['l2'], item['v2'])
         row1_tables.append(card)
     
-    # Cria uma tabela "master" invisível para alinhar os cards lado a lado
+    # Largura da coluna master deve acomodar o card (45mm + margem)
     master_table_1 = Table([row1_tables], colWidths=[48*mm]*4)
     master_table_1.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
     story.append(master_table_1)
@@ -236,8 +242,6 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
     for item in dados_cards_2:
         card = criar_tabela_card_pdf(item['titulo'], item['l1'], item['v1'], item['l2'], item['v2'])
         row2_tables.append(card)
-    
-    # Preenche espaço vazio para manter alinhamento à esquerda
     row2_tables.append("") 
     
     master_table_2 = Table([row2_tables], colWidths=[48*mm]*4)
@@ -245,7 +249,7 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
     story.append(master_table_2)
     story.append(Spacer(1, 8*mm))
 
-    # --- 2. TABELA (Com Total Geral nos Extratos) ---
+    # --- 2. TABELA ---
     story.append(Paragraph("<b>2. CONCILIAÇÃO DE RECEITAS PRÓPRIAS</b>", styles["Heading3"]))
     story.append(Spacer(1, 3*mm))
 
@@ -286,22 +290,20 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
         ('BACKGROUND', (0,0), (-1,0), colors.black),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('ALIGN', (1,1), (2,-1), 'RIGHT'), # Colunas Valor à direita
+        ('ALIGN', (1,1), (2,-1), 'RIGHT'), 
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        # Linha de Total
+        # Total
         ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
         ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey),
+        ('TEXTCOLOR', (0,-1), (-1,-1), colors.black),
     ]
 
-    # Colorir diferenças e tratar erros
     for i in range(1, len(data)-1):
-        # Diferença
         val_dif = df_receitas.iloc[i-1]['Diferença']
         cor = colors.red if abs(val_dif) > 0.01 else colors.darkgreen
         t_style.append(('TEXTCOLOR', (3, i), (3, i), cor))
         t_style.append(('FONTNAME', (3, i), (3, i), 'Helvetica-Bold'))
         
-        # Se faltar PDF, pintar coluna extrato de cinza
         if df_receitas.iloc[i-1]['Status'] == "Sem PDF":
              t_style.append(('TEXTCOLOR', (2, i), (2, i), colors.grey))
 
@@ -318,7 +320,6 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
 st.markdown("<h1 style='text-align: center;'>Painel de Conciliação Contábil</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
-# Layout de Upload
 c1, c2 = st.columns(2)
 with c1:
     st.markdown("### 1. Razão Contábil (.xlsx)")
@@ -329,14 +330,14 @@ with c2:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# Botão de Ação
 if arquivo_excel:
-    btn_iniciar = st.button("INICIAR CONFERÊNCIA", type="primary")
+    # Botão com o estilo corrigido
+    btn_iniciar = st.button("INICIAR CONFERÊNCIA")
 
     if btn_iniciar:
         with st.spinner("Processando dados e gerando relatórios..."):
             try:
-                # --- LEITURA DO EXCEL ---
+                # --- LEITURA EXCEL ---
                 df = pd.read_excel(arquivo_excel, skiprows=6, dtype=str)
                 mask = df['UG'].str.contains("Totalizadores", case=False, na=False)
                 if mask.any(): df = df.iloc[:mask.idxmax()].copy()
@@ -346,15 +347,12 @@ if arquivo_excel:
                 df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0.0)
                 df['Conta'] = df['Conta'].astype(str).str.replace(r'\.0$', '', regex=True)
 
-                # --- PREPARAÇÃO DOS DADOS DOS CARDS ---
-                
-                # Função interna para somar valores sem plotar
+                # --- DADOS CARDS ---
                 def get_vals(col, v1, v2):
                     f1 = df[col].astype(str).str.startswith(str(v1), na=False)
                     f2 = df[col].astype(str).str.startswith(str(v2), na=False)
                     return df.loc[f1, 'Valor'].sum(), df.loc[f2, 'Valor'].sum()
 
-                # Dados Linha 1
                 meta_cards_1 = [
                     ("TRANSF. CONST. - FMS", 'LCP', 264, 265),
                     ("TRANSF. CONST. - FME", 'LCP', 266, 267),
@@ -366,23 +364,20 @@ if arquivo_excel:
                     v1, v2 = get_vals(col, c1, c2)
                     dados_c1.append({'titulo': tit, 'l1': str(c1), 'v1': v1, 'l2': str(c2), 'v2': v2})
 
-                # Dados Linha 2
                 dados_c2 = []
-                # UGs
                 v1, v2 = get_vals('LCP', 250, 251)
                 dados_c2.append({'titulo': "TRANSFERÊNCIAS ENTRE UGS", 'l1': "250", 'v1': v1, 'l2': "251", 'v2': v2})
-                # Rendimentos
+                
                 v1, v2 = get_vals('LCP', 258, 259)
                 dados_c2.append({'titulo': "RENDIMENTOS DE APLICAÇÃO", 'l1': "258", 'v1': v1, 'l2': "259", 'v2': v2})
-                # Duodécimo
+                
                 f1_duo = df['Fato Contábil'].astype(str).str.startswith("Transferência Financeira Concedida", na=False)
                 f2_duo = df['Fato Contábil'].astype(str).str.startswith("Transferência Financeira Recebida", na=False)
                 t1_duo = df.loc[f1_duo, 'Valor'].sum()
                 t2_duo = df.loc[f2_duo, 'Valor'].sum()
                 dados_c2.append({'titulo': "TRANSF. DUODÉCIMO", 'l1': "Concedida", 'v1': t1_duo, 'l2': "Recebida", 'v2': t2_duo})
 
-                # --- RENDERIZAÇÃO EM TELA (HTML LIMPO) ---
-                
+                # --- RENDER CARD (CORRIGIDO: REMOVIDA INDENTAÇÃO ESTRANHA) ---
                 def render_card(d):
                     ok = round(d['v1'], 2) == round(d['v2'], 2)
                     dif = abs(d['v1'] - d['v2'])
@@ -392,34 +387,33 @@ if arquivo_excel:
                     col_st = "#28a745" if ok else "#dc3545"
                     dif_html = f"<div style='font-size:11px; margin-top:2px; color:#c00'>(Dif: {formatar_moeda(dif)})</div>" if not ok else ""
                     
-                    return f"""
-                    <div class="metric-card {cls_cor}">
-                        <div class="metric-title">{d['titulo']}</div>
-                        <div class="metric-row"><span>{d['l1']}</span><span class="metric-val">{formatar_moeda(d['v1'])}</span></div>
-                        <div class="metric-row" style="border-bottom:1px dashed #ccc; padding-bottom:3px; margin-bottom:3px;"><span>{d['l2']}</span><span class="metric-val">{formatar_moeda(d['v2'])}</span></div>
-                        <div class="metric-status" style="background:{bg_st}; color:{col_st};">
-                            {txt_st}
-                            {dif_html}
+                    # HTML compactado para evitar bug de markdown code block
+                    html = textwrap.dedent(f"""
+                        <div class="metric-card {cls_cor}">
+                            <div class="metric-title">{d['titulo']}</div>
+                            <div class="metric-row"><span>{d['l1']}</span><span class="metric-val">{formatar_moeda(d['v1'])}</span></div>
+                            <div class="metric-row" style="border-bottom:1px dashed #ccc; padding-bottom:3px; margin-bottom:3px;"><span>{d['l2']}</span><span class="metric-val">{formatar_moeda(d['v2'])}</span></div>
+                            <div class="metric-status" style="background:{bg_st}; color:{col_st};">
+                                {txt_st}
+                                {dif_html}
+                            </div>
                         </div>
-                    </div>
-                    """
+                    """).strip()
+                    return html
 
                 st.markdown("### 1. Situação das Transferências")
                 
-                # Linha 1 Visual
                 cols1 = st.columns(4)
                 for i, d in enumerate(dados_c1):
                     with cols1[i]: st.markdown(render_card(d), unsafe_allow_html=True)
                 
-                # Linha 2 Visual
                 cols2 = st.columns(3)
                 for i, d in enumerate(dados_c2):
                     with cols2[i]: st.markdown(render_card(d), unsafe_allow_html=True)
 
                 st.markdown("---")
 
-                # --- PROCESSAMENTO RECEITAS ---
-                
+                # --- DADOS RECEITAS ---
                 mapa_receitas = {
                     '8346': {'pdf_key': '105628',    'func': extrair_bb},
                     '8416': {'pdf_key': '112005',    'func': extrair_bb},
@@ -456,10 +450,13 @@ if arquivo_excel:
 
                 df_rec_final = pd.DataFrame(resultados_rec)
 
-                # --- TABELA VISUAL (Com Total Geral) ---
+                # --- TABELA TELA ---
                 st.markdown("### 2. Conciliação de Receitas Próprias")
                 
-                html_tbl = """
+                tot_cont = df_rec_final['Valor Contábil'].sum()
+                tot_ext = df_rec_final['Valor Extrato'].sum()
+
+                html_tbl = textwrap.dedent("""
                 <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
                 <table style='width:100%; border-collapse: collapse; color: black !important;'>
                     <tr style='background-color: black; color: white;'>
@@ -469,11 +466,8 @@ if arquivo_excel:
                         <th style='text-align: right;'>Valor Extrato</th>
                         <th style='text-align: center;'>Diferença</th>
                     </tr>
-                """
+                """)
                 
-                tot_cont = df_rec_final['Valor Contábil'].sum()
-                tot_ext = df_rec_final['Valor Extrato'].sum()
-
                 for _, r in df_rec_final.iterrows():
                     dif = r['Diferença']
                     st_dif = "color: #28a745; font-weight: bold;" if abs(dif) < 0.01 else "color: #dc3545; font-weight: bold;"
@@ -503,12 +497,10 @@ if arquivo_excel:
                 </table></div>
                 """
                 st.markdown(html_tbl, unsafe_allow_html=True)
-                
                 st.markdown("<br>", unsafe_allow_html=True)
 
-                # --- GERAR PDF COMPLETO (Cards + Tabela) ---
+                # --- PDF DOWNLOAD ---
                 pdf_bytes = gerar_pdf_completo(dados_c1, dados_c2, df_rec_final)
-                
                 st.download_button(
                     label="BAIXAR RELATÓRIO PDF COMPLETO",
                     data=pdf_bytes,
