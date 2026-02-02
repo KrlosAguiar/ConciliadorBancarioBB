@@ -6,14 +6,17 @@ import io
 import os
 import textwrap
 from datetime import datetime
+from collections import Counter
 
-# Bibliotecas para geração do PDF (ReportLab)
+# Bibliotecas para geração do PDF
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import mm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+
+from PIL import Image
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
@@ -154,7 +157,7 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
         return pd.DataFrame()
 
 # ==============================================================================
-# 2. EXTRAÇÃO DE PDFS (COM SUPORTE A DIÁRIO)
+# 2. EXTRAÇÃO DE PDFS (COM SUPORTE A DIÁRIO E ANO CORRETO)
 # ==============================================================================
 
 def obter_mes_referencia_extrato(texto_pdf):
@@ -167,7 +170,7 @@ def obter_mes_referencia_extrato(texto_pdf):
         if mes_num: return f"{mes_num}/{ano}"
     return None
 
-def extrair_bb(arquivo_bytes):
+def extrair_bb(arquivo_bytes, ano_ref):
     total = 0.0
     diario = {}
     try:
@@ -177,8 +180,8 @@ def extrair_bb(arquivo_bytes):
                 data_atual = None
                 
                 for linha in texto.split('\n'):
-                    # MELHORIA: Regex procura data no início da linha, ignorando espaços
-                    match_data = re.search(r'^\s*(\d{2}/\d{2}/\d{4})', linha)
+                    # Busca data em qualquer lugar da linha
+                    match_data = re.search(r'(\d{2}/\d{2}/\d{4})', linha)
                     if match_data:
                         data_atual = match_data.group(1)
 
@@ -198,11 +201,12 @@ def extrair_bb(arquivo_bytes):
     except: return None, {}
     return total, diario
 
-def extrair_banpara(arquivo_bytes):
+def extrair_banpara(arquivo_bytes, ano_ref):
     total = 0.0
     diario = {}
     termo = "REPAS ARRE PREF"
-    ano_atual = datetime.now().year
+    # Usa o ano do Razão (ano_ref) se disponível, senão usa ano atual
+    ano_usar = ano_ref if ano_ref else datetime.now().year
     
     try:
         with pdfplumber.open(io.BytesIO(arquivo_bytes)) as pdf:
@@ -210,10 +214,9 @@ def extrair_banpara(arquivo_bytes):
                 texto = pagina.extract_text() or ""
                 for linha in texto.split('\n'):
                     data_str = None
-                    # MELHORIA: Regex procura data no início da linha
-                    match_dt = re.search(r'^\s*(\d{2}/\d{2})', linha)
+                    match_dt = re.search(r'(\d{2}/\d{2})', linha)
                     if match_dt:
-                        data_str = f"{match_dt.group(1)}/{ano_atual}"
+                        data_str = f"{match_dt.group(1)}/{ano_usar}"
 
                     if termo in linha:
                         matches = re.findall(r'([\d\.]+,\d{2})', linha)
@@ -225,7 +228,7 @@ def extrair_banpara(arquivo_bytes):
     except: return None, {}
     return total, diario
 
-def extrair_caixa(arquivo_bytes):
+def extrair_caixa(arquivo_bytes, ano_ref):
     total = 0.0
     diario = {}
     try:
@@ -252,7 +255,7 @@ def extrair_caixa(arquivo_bytes):
     return total, diario
 
 # ==============================================================================
-# 3. PDF FINAL (COM DETALHAMENTO DIÁRIO)
+# 3. PDF FINAL (COM DETALHAMENTO LIMPO)
 # ==============================================================================
 
 def criar_tabela_card_pdf(titulo, lbl1, v1, lbl2, v2, larguras_colunas=[12*mm, 36*mm]):
@@ -421,7 +424,15 @@ if arquivo_excel:
                 df['Valor'] = df['Valor'].apply(lambda x: float(x.replace('.', '').replace(',', '.')) if isinstance(x, str) else float(x))
                 df['Conta'] = df['Conta'].astype(str).str.replace(r'\.0$', '', regex=True)
                 
+                # Detecta ano do Razão para corrigir Extratos (ex: Banpara)
+                ano_referencia = datetime.now().year
                 if 'Data' in df.columns:
+                    datas_validas = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce').dropna()
+                    if not datas_validas.empty:
+                        c = Counter(datas_validas.dt.year)
+                        ano_referencia = c.most_common(1)[0][0]
+                    
+                    # Padroniza Data
                     df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce').dt.strftime('%d/%m/%Y')
 
                 def get_vals(col, v1, v2):
@@ -502,7 +513,8 @@ if arquivo_excel:
                     
                     arq = encontrar_arquivo_no_upload(arquivos_pdf, cfg['key'])
                     if arq:
-                        val, diario_banco = cfg['f'](arq.read())
+                        # Passa ano_referencia para as funções de extração
+                        val, diario_banco = cfg['f'](arq.read(), ano_referencia)
                         if val is not None: ve, stt = val, "OK"
                         else: stt = "Erro Leitura"
                     
@@ -546,6 +558,7 @@ if arquivo_excel:
                             v_c = d_contabil.get(dia, 0.0)
                             dif_dia = v_c - v_b
                             
+                            # Exibe linha de detalhe se houver diferença
                             if abs(dif_dia) > 0.01:
                                 rows_html += f"<tr style='background-color:#f9f9f9; color:#555; font-size:12px;'><td style='text-align:center;'>-</td><td style='text-align:center;'>{dia}</td><td style='text-align:right;'>{formatar_moeda(v_c)}</td><td style='text-align:right;'>{formatar_moeda(v_b)}</td><td style='text-align:center; color:#c00;'>{formatar_moeda(dif_dia)}</td></tr>"
                                 
