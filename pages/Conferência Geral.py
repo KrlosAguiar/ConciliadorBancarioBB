@@ -10,9 +10,9 @@ from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, KeepTogether
 from reportlab.lib.units import mm
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
 # ==============================================================================
 # 0. CONFIGURAÇÃO DA PÁGINA E CSS
@@ -24,39 +24,40 @@ st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
     
-    /* CSS PARA BOTÕES */
+    /* BOTÃO INICIAR */
     div.stButton > button {
-        background-color: rgb(38, 39, 48) !important;
+        background-color: #000000 !important;
         color: white !important;
         font-weight: bold !important;
-        border: 1px solid rgb(60, 60, 60);
+        border: 1px solid #333;
         border-radius: 5px;
-        transition: 0.3s;
         height: 50px; 
         width: 100%;
+        font-size: 18px;
     }
     div.stButton > button:hover {
-        background-color: rgb(20, 20, 25) !important;
-        border-color: white;
+        background-color: #333 !important;
     }
 
     /* CARDS DE RESUMO */
     .metric-card {
         background-color: #f8f9fa;
-        border-left: 5px solid #ff4b4b;
+        border-left: 5px solid #ccc;
         padding: 15px;
         border-radius: 5px;
         color: black;
         border: 1px solid #ddd;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         margin-bottom: 15px;
-        height: 100%; /* Altura uniforme */
+        height: 100%;
     }
     .metric-card-green { border-left: 5px solid #28a745; }
     .metric-card-red { border-left: 5px solid #dc3545; }
     
-    .metric-title { font-size: 14px; color: #555; text-transform: uppercase; font-weight: bold; margin-bottom: 5px; min-height: 40px;}
-    .metric-value { font-size: 16px; font-weight: bold; display: flex; justify-content: space-between; border-bottom: 1px dashed #ccc; padding: 3px 0;}
+    .metric-title { font-size: 13px; color: #555; text-transform: uppercase; font-weight: bold; margin-bottom: 8px; min-height: 35px; border-bottom: 2px solid #eee; padding-bottom: 5px;}
+    .metric-row { display: flex; justify-content: space-between; font-size: 15px; margin-bottom: 4px; }
+    .metric-val { font-weight: bold; }
+    
     .metric-status { margin-top: 10px; padding: 5px; text-align: center; border-radius: 4px; font-weight: bold; font-size: 14px; }
     
     /* TABELAS */
@@ -67,7 +68,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 1. FUNÇÕES DE SUPORTE E EXTRAÇÃO
+# 1. FUNÇÕES DE SUPORTE
 # ==============================================================================
 
 def formatar_moeda(valor):
@@ -99,7 +100,16 @@ def obter_mes_referencia_extrato(texto_pdf):
             return f"{mes_num}/{ano}"
     return None
 
-# --- Funções de Extração (Lógica Original Melhorada) ---
+def encontrar_arquivo_no_upload(lista_arquivos, termo_nome):
+    if not lista_arquivos: return None
+    for arq in lista_arquivos:
+        if termo_nome in arq.name:
+            return arq
+    return None
+
+# ==============================================================================
+# 2. FUNÇÕES DE EXTRAÇÃO (PDFs)
+# ==============================================================================
 
 def extrair_bb(arquivo_bytes):
     total = 0.0
@@ -110,8 +120,7 @@ def extrair_bb(arquivo_bytes):
                 for linha in texto.split('\n'):
                     if "14109" in linha or "14020" in linha:
                         matches = re.findall(r'([\d\.]+,\d{2})', linha)
-                        if matches:
-                            total += limpar_numero(matches[0])
+                        if matches: total += limpar_numero(matches[0])
     except: return None
     return total
 
@@ -125,8 +134,7 @@ def extrair_banpara(arquivo_bytes):
                 for linha in texto.split('\n'):
                     if termo in linha:
                         matches = re.findall(r'([\d\.]+,\d{2})', linha)
-                        if matches:
-                            total += limpar_numero(matches[-1])
+                        if matches: total += limpar_numero(matches[-1])
     except: return None
     return total
 
@@ -139,7 +147,6 @@ def extrair_caixa(arquivo_bytes):
             for pagina in pdf.pages:
                 texto_completo += (pagina.extract_text() or "") + "\n"
 
-            # Limpeza crucial para o arquivo da Caixa
             texto_limpo = texto_completo.replace('"', ' ') 
             mes_ref = obter_mes_referencia_extrato(texto_completo)
 
@@ -155,105 +162,148 @@ def extrair_caixa(arquivo_bytes):
     except: return None
     return total
 
-def encontrar_arquivo_no_upload(lista_arquivos, termo_nome):
-    """Encontra o arquivo PDF na lista de uploads pelo nome."""
-    if not lista_arquivos: return None
-    for arq in lista_arquivos:
-        if termo_nome in arq.name:
-            return arq
-    return None
-
 # ==============================================================================
-# 2. FUNÇÕES DE EXIBIÇÃO (HTML & PDF)
+# 3. GERAÇÃO DE PDF (CARDS + TABELA)
 # ==============================================================================
 
-def render_card_html(titulo, label_v1, val_v1, label_v2, val_v2):
-    ok = round(val_v1, 2) == round(val_v2, 2)
-    dif = abs(val_v1 - val_v2)
-    classe_cor = "metric-card-green" if ok else "metric-card-red"
-    status_txt = "CONCILIADO" if ok else "NÃO CONCILIADO"
-    status_bg = "#e8f5e9" if ok else "#fbe9eb"
-    status_color = "#28a745" if ok else "#dc3545"
-    dif_html = f"<br><small style='color:#c00'>(Dif: {formatar_moeda(dif)})</small>" if not ok else ""
-
-    html = f"""
-    <div class="metric-card {classe_cor}">
-        <div class="metric-title">{titulo}</div>
-        <div class="metric-value">
-            <span>{label_v1}</span>
-            <span>{formatar_moeda(val_v1)}</span>
-        </div>
-        <div class="metric-value" style="border-bottom:none;">
-            <span>{label_v2}</span>
-            <span>{formatar_moeda(val_v2)}</span>
-        </div>
-        <div class="metric-status" style="background:{status_bg}; color:{status_color};">
-            {status_txt}
-            {dif_html}
-        </div>
-    </div>
+def criar_tabela_card_pdf(titulo, lbl1, v1, lbl2, v2):
     """
-    return html
+    Cria uma micro-tabela ReportLab que imita um Card Visual.
+    """
+    ok = round(v1, 2) == round(v2, 2)
+    dif = abs(v1 - v2)
+    
+    cor_status = colors.HexColor("#28a745") if ok else colors.HexColor("#dc3545") # Verde / Vermelho
+    bg_status = colors.HexColor("#e8f5e9") if ok else colors.HexColor("#fbe9eb")
+    texto_status = "CONCILIADO" if ok else "NÃO CONCILIADO"
+    if not ok: texto_status += f"\n(Dif: {formatar_moeda(dif)})"
 
-def gerar_pdf_relatorio(df_receitas, data_cards):
+    # Estilos
+    style_titulo = ParagraphStyle('T', fontSize=7, leading=8, textColor=colors.darkgrey, fontName='Helvetica-Bold', alignment=TA_LEFT)
+    style_lbl = ParagraphStyle('L', fontSize=8, leading=9, textColor=colors.black, fontName='Helvetica', alignment=TA_LEFT)
+    style_val = ParagraphStyle('V', fontSize=8, leading=9, textColor=colors.black, fontName='Helvetica-Bold', alignment=TA_RIGHT)
+    style_sts = ParagraphStyle('S', fontSize=8, leading=9, textColor=cor_status, fontName='Helvetica-Bold', alignment=TA_CENTER)
+
+    data = [
+        [Paragraph(titulo.upper(), style_titulo), ''],
+        [Paragraph(str(lbl1), style_lbl), Paragraph(formatar_moeda(v1), style_val)],
+        [Paragraph(str(lbl2), style_lbl), Paragraph(formatar_moeda(v2), style_val)],
+        [Paragraph(texto_status, style_sts), '']
+    ]
+
+    t = Table(data, colWidths=[20*mm, 23*mm], rowHeights=[10*mm, 6*mm, 6*mm, 10*mm])
+    
+    t.setStyle(TableStyle([
+        ('SPAN', (0,0), (1,0)), # Mescla Título
+        ('SPAN', (0,3), (1,3)), # Mescla Status
+        ('BottomPadding', (0,0), (-1,0), 3),
+        ('LINEBELOW', (0,0), (-1,0), 0.5, colors.lightgrey), # Linha abaixo do titulo
+        ('BACKGROUND', (0,3), (-1,3), bg_status), # Cor de fundo status
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.grey), # Borda Externa
+        ('ROUNDEDCORNERS', [3, 3, 3, 3]), # (Funciona em versões recentes do RL, senão ignora)
+    ]))
+    return t
+
+def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=10*mm, leftMargin=10*mm, topMargin=10*mm, bottomMargin=10*mm, title="Relatório Conciliação")
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=5*mm, leftMargin=5*mm, topMargin=10*mm, bottomMargin=10*mm, title="Relatório Conciliação")
     story = []
     styles = getSampleStyleSheet()
-    
-    # Título
-    story.append(Paragraph("RELATÓRIO DE CONCILIAÇÃO CONTÁBIL", styles["Title"]))
-    story.append(Spacer(1, 5*mm))
-    story.append(Paragraph(f"Data de Emissão: {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]))
-    story.append(Spacer(1, 10*mm))
 
-    # --- Tabela de Receitas ---
-    story.append(Paragraph("<b>1. CONCILIAÇÃO DE RECEITAS PRÓPRIAS</b>", styles["Heading2"]))
+    # --- Título ---
+    story.append(Paragraph("RELATÓRIO DE CONCILIAÇÃO CONTÁBIL", styles["Title"]))
+    story.append(Spacer(1, 8*mm))
+
+    # --- 1. CARDS (Imitando o Layout da Tela) ---
+    story.append(Paragraph("<b>1. SITUAÇÃO DAS TRANSFERÊNCIAS</b>", styles["Heading3"]))
+    story.append(Spacer(1, 2*mm))
+
+    # Linha 1 de Cards (4 cards)
+    row1_tables = []
+    for item in dados_cards_1:
+        card = criar_tabela_card_pdf(item['titulo'], item['l1'], item['v1'], item['l2'], item['v2'])
+        row1_tables.append(card)
+    
+    # Cria uma tabela "master" invisível para alinhar os cards lado a lado
+    master_table_1 = Table([row1_tables], colWidths=[48*mm]*4)
+    master_table_1.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
+    story.append(master_table_1)
+    story.append(Spacer(1, 3*mm))
+
+    # Linha 2 de Cards (3 cards)
+    row2_tables = []
+    for item in dados_cards_2:
+        card = criar_tabela_card_pdf(item['titulo'], item['l1'], item['v1'], item['l2'], item['v2'])
+        row2_tables.append(card)
+    
+    # Preenche espaço vazio para manter alinhamento à esquerda
+    row2_tables.append("") 
+    
+    master_table_2 = Table([row2_tables], colWidths=[48*mm]*4)
+    master_table_2.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
+    story.append(master_table_2)
+    story.append(Spacer(1, 8*mm))
+
+    # --- 2. TABELA (Com Total Geral nos Extratos) ---
+    story.append(Paragraph("<b>2. CONCILIAÇÃO DE RECEITAS PRÓPRIAS</b>", styles["Heading3"]))
     story.append(Spacer(1, 3*mm))
 
     data = [["Conta", "Valor Contábil", "Extrato Bancário", "Diferença"]]
     
-    total_contabil = 0
-    
+    total_contabil = 0.0
+    total_extrato = 0.0
+
     for _, row in df_receitas.iterrows():
         dif = row['Diferença']
-        style_dif = colors.red if abs(dif) > 0.01 else colors.darkgreen
-        
-        # Formatação condicional para o PDF
         val_dif_str = formatar_moeda(dif)
         if abs(dif) < 0.01: val_dif_str = "OK"
+
+        val_ext_str = formatar_moeda(row['Valor Extrato'])
+        if row['Status'] == "Sem PDF": val_ext_str = "(Falta PDF)"
 
         data.append([
             str(row['Conta']),
             formatar_moeda(row['Valor Contábil']),
-            formatar_moeda(row['Valor Extrato']),
+            val_ext_str,
             val_dif_str
         ])
         total_contabil += row['Valor Contábil']
+        total_extrato += row['Valor Extrato']
 
-    # Linha de total
-    data.append(["TOTAL GERAL", formatar_moeda(total_contabil), "-", "-"])
+    # LINHA TOTAL GERAL
+    data.append([
+        "TOTAL GERAL", 
+        formatar_moeda(total_contabil), 
+        formatar_moeda(total_extrato), 
+        "-"
+    ])
 
-    t = Table(data, colWidths=[60*mm, 40*mm, 40*mm, 40*mm])
+    t = Table(data, colWidths=[60*mm, 45*mm, 45*mm, 40*mm])
     
-    # Estilo da Tabela
     t_style = [
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('BACKGROUND', (0,0), (-1,0), colors.black),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('ALIGN', (1,1), (-1,-1), 'RIGHT'), # Valores à direita
+        ('ALIGN', (1,1), (2,-1), 'RIGHT'), # Colunas Valor à direita
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), # Total Bold
+        # Linha de Total
+        ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
         ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey),
     ]
 
-    # Colorir a coluna de diferença linha a linha
+    # Colorir diferenças e tratar erros
     for i in range(1, len(data)-1):
+        # Diferença
         val_dif = df_receitas.iloc[i-1]['Diferença']
         cor = colors.red if abs(val_dif) > 0.01 else colors.darkgreen
         t_style.append(('TEXTCOLOR', (3, i), (3, i), cor))
         t_style.append(('FONTNAME', (3, i), (3, i), 'Helvetica-Bold'))
+        
+        # Se faltar PDF, pintar coluna extrato de cinza
+        if df_receitas.iloc[i-1]['Status'] == "Sem PDF":
+             t_style.append(('TEXTCOLOR', (2, i), (2, i), colors.grey))
 
     t.setStyle(TableStyle(t_style))
     story.append(t)
@@ -262,217 +312,212 @@ def gerar_pdf_relatorio(df_receitas, data_cards):
     return buffer.getvalue()
 
 # ==============================================================================
-# 3. LÓGICA PRINCIPAL (STREAMLIT)
+# 4. LÓGICA PRINCIPAL (STREAMLIT)
 # ==============================================================================
 
 st.markdown("<h1 style='text-align: center;'>Painel de Conciliação Contábil</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
-col_up1, col_up2 = st.columns(2)
-
-with col_up1:
+# Layout de Upload
+c1, c2 = st.columns(2)
+with c1:
     st.markdown("### 1. Razão Contábil (.xlsx)")
-    arquivo_excel = st.file_uploader("Carregar Excel", type=["xlsx"], label_visibility="collapsed")
-
-with col_up2:
+    arquivo_excel = st.file_uploader("", type=["xlsx"], key="up_excel", label_visibility="collapsed")
+with c2:
     st.markdown("### 2. Extratos Bancários (.pdf)")
-    arquivos_pdf = st.file_uploader("Carregar PDFs (Opcional)", type=["pdf"], accept_multiple_files=True, label_visibility="collapsed")
+    arquivos_pdf = st.file_uploader("", type=["pdf"], accept_multiple_files=True, key="up_pdf", label_visibility="collapsed")
 
+st.markdown("<br>", unsafe_allow_html=True)
+
+# Botão de Ação
 if arquivo_excel:
-    try:
-        # --- PROCESSAMENTO EXCEL ---
-        df = pd.read_excel(arquivo_excel, skiprows=6, dtype=str)
-        
-        # Limpeza Inicial
-        mask = df['UG'].str.contains("Totalizadores", case=False, na=False)
-        if mask.any(): df = df.iloc[:mask.idxmax()].copy()
+    btn_iniciar = st.button("INICIAR CONFERÊNCIA", type="primary")
 
-        df['Valor'] = df['Valor'].fillna('0')
-        df['Valor'] = df['Valor'].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-        df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0.0)
-        df['Conta'] = df['Conta'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if btn_iniciar:
+        with st.spinner("Processando dados e gerando relatórios..."):
+            try:
+                # --- LEITURA DO EXCEL ---
+                df = pd.read_excel(arquivo_excel, skiprows=6, dtype=str)
+                mask = df['UG'].str.contains("Totalizadores", case=False, na=False)
+                if mask.any(): df = df.iloc[:mask.idxmax()].copy()
 
-        st.success("Dados Contábeis Processados com Sucesso!")
-        st.markdown("---")
+                df['Valor'] = df['Valor'].fillna('0')
+                df['Valor'] = df['Valor'].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+                df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce').fillna(0.0)
+                df['Conta'] = df['Conta'].astype(str).str.replace(r'\.0$', '', regex=True)
 
-        # --- SEÇÃO 1: CARDS DE CONCILIAÇÃO ---
-        st.subheader("Situação das Transferências")
-        
-        # Função auxiliar para calcular totais do card
-        def calc_card(col_filtro, v1, v2):
-            f1 = df[col_filtro].astype(str).str.startswith(str(v1), na=False)
-            f2 = df[col_filtro].astype(str).str.startswith(str(v2), na=False)
-            t1 = df.loc[f1, 'Valor'].sum()
-            t2 = df.loc[f2, 'Valor'].sum()
-            return t1, t2
+                # --- PREPARAÇÃO DOS DADOS DOS CARDS ---
+                
+                # Função interna para somar valores sem plotar
+                def get_vals(col, v1, v2):
+                    f1 = df[col].astype(str).str.startswith(str(v1), na=False)
+                    f2 = df[col].astype(str).str.startswith(str(v2), na=False)
+                    return df.loc[f1, 'Valor'].sum(), df.loc[f2, 'Valor'].sum()
 
-        # LINHA 1 (4 Cards)
-        row1 = st.columns(4)
-        configs_r1 = [
-            ("TRANSF. CONST. - FMS", 264, 265),
-            ("TRANSF. CONST. - FME", 266, 267),
-            ("TRANSF. CONST. - FMAS", 268, 269),
-            ("TRANSF. PARA ARSEP", 270, 271)
-        ]
-        
-        for idx, (titulo, c1, c2) in enumerate(configs_r1):
-            t1, t2 = calc_card('LCP', c1, c2)
-            with row1[idx]:
-                st.markdown(render_card_html(titulo, str(c1), t1, str(c2), t2), unsafe_allow_html=True)
+                # Dados Linha 1
+                meta_cards_1 = [
+                    ("TRANSF. CONST. - FMS", 'LCP', 264, 265),
+                    ("TRANSF. CONST. - FME", 'LCP', 266, 267),
+                    ("TRANSF. CONST. - FMAS", 'LCP', 268, 269),
+                    ("TRANSF. PARA ARSEP", 'LCP', 270, 271)
+                ]
+                dados_c1 = []
+                for tit, col, c1, c2 in meta_cards_1:
+                    v1, v2 = get_vals(col, c1, c2)
+                    dados_c1.append({'titulo': tit, 'l1': str(c1), 'v1': v1, 'l2': str(c2), 'v2': v2})
 
-        # LINHA 2 (3 Cards)
-        row2 = st.columns(3)
-        configs_r2 = [
-            ("TRANSFERÊNCIAS ENTRE UGS", 'LCP', 250, 251),
-            ("RENDIMENTOS DE APLICAÇÃO", 'LCP', 258, 259),
-            ("TRANSF. DUODÉCIMO", 'Fato Contábil', 'Transferência Financeira Concedida', 'Transferência Financeira Recebida')
-        ]
+                # Dados Linha 2
+                dados_c2 = []
+                # UGs
+                v1, v2 = get_vals('LCP', 250, 251)
+                dados_c2.append({'titulo': "TRANSFERÊNCIAS ENTRE UGS", 'l1': "250", 'v1': v1, 'l2': "251", 'v2': v2})
+                # Rendimentos
+                v1, v2 = get_vals('LCP', 258, 259)
+                dados_c2.append({'titulo': "RENDIMENTOS DE APLICAÇÃO", 'l1': "258", 'v1': v1, 'l2': "259", 'v2': v2})
+                # Duodécimo
+                f1_duo = df['Fato Contábil'].astype(str).str.startswith("Transferência Financeira Concedida", na=False)
+                f2_duo = df['Fato Contábil'].astype(str).str.startswith("Transferência Financeira Recebida", na=False)
+                t1_duo = df.loc[f1_duo, 'Valor'].sum()
+                t2_duo = df.loc[f2_duo, 'Valor'].sum()
+                dados_c2.append({'titulo': "TRANSF. DUODÉCIMO", 'l1': "Concedida", 'v1': t1_duo, 'l2': "Recebida", 'v2': t2_duo})
 
-        # 1. Entre UGs
-        t1_ugs, t2_ugs = calc_card('LCP', 250, 251)
-        with row2[0]:
-            st.markdown(render_card_html("TRANSFERÊNCIAS ENTRE UGS", "250", t1_ugs, "251", t2_ugs), unsafe_allow_html=True)
+                # --- RENDERIZAÇÃO EM TELA (HTML LIMPO) ---
+                
+                def render_card(d):
+                    ok = round(d['v1'], 2) == round(d['v2'], 2)
+                    dif = abs(d['v1'] - d['v2'])
+                    cls_cor = "metric-card-green" if ok else "metric-card-red"
+                    txt_st = "CONCILIADO" if ok else "NÃO CONCILIADO"
+                    bg_st = "#e8f5e9" if ok else "#fbe9eb"
+                    col_st = "#28a745" if ok else "#dc3545"
+                    dif_html = f"<div style='font-size:11px; margin-top:2px; color:#c00'>(Dif: {formatar_moeda(dif)})</div>" if not ok else ""
+                    
+                    return f"""
+                    <div class="metric-card {cls_cor}">
+                        <div class="metric-title">{d['titulo']}</div>
+                        <div class="metric-row"><span>{d['l1']}</span><span class="metric-val">{formatar_moeda(d['v1'])}</span></div>
+                        <div class="metric-row" style="border-bottom:1px dashed #ccc; padding-bottom:3px; margin-bottom:3px;"><span>{d['l2']}</span><span class="metric-val">{formatar_moeda(d['v2'])}</span></div>
+                        <div class="metric-status" style="background:{bg_st}; color:{col_st};">
+                            {txt_st}
+                            {dif_html}
+                        </div>
+                    </div>
+                    """
 
-        # 2. Rendimentos
-        t1_rend, t2_rend = calc_card('LCP', 258, 259)
-        with row2[1]:
-            st.markdown(render_card_html("RENDIMENTOS DE APLICAÇÃO", "258", t1_rend, "259", t2_rend), unsafe_allow_html=True)
+                st.markdown("### 1. Situação das Transferências")
+                
+                # Linha 1 Visual
+                cols1 = st.columns(4)
+                for i, d in enumerate(dados_c1):
+                    with cols1[i]: st.markdown(render_card(d), unsafe_allow_html=True)
+                
+                # Linha 2 Visual
+                cols2 = st.columns(3)
+                for i, d in enumerate(dados_c2):
+                    with cols2[i]: st.markdown(render_card(d), unsafe_allow_html=True)
 
-        # 3. Duodécimo (Filtro por Fato Contábil, lógica ligeiramente diferente)
-        f1_duo = df['Fato Contábil'].astype(str).str.startswith("Transferência Financeira Concedida", na=False)
-        f2_duo = df['Fato Contábil'].astype(str).str.startswith("Transferência Financeira Recebida", na=False)
-        t1_duo = df.loc[f1_duo, 'Valor'].sum()
-        t2_duo = df.loc[f2_duo, 'Valor'].sum()
-        with row2[2]:
-            st.markdown(render_card_html("TRANSF. DUODÉCIMO", "Concedida", t1_duo, "Recebida", t2_duo), unsafe_allow_html=True)
+                st.markdown("---")
 
-        st.markdown("<br>", unsafe_allow_html=True)
+                # --- PROCESSAMENTO RECEITAS ---
+                
+                mapa_receitas = {
+                    '8346': {'pdf_key': '105628',    'func': extrair_bb},
+                    '8416': {'pdf_key': '112005',    'func': extrair_bb},
+                    '8364': {'pdf_key': '126022',    'func': extrair_bb},
+                    '9150': {'pdf_key': '78101',     'func': extrair_bb},
+                    '9130': {'pdf_key': '575230061', 'func': extrair_caixa},
+                    '8241': {'pdf_key': '538298',    'func': extrair_banpara}
+                }
+                
+                contas_int = list(mapa_receitas.keys())
+                df_resumo = df[(df['Fato Contábil']=='Arrecadação da Receita') & (df['Conta'].isin(contas_int))].groupby('Conta')['Valor'].sum().reset_index()
+                df_final = pd.merge(pd.DataFrame({'Conta': contas_int}), df_resumo, on='Conta', how='left').fillna(0)
 
-        # --- SEÇÃO 2: RECEITAS PRÓPRIAS (TABELA) ---
-        st.subheader("Receitas Próprias (Contábil x Bancário)")
+                resultados_rec = []
+                for _, row in df_final.iterrows():
+                    c, v_cont = row['Conta'], row['Valor']
+                    cfg = mapa_receitas.get(c)
+                    v_ext, st_msg = 0.0, "Sem PDF"
+                    
+                    arq = encontrar_arquivo_no_upload(arquivos_pdf, cfg['pdf_key'])
+                    if arq:
+                        arq.seek(0)
+                        val = cfg['func'](arq)
+                        if val is not None: 
+                            v_ext = val
+                            st_msg = "OK"
+                        else: st_msg = "Erro Leitura"
+                    
+                    resultados_rec.append({
+                        "Conta": c, "PDF Ref": cfg['pdf_key'], 
+                        "Valor Contábil": v_cont, "Valor Extrato": v_ext, 
+                        "Diferença": v_cont - v_ext, "Status": st_msg
+                    })
 
-        mapa_receitas = {
-            '8346': {'pdf_key': '105628',    'func': extrair_bb},
-            '8416': {'pdf_key': '112005',    'func': extrair_bb},
-            '8364': {'pdf_key': '126022',    'func': extrair_bb},
-            '9150': {'pdf_key': '78101',     'func': extrair_bb},
-            '9130': {'pdf_key': '575230061', 'func': extrair_caixa},
-            '8241': {'pdf_key': '538298',    'func': extrair_banpara}
-        }
+                df_rec_final = pd.DataFrame(resultados_rec)
 
-        # 1. Agrega valores do Excel
-        contas_interesse = list(mapa_receitas.keys())
-        df_resumo = df[(df['Fato Contábil']=='Arrecadação da Receita') & (df['Conta'].isin(contas_interesse))].groupby('Conta')['Valor'].sum().reset_index()
-        
-        # Garante que todas as contas apareçam mesmo se não houver no excel
-        df_base = pd.DataFrame({'Conta': contas_interesse})
-        df_final = pd.merge(df_base, df_resumo, on='Conta', how='left').fillna(0)
-        
-        # 2. Processa PDFs (se houver)
-        resultados = []
-        for _, row in df_final.iterrows():
-            conta = row['Conta']
-            val_contabil = row['Valor']
-            
-            cfg = mapa_receitas.get(conta)
-            val_extrato = 0.0
-            msg_status = "Sem PDF"
-            
-            # Procura o arquivo correspondente na lista de uploads
-            arquivo_encontrado = encontrar_arquivo_no_upload(arquivos_pdf, cfg['pdf_key'])
-            
-            if arquivo_encontrado:
-                # Reinicia ponteiro do arquivo para leitura
-                arquivo_encontrado.seek(0)
-                try:
-                    v = cfg['func'](arquivo_encontrado)
-                    if v is not None:
-                        val_extrato = v
-                        msg_status = "OK"
-                    else:
-                        msg_status = "Erro Leitura"
-                except:
-                    msg_status = "Erro Geral"
-            
-            dif = val_contabil - val_extrato
-            resultados.append({
-                "Conta": conta,
-                "PDF Ref": cfg['pdf_key'],
-                "Valor Contábil": val_contabil,
-                "Valor Extrato": val_extrato,
-                "Diferença": dif,
-                "Status": msg_status
-            })
+                # --- TABELA VISUAL (Com Total Geral) ---
+                st.markdown("### 2. Conciliação de Receitas Próprias")
+                
+                html_tbl = """
+                <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
+                <table style='width:100%; border-collapse: collapse; color: black !important;'>
+                    <tr style='background-color: black; color: white;'>
+                        <th>Conta</th>
+                        <th>Ref. PDF</th>
+                        <th style='text-align: right;'>Valor Contábil</th>
+                        <th style='text-align: right;'>Valor Extrato</th>
+                        <th style='text-align: center;'>Diferença</th>
+                    </tr>
+                """
+                
+                tot_cont = df_rec_final['Valor Contábil'].sum()
+                tot_ext = df_rec_final['Valor Extrato'].sum()
 
-        df_tabela = pd.DataFrame(resultados)
-        
-        # --- RENDERIZAÇÃO DA TABELA HTML ---
-        html_table = """
-        <div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd;'>
-        <table style='width:100%; border-collapse: collapse; color: black !important;'>
-            <tr style='background-color: black; color: white;'>
-                <th>Conta</th>
-                <th>PDF Ref</th>
-                <th style='text-align: right;'>Valor Contábil</th>
-                <th style='text-align: right;'>Valor Extrato</th>
-                <th style='text-align: center;'>Diferença</th>
-            </tr>
-        """
-        
-        total_g_contabil = 0.0
-        
-        for _, r in df_tabela.iterrows():
-            total_g_contabil += r['Valor Contábil']
-            
-            # Estilo da diferença
-            dif = r['Diferença']
-            if abs(dif) < 0.01:
-                style_dif = "color: #28a745; font-weight: bold;"
-                txt_dif = "CONCILIADO"
-            else:
-                style_dif = "color: #dc3545; font-weight: bold;"
-                txt_dif = formatar_moeda(dif)
+                for _, r in df_rec_final.iterrows():
+                    dif = r['Diferença']
+                    st_dif = "color: #28a745; font-weight: bold;" if abs(dif) < 0.01 else "color: #dc3545; font-weight: bold;"
+                    txt_dif = "CONCILIADO" if abs(dif) < 0.01 else formatar_moeda(dif)
+                    
+                    val_ext_str = formatar_moeda(r['Valor Extrato'])
+                    if r['Status'] == "Sem PDF": 
+                        val_ext_str = "<span style='color:#999; font-style:italic;'>(Falta PDF)</span>"
+                        if r['Valor Contábil'] > 0: txt_dif = "PENDENTE"
+                    
+                    html_tbl += f"""
+                    <tr style='border-bottom: 1px solid #eee;'>
+                        <td>{r['Conta']}</td>
+                        <td style='color:#666; font-size:12px;'>{r['PDF Ref']}</td>
+                        <td style='text-align: right; font-weight:bold;'>{formatar_moeda(r['Valor Contábil'])}</td>
+                        <td style='text-align: right;'>{val_ext_str}</td>
+                        <td style='text-align: center; {st_dif}'>{txt_dif}</td>
+                    </tr>"""
+                
+                html_tbl += f"""
+                    <tr style='background-color: #f0f0f0; border-top: 2px solid black;'>
+                        <td colspan='2'><b>TOTAL GERAL</b></td>
+                        <td style='text-align: right;'><b>{formatar_moeda(tot_cont)}</b></td>
+                        <td style='text-align: right;'><b>{formatar_moeda(tot_ext)}</b></td>
+                        <td></td>
+                    </tr>
+                </table></div>
+                """
+                st.markdown(html_tbl, unsafe_allow_html=True)
+                
+                st.markdown("<br>", unsafe_allow_html=True)
 
-            # Estilo se faltar PDF
-            style_row = ""
-            val_ext_str = formatar_moeda(r['Valor Extrato'])
-            if r['Status'] == "Sem PDF":
-                val_ext_str = "<span style='color:#999; font-style:italic;'>Falta PDF</span>"
-                if r['Valor Contábil'] > 0: txt_dif = "PENDENTE"
-            
-            html_table += f"""
-            <tr style='border-bottom: 1px solid #eee;'>
-                <td>{r['Conta']}</td>
-                <td style='color:#555; font-size:12px;'>{r['PDF Ref']}</td>
-                <td style='text-align: right; font-weight:bold;'>{formatar_moeda(r['Valor Contábil'])}</td>
-                <td style='text-align: right;'>{val_ext_str}</td>
-                <td style='text-align: center; {style_dif}'>{txt_dif}</td>
-            </tr>
-            """
-            
-        html_table += f"""
-            <tr style='background-color: #f0f0f0; border-top: 2px solid black;'>
-                <td colspan='2'><b>TOTAL GERAL</b></td>
-                <td style='text-align: right;'><b>{formatar_moeda(total_g_contabil)}</b></td>
-                <td colspan='2'></td>
-            </tr>
-        </table></div>
-        """
-        
-        st.markdown(html_table, unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
+                # --- GERAR PDF COMPLETO (Cards + Tabela) ---
+                pdf_bytes = gerar_pdf_completo(dados_c1, dados_c2, df_rec_final)
+                
+                st.download_button(
+                    label="BAIXAR RELATÓRIO PDF COMPLETO",
+                    data=pdf_bytes,
+                    file_name="Relatorio_Conciliacao_Completo.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
 
-        # --- DOWNLOAD PDF ---
-        pdf_bytes = gerar_pdf_relatorio(df_tabela, None)
-        st.download_button(
-            label="BAIXAR RELATÓRIO PDF",
-            data=pdf_bytes,
-            file_name="Relatorio_Conciliacao.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
-
-    except Exception as e:
-        st.error(f"Erro ao processar o arquivo Excel: {e}")
+            except Exception as e:
+                st.error(f"Ocorreu um erro no processamento: {e}")
 else:
-    st.info("Por favor, faça o upload do arquivo 'Razão da Contabilidade GERAL Dez.xlsx' para iniciar.")
+    st.info("Aguardando upload do Razão Contábil (.xlsx) para habilitar o início.")
