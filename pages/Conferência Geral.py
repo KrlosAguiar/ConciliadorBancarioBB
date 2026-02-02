@@ -16,6 +16,16 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.units import mm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
+from PIL import Image
+
+# --- CONFIGURAÇÃO DA PÁGINA ---
+icon_path = os.path.join(os.getcwd(), "Barcarena.png")
+try:
+    icon_image = Image.open(icon_path)
+    st.set_page_config(page_title="Conciliador Bancário", page_icon=icon_image, layout="wide")
+except:
+    st.set_page_config(page_title="Conciliador Bancário", layout="wide")
+
 # ==============================================================================
 # 0. CONFIGURAÇÃO DA PÁGINA E CSS
 # ==============================================================================
