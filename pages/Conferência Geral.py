@@ -32,7 +32,7 @@ except:
 
 st.set_page_config(page_title="Conciliador de Receitas", layout="wide")
 
-st.markdown("""
+st.markdown(""")
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
     
