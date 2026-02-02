@@ -105,58 +105,67 @@ def padronizar_data(data_str):
         return None
 
 def carregar_razao_robust(arquivo_bytes, is_csv=False):
+    """
+    Localiza dinamicamente a linha de cabeçalho e mapeia as colunas corretamente.
+    """
     try:
-        if not is_csv:
-            try:
-                df = pd.read_excel(io.BytesIO(arquivo_bytes), skiprows=6, dtype=str)
-                if 'UG' in df.columns and 'Valor' in df.columns:
-                    mask = df['UG'].str.contains("Totalizadores", case=False, na=False)
-                    if mask.any(): df = df.iloc[:mask.idxmax()].copy()
-                    return df
-            except:
-                pass
-
+        # 1. Leitura inicial sem header para encontrar a linha correta
         if is_csv:
-            df = pd.read_csv(io.BytesIO(arquivo_bytes), header=None, encoding='latin1', sep=None, engine='python', dtype=str)
+            df_raw = pd.read_csv(io.BytesIO(arquivo_bytes), header=None, encoding='latin1', sep=None, engine='python', dtype=str)
         else:
-            df = pd.read_excel(io.BytesIO(arquivo_bytes), header=None, dtype=str)
-
-        col_valor = 8
-        if df.shape[1] > 9:
-            count8 = df[8].dropna().astype(str).str.strip().replace('', None).count()
-            count9 = df[9].dropna().astype(str).str.strip().replace('', None).count()
-            if count9 > count8: col_valor = 9
+            df_raw = pd.read_excel(io.BytesIO(arquivo_bytes), header=None, dtype=str)
         
-        # Mapeamento com a coluna 5 (D/C)
-        mapa_colunas = {0: 'UG', 5: 'Tipo_DC', 6: 'Conta', col_valor: 'Valor'}
-        df = df.rename(columns=mapa_colunas)
+        # 2. Localiza a linha de cabeçalho (procura por 'UG', 'Conta', 'Valor')
+        header_idx = -1
+        for i in range(min(20, len(df_raw))):
+            linha = df_raw.iloc[i].astype(str).str.upper().tolist()
+            # Verifica se linha contém palavras-chave do cabeçalho
+            if any("UG" in x for x in linha) and any("CONTA" in x for x in linha):
+                header_idx = i
+                break
         
-        if 'UG' in df.columns:
-            mask = df['UG'].astype(str).str.contains("Totalizadores", case=False, na=False)
-            if mask.any(): df = df.iloc[:mask.idxmax()].copy()
+        if header_idx == -1:
+            # Fallback: Assume linha 6 (padrão SIAFE comum) se não achar
+            header_idx = 6
 
-        col_fato = None
-        col_lcp = None
+        # 3. Recarrega com o cabeçalho correto
+        if is_csv:
+            io.BytesIO(arquivo_bytes).seek(0)
+            df = pd.read_csv(io.BytesIO(arquivo_bytes), header=header_idx, encoding='latin1', sep=None, engine='python', dtype=str)
+        else:
+            io.BytesIO(arquivo_bytes).seek(0)
+            df = pd.read_excel(io.BytesIO(arquivo_bytes), header=header_idx, dtype=str)
+
+        # 4. Limpeza e Renomeação Inteligente
+        # Remove espaços dos nomes das colunas
+        df.columns = df.columns.astype(str).str.strip()
+        
+        # Mapeia colunas críticas procurando substrings (flexibilidade)
+        mapa_final = {}
         for col in df.columns:
-            if col in ['UG', 'Conta', 'Valor', 'Tipo_DC']: continue
-            try:
-                amostra = df[col].dropna().astype(str).head(30).str.cat(sep=' ')
-                if any(x in amostra for x in ["Arrecadação", "Transferência Financeira", "Liquidação"]):
-                     if col_fato is None or "Arrecadação" in amostra: col_fato = col
-                if re.search(r'\b\d{3}\s*-\s*', amostra): col_lcp = col
-            except: continue
+            c_upper = col.upper()
+            if 'UG' in c_upper and 'UG' not in mapa_final.values(): mapa_final[col] = 'UG'
+            elif 'CONTA' in c_upper and 'CONTRA' not in c_upper and 'CONTA' not in mapa_final.values(): mapa_final[col] = 'Conta'
+            elif 'VALOR' in c_upper and 'VALOR' not in mapa_final.values(): mapa_final[col] = 'Valor'
+            elif 'DATA' in c_upper and 'DATA' not in mapa_final.values(): mapa_final[col] = 'Data'
+            elif ('D/C' in c_upper or 'D_C' in c_upper) and 'Tipo_DC' not in mapa_final.values(): mapa_final[col] = 'Tipo_DC'
+            elif ('FATO' in c_upper or 'CONTÁBIL' in c_upper or 'CONTABIL' in c_upper) and 'Fato Contábil' not in mapa_final.values(): mapa_final[col] = 'Fato Contábil'
+            elif 'LCP' in c_upper and 'LCP' not in mapa_final.values(): mapa_final[col] = 'LCP'
 
-        if col_fato: df = df.rename(columns={col_fato: 'Fato Contábil'})
-        if col_lcp: df = df.rename(columns={col_lcp: 'LCP'})
-        if 'Data' not in df.columns and 4 in df.columns: df = df.rename(columns={4: 'Data'}) 
+        df = df.rename(columns=mapa_final)
         
-        if 'Fato Contábil' not in df.columns: df['Fato Contábil'] = ''
-        if 'LCP' not in df.columns: df['LCP'] = ''
-        if 'UG' not in df.columns: df['UG'] = '' 
-        if 'Tipo_DC' not in df.columns: df['Tipo_DC'] = ''
+        # Garante colunas mínimas
+        cols_essenciais = ['UG', 'Conta', 'Valor', 'Data', 'Tipo_DC', 'Fato Contábil', 'LCP']
+        for c in cols_essenciais:
+            if c not in df.columns: df[c] = ''
+
+        # Remove linhas de totalizadores
+        mask = df['UG'].astype(str).str.contains("Totalizadores", case=False, na=False)
+        if mask.any(): df = df.iloc[:mask.idxmax()].copy()
         
         return df
     except Exception as e:
+        st.error(f"Erro ao ler arquivo: {e}")
         return pd.DataFrame()
 
 # ==============================================================================
@@ -495,24 +504,24 @@ if arquivo_excel:
                 }
                 ks = list(mapa.keys())
                 
-                # --- FILTRAGEM BLINDADA (SEM FALLBACK) ---
+                # --- FILTRAGEM BLINDADA (COM BUSCA DE COLUNA INTELIGENTE) ---
                 df_sub = pd.DataFrame()
                 
-                # 1. Filtra contas de interesse
+                # 1. Filtra contas
                 temp = df[df['Conta'].isin(ks)]
                 
-                # 2. Filtro 1: Apenas o que for "Arrecadação" no Fato Contábil
-                mask_fato = pd.Series([False] * len(temp), index=temp.index) # Inicia False
+                # 2. Filtro de Fato Contábil (Se houver a coluna)
+                mask_fato = pd.Series([True] * len(temp), index=temp.index) 
                 if 'Fato Contábil' in temp.columns:
-                     # Garante string e busca "Arrecadação"
-                     mask_fato = temp['Fato Contábil'].astype(str).str.contains("Arrecadação da Receita", case=False, na=False)
+                     # Usa regex para flexibilidade (Ex: 'Arrecadação da Receita', 'ARRECADAÇÃO')
+                     mask_fato = temp['Fato Contábil'].astype(str).str.contains("Arrecadação", case=False, na=False)
                 
-                # 3. Filtro 2: Apenas Débito (D) na coluna Tipo_DC (para garantir que é entrada de receita)
-                mask_debito = pd.Series([False] * len(temp), index=temp.index)
+                # 3. Filtro de D/C (Se houver a coluna)
+                mask_debito = pd.Series([True] * len(temp), index=temp.index)
                 if 'Tipo_DC' in temp.columns:
                      mask_debito = temp['Tipo_DC'].astype(str).str.upper().str.strip() == 'D'
                 
-                # Aplica AMBOS os filtros. Se não tiver Arrecadação OU não for Débito, está fora.
+                # Aplica
                 df_sub = temp[mask_fato & mask_debito]
                 
                 df_res_total = df_sub.groupby('Conta')['Valor'].sum().reset_index()
