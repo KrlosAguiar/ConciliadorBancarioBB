@@ -262,66 +262,102 @@ def extrair_banpara(arquivo_bytes, ano_ref):
     return total, diario
 
 def extrair_caixa(arquivo_bytes, ano_ref):
+    import re
+    
+    # 1. Configurações Baseadas no seu Código
+    # Termos de RECEITA (Adicionei variações para garantir)
+    FILTER_TERMS = [
+        "ARR CCV DH", "ARR CV INT", "ARR DH AG", 
+        "CRED ARREC", "CREDITO ARREC", "DEB ARREC" # Mantive DEB ARREC caso apareça estorno/correção
+    ]
+    
+    # Regex de Data (Início da linha)
+    DATE_RE = re.compile(r'^\s*"?(\d{2}/\d{2}/\d{4})"?')
+    
+    # Regex de Valor (Sua regex, que é excelente pois para na segunda casa decimal)
+    # Ignora sufixos como C, D, 0, aspas, etc.
+    VALOR_RE = re.compile(r'\(?-?\d{1,3}(?:[.\u00A0]?\d{3})*,\d{2}\)?')
+    
+    # Regex de Ruído (Cabeçalhos/Rodapés)
+    NOISE_RE = re.compile(r'_{3,}|(^|\s)(CAIXA|SAC|OUVIDORIA|AL[ÔO] CAIXA|GERENCIADOR)(\s|$)', re.I)
+
+    # Função auxiliar de conversão (Simplificada do seu código)
+    def br_to_float(s):
+        if not s: return 0.0
+        # Remove aspas e caracteres invisíveis
+        t = str(s).strip().replace('"', '').replace("'", "")
+        # Remove pontos de milhar e troca vírgula por ponto
+        t = re.sub(r'[^\d,]', '', t).replace(',', '.')
+        try: return float(t)
+        except: return 0.0
+
     total = 0.0
     diario = {}
+
     try:
         with pdfplumber.open(io.BytesIO(arquivo_bytes)) as pdf:
-            texto_completo = ""
-            for pagina in pdf.pages: 
-                # Concatena tudo
-                texto_completo += (pagina.extract_text() or "")
-        
-        # 1. TRATAMENTO: Remove quebras de linha para unir colunas separadas
-        texto_continuo = texto_completo.replace('\n', '').replace('\r', '')
-
-        # 2. Tenta identificar o mês no cabeçalho
-        mes_ref = obter_mes_referencia_extrato(texto_completo) 
-        
-        # 3. REGEX BLINDADA (Lê coluna por coluna)
-        # Explicação técnica:
-        # "(\d...)"        -> Coluna 1: Data (Obrigatória)
-        # \s*,\s* -> Separador
-        # (?:".*?"|[^,]*)  -> Coluna 2: Doc (Pula sendo texto "..." ou vazio ,,)
-        # \s*,\s* -> Separador
-        # "([^"]*)"        -> Coluna 3: Histórico (Pega o texto mas PARA se achar aspas, evitando invadir outra linha)
-        # \s*,\s* -> Separador
-        # "([\d\.]+,\d{2}) -> Coluna 4: Valor (Pega só o número. Se não tiver valor aqui, descarta a linha)
-        regex = r'"(\d{2}/\d{2}/\d{4})"\s*,\s*(?:".*?"|[^,]*)\s*,\s*"([^"]*)"\s*,\s*"([\d\.]+,\d{2})'
-        
-        matches = re.findall(regex, texto_continuo)
-        
-        # Fallback de mês (Segurança caso o cabeçalho falhe)
-        if mes_ref is None and matches:
-            datas = [m[0][3:] for m in matches] # Pega mm/aaaa
-            if datas:
-                mes_ref = Counter(datas).most_common(1)[0][0]
-                
-        termos_receita = [
-            "ARR CCV DH", "ARR CV INT", "ARR DH AG",
-            "CRED ARREC CONV CB DIN", "CREDITO ARREC INTERNET",
-            "CREDITO ARREC AUTOATEND", "CREDITO ARREC CON PV DINH"
-        ]
-
-        for data_str, historico, valor_str in matches:
-            mes_lancamento = data_str[3:]
+            full_text = ""
+            for page in pdf.pages:
+                full_text += (page.extract_text() or "") + "\n"
             
-            # Garante que é do mês correto
-            if mes_ref and mes_lancamento != mes_ref:
-                continue
+            # Tenta identificar o mês global do extrato para filtrar "sobras" de outros meses
+            mes_ref = obter_mes_referencia_extrato(full_text)
 
-            # Filtra apenas o que é receita
-            historico_upper = historico.upper()
-            if any(t in historico_upper for t in termos_receita):
-                valor_num = limpar_numero(valor_str)
-                data_formatada = padronizar_data(data_str)
+            for ln in full_text.splitlines():
+                s = ln.strip()
+                # Pula linhas vazias ou ruído
+                if not s or NOISE_RE.search(s): continue
                 
-                total += valor_num
-                if data_formatada:
-                    diario[data_formatada] = diario.get(data_formatada, 0.0) + valor_num
+                # 1. Identifica se a linha começa com DATA
+                match_date = DATE_RE.match(s)
+                if match_date:
+                    date_str = match_date.group(1)
+                    
+                    # Trava de Segurança: Filtra mês se detectado no cabeçalho
+                    if mes_ref:
+                        mes_linha = date_str[3:]
+                        if mes_linha != mes_ref: continue
 
+                    # 2. Identifica se é uma transação de INTERESSE (Receita)
+                    s_upper = s.upper()
+                    if not any(termo in s_upper for termo in FILTER_TERMS):
+                        continue
+                    
+                    # 3. Extração Inteligente de Valores (Lógica do seu script)
+                    val_matches = VALOR_RE.findall(s)
+                    if not val_matches: continue
+                    
+                    valor_str = None
+                    
+                    # A LÓGICA DE OURO:
+                    # Se houver 2 ou mais valores na linha (Transação + Saldo), pegamos o penúltimo [-2].
+                    # Se houver apenas 1 valor, assumimos que é a Transação.
+                    if len(val_matches) >= 2:
+                        valor_str = val_matches[-2]
+                    else:
+                        valor_str = val_matches[0]
+                    
+                    val_float = br_to_float(valor_str)
+                    
+                    # Tratamento de Sinal:
+                    # Se for Débito (ex: estorno de arrecadação), subtrai. Se for Crédito, soma.
+                    # Verifica se tem "D" logo após o valor extraído na linha original ou se é termo de débito
+                    eh_debito = "DEB" in s_upper or f"{valor_str}D" in s.replace(' ','').upper()
+                    
+                    if eh_debito:
+                        val_final = -abs(val_float)
+                    else:
+                        val_final = abs(val_float)
+
+                    total += val_final
+                    
+                    dt_padrao = padronizar_data(date_str)
+                    if dt_padrao:
+                        diario[dt_padrao] = diario.get(dt_padrao, 0.0) + val_final
+                        
     except Exception as e:
         return None, {}
-        
+
     return total, diario
 
 # ==============================================================================
