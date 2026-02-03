@@ -270,22 +270,22 @@ def extrair_caixa(arquivo_bytes, ano_ref):
             for pagina in pdf.pages: texto_completo += (pagina.extract_text() or "") + "\n"
             
             mes_ref = obter_mes_referencia_extrato(texto_completo)
-            # Remove quebras de linha para tratar transações que ocupam 2 linhas
             texto_limpo = texto_completo.replace('"', ' ').replace('\n', ' ') 
             
+            # LISTA COMPLETA DE TERMOS (Incluindo variações novas)
             termos_regex = (
                 r"ARR\s+CCV\s+DH|"
                 r"ARR\s+CV\s+INT|"
                 r"ARR\s+DH\s+AG|"
                 r"CRED\s+ARREC\s+CONV\s+CB\s+DIN|"
                 r"CREDITO\s+ARREC\s+INTERNET|"
-                r"CREDITO\s+ARREC\s+AUTOATEND"
+                r"CREDITO\s+ARREC\s+AUTOATEND|"
+                r"CREDITO\s+ARREC\s+CON\s+PV\s+DINH" # Termo novo encontrado dia 28/01
             )
             
-            # --- CORREÇÃO AQUI ---
-            # Antes: [^\d]+ (falhava se tivesse número de documento entre o texto e o valor)
-            # Agora: .*? (aceita qualquer coisa entre o termo e o valor monetário)
-            regex = r'(\d{2}/\d{2}/\d{4}).*?(' + termos_regex + r').*?(\d{1,3}(?:\.\d{3})*,\d{2})\s*([CD])'
+            # --- CORREÇÃO DO "0" ---
+            # O final da regex agora é ([CD0]). Se vier 0, consideramos Crédito.
+            regex = r'(\d{2}/\d{2}/\d{4}).*?(' + termos_regex + r').*?(\d{1,3}(?:\.\d{3})*,\d{2})\s*([CD0])'
             
             matches = re.findall(regex, texto_limpo, re.IGNORECASE)
             
@@ -295,6 +295,7 @@ def extrair_caixa(arquivo_bytes, ano_ref):
                     data_formatada = padronizar_data(data_str)
                     valor_num = limpar_numero(valor_str)
                     
+                    # Se for 'D', inverte. Se for 'C' ou '0', mantém positivo (Receita).
                     val_final = -valor_num if tipo.upper() == 'D' else valor_num
                     
                     total += val_final
