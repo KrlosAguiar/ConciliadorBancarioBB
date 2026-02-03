@@ -270,10 +270,20 @@ def extrair_caixa(arquivo_bytes, ano_ref):
             for pagina in pdf.pages: texto_completo += (pagina.extract_text() or "") + "\n"
             
             mes_ref = obter_mes_referencia_extrato(texto_completo)
-            texto_limpo = texto_completo.replace('"', ' ') 
+            texto_limpo = texto_completo.replace('"', ' ').replace('\n', ' ') 
             
-            termos_regex = r"ARR\s+CCV\s+DH|ARR\s+CV\s+INT|ARR\s+DH\s+AG"
+            # --- LISTA DE TERMOS ATUALIZADA ---
+            termos_regex = (
+                r"ARR\s+CCV\s+DH|"
+                r"ARR\s+CV\s+INT|"
+                r"ARR\s+DH\s+AG|"
+                r"CRED\s+ARREC\s+CONV\s+CB\s+DIN|"
+                r"CREDITO\s+ARREC\s+INTERNET|"
+                r"CREDITO\s+ARREC\s+AUTOATEND"  # <--- Termo Novo Adicionado
+            )
+            
             regex = r'(\d{2}/\d{2}/\d{4}).*?(' + termos_regex + r')[^\d]+(\d{1,3}(?:\.\d{3})*,\d{2})\s*([CD])'
+            
             matches = re.findall(regex, texto_limpo, re.IGNORECASE)
             
             for data_str, _, valor_str, tipo in matches:
@@ -281,12 +291,14 @@ def extrair_caixa(arquivo_bytes, ano_ref):
                 if mes_ref is None or mes_lancamento == mes_ref:
                     data_formatada = padronizar_data(data_str)
                     valor_num = limpar_numero(valor_str)
+                    
                     val_final = -valor_num if tipo.upper() == 'D' else valor_num
                     
                     total += val_final
                     if data_formatada:
                         diario[data_formatada] = diario.get(data_formatada, 0.0) + val_final
-    except: return None, {}
+    except Exception as e:
+        return None, {}
     return total, diario
 
 # ==============================================================================
