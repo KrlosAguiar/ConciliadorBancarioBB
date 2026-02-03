@@ -270,9 +270,9 @@ def extrair_caixa(arquivo_bytes, ano_ref):
             for pagina in pdf.pages: texto_completo += (pagina.extract_text() or "") + "\n"
             
             mes_ref = obter_mes_referencia_extrato(texto_completo)
-            texto_limpo = texto_completo.replace('"', ' ').replace('\n', ' ') 
+            # Remove quebras de linha para tratar transações que ocupam 2 linhas
+            texto_limpo = texto_completo.replace('\n', ' ')
             
-            # LISTA COMPLETA DE TERMOS (Incluindo variações novas)
             termos_regex = (
                 r"ARR\s+CCV\s+DH|"
                 r"ARR\s+CV\s+INT|"
@@ -280,23 +280,26 @@ def extrair_caixa(arquivo_bytes, ano_ref):
                 r"CRED\s+ARREC\s+CONV\s+CB\s+DIN|"
                 r"CREDITO\s+ARREC\s+INTERNET|"
                 r"CREDITO\s+ARREC\s+AUTOATEND|"
-                r"CREDITO\s+ARREC\s+CON\s+PV\s+DINH" # Termo novo encontrado dia 28/01
+                r"CREDITO\s+ARREC\s+CON\s+PV\s+DINH"
             )
             
-            # --- CORREÇÃO DO "0" ---
-            # O final da regex agora é ([CD0]). Se vier 0, consideramos Crédito.
-            regex = r'(\d{2}/\d{2}/\d{4}).*?(' + termos_regex + r').*?(\d{1,3}(?:\.\d{3})*,\d{2})\s*([CD0])'
+            # --- LÓGICA NOVA: DISSOCIA O VALOR DO SUFIXO (C/D/0) ---
+            # 1. Encontra a data.
+            # 2. Encontra o termo da arrecadação.
+            # 3. Ignora qualquer caractere (aspas, letras, espaços) até achar o número.
+            # 4. Captura apenas o número. Não nos importamos mais com o que vem depois (C, D, 0, aspas).
+            regex = r'(\d{2}/\d{2}/\d{4}).*?(' + termos_regex + r').*?(\d{1,3}(?:\.\d{3})*,\d{2})'
             
             matches = re.findall(regex, texto_limpo, re.IGNORECASE)
             
-            for data_str, _, valor_str, tipo in matches:
+            for data_str, _, valor_str in matches:
                 mes_lancamento = data_str[3:] 
                 if mes_ref is None or mes_lancamento == mes_ref:
                     data_formatada = padronizar_data(data_str)
-                    valor_num = limpar_numero(valor_str)
                     
-                    # Se for 'D', inverte. Se for 'C' ou '0', mantém positivo (Receita).
-                    val_final = -valor_num if tipo.upper() == 'D' else valor_num
+                    # Como filtramos por termos que SÃO receitas, o valor é sempre positivo.
+                    # Não precisamos checar C ou D.
+                    val_final = limpar_numero(valor_str)
                     
                     total += val_final
                     if data_formatada:
