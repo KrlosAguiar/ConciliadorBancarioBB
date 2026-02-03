@@ -474,7 +474,7 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas, lista_detalhes
 # 4. APLICAÇÃO
 # ==============================================================================
 
-st.markdown("<h1 style='text-align: center;'>Painel de Conciliação Contábil</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>Conferências de Rotinas Mensais</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
 c1, c2 = st.columns(2)
