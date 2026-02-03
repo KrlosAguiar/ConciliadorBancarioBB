@@ -116,8 +116,10 @@ def padronizar_data(data_str):
 
 def carregar_razao_robust(arquivo_bytes, is_csv=False):
     try:
+        # LEITURA INICIAL
         if not is_csv:
             try:
+                # Tenta ler como Excel estruturado padrão
                 df = pd.read_excel(io.BytesIO(arquivo_bytes), skiprows=6, dtype=str)
                 if 'UG' in df.columns and 'Valor' in df.columns:
                     mask = df['UG'].str.contains("Totalizadores", case=False, na=False)
@@ -131,42 +133,61 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
         else:
             df = pd.read_excel(io.BytesIO(arquivo_bytes), header=None, dtype=str)
 
+        # IDENTIFICAÇÃO DE COLUNAS
         col_valor = 8
         if df.shape[1] > 9:
+            # Tenta inferir coluna de valor verificando qual tem mais dados preenchidos
             count8 = df[8].dropna().astype(str).str.strip().replace('', None).count()
             count9 = df[9].dropna().astype(str).str.strip().replace('', None).count()
             if count9 > count8: col_valor = 9
         
-        # Mapeamento Atualizado: Inclui coluna 5 como 'Tipo_DC' (D/C)
+        # Mapeamento Básico
         mapa_colunas = {0: 'UG', 5: 'Tipo_DC', 6: 'Conta', col_valor: 'Valor'}
         df = df.rename(columns=mapa_colunas)
         
+        # Limpeza de linhas de totais
         if 'UG' in df.columns:
             mask = df['UG'].astype(str).str.contains("Totalizadores", case=False, na=False)
             if mask.any(): df = df.iloc[:mask.idxmax()].copy()
 
+        # --- CORREÇÃO DA DETECÇÃO DE COLUNAS (FATO CONTÁBIL) ---
         col_fato = None
         col_lcp = None
+        
+        # Ignora colunas já mapeadas
+        cols_ignoradas = ['UG', 'Conta', 'Valor', 'Tipo_DC']
+        
         for col in df.columns:
-            if col in ['UG', 'Conta', 'Valor', 'Tipo_DC']: continue
+            if col in cols_ignoradas: continue
             try:
-                amostra = df[col].dropna().astype(str).head(30).str.cat(sep=' ')
-                if any(x in amostra for x in ["Arrecadação", "Transferência Financeira", "Liquidação"]):
-                     if col_fato is None or "Arrecadação" in amostra: col_fato = col
-                if re.search(r'\b\d{3}\s*-\s*', amostra): col_lcp = col
+                # AUMENTO DA AMOSTRA: Olha 5000 linhas para achar "Arrecadação"
+                # (Antes olhava só 30 e falhava se o início tivesse muito Saldo Inicial)
+                amostra = df[col].dropna().astype(str).head(5000).str.cat(sep=' ')
+                
+                # Procura termos chave
+                termos_chave = ["Arrecadação", "Transferência Financeira", "Liquidação", "Implantação"]
+                
+                if any(x in amostra for x in termos_chave):
+                     # Prioriza colunas que tenham descrições claras
+                     if col_fato is None or "Arrecadação" in amostra: 
+                         col_fato = col
+                
+                # Identifica LCP (código tipo "264 - ...")
+                if re.search(r'\b\d{3}\s*-\s*', amostra): 
+                    col_lcp = col
             except: continue
 
         if col_fato: df = df.rename(columns={col_fato: 'Fato Contábil'})
         if col_lcp: df = df.rename(columns={col_lcp: 'LCP'})
         if 'Data' not in df.columns and 4 in df.columns: df = df.rename(columns={4: 'Data'}) 
         
-        if 'Fato Contábil' not in df.columns: df['Fato Contábil'] = ''
-        if 'LCP' not in df.columns: df['LCP'] = ''
-        if 'UG' not in df.columns: df['UG'] = '' 
-        if 'Tipo_DC' not in df.columns: df['Tipo_DC'] = ''
+        # Garante existência das colunas
+        for c in ['Fato Contábil', 'LCP', 'UG', 'Tipo_DC']:
+            if c not in df.columns: df[c] = ''
         
         return df
     except Exception as e:
+        st.error(f"Erro ao processar arquivo: {e}")
         return pd.DataFrame()
 
 # ==============================================================================
@@ -511,14 +532,12 @@ if arquivo_excel:
                 # 1. Filtra apenas as contas de interesse (definidas no mapa)
                 temp = df[df['Conta'].isin(ks)]
                 
-                # 2. Aplica filtro ESTRITO de Fato Contábil
-                # A regra é clara: Se não tiver "Arrecadação" escrito, não entra.
-                # Se o campo estiver vazio ou tiver outro texto, a linha é descartada.
+                # 2. Aplica filtro ESTRITO pelo termo exato "Arrecadação da Receita"
                 if 'Fato Contábil' in temp.columns:
-                      mask_fato = temp['Fato Contábil'].astype(str).str.contains("Arrecadação", case=False, na=False)
+                      # Usa regex=False para buscar a string literal exata e segura
+                      mask_fato = temp['Fato Contábil'].astype(str).str.contains("Arrecadação da Receita", case=False, na=False, regex=False)
                       df_sub = temp[mask_fato]
                 else:
-                      # Se por algum motivo a coluna não existir, o df fica vazio para evitar falsos positivos
                       df_sub = pd.DataFrame(columns=temp.columns)
                
                 df_res_total = df_sub.groupby('Conta')['Valor'].sum().reset_index()
