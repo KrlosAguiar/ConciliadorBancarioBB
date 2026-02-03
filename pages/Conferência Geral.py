@@ -268,44 +268,67 @@ def extrair_caixa(arquivo_bytes, ano_ref):
         with pdfplumber.open(io.BytesIO(arquivo_bytes)) as pdf:
             texto_completo = ""
             for pagina in pdf.pages: texto_completo += (pagina.extract_text() or "") + "\n"
+        
+        # 1. Tenta identificar o mês pelo cabeçalho (ex: "Mês: Janeiro/2026")
+        mes_ref = obter_mes_referencia_extrato(texto_completo)
+        
+        linhas = texto_completo.split('\n')
+        
+        # Regex ESTRUTURADA para o formato CSV do PDF da Caixa
+        # Grupo 1: Data | Grupo 2: Histórico | Grupo 3: Valor
+        regex_linha = re.compile(r'^"(\d{2}/\d{2}/\d{4})".*?"(.*?)"\s*,\s*"([\d\.]+,\d{2})"')
+        
+        # Listas temporárias para análise antes do processamento
+        transacoes_brutas = []
+        todos_meses_encontrados = []
+        
+        # Passagem 1: Coleta todos os dados brutos e meses existentes
+        for linha in linhas:
+            linha = linha.strip()
+            match = regex_linha.search(linha)
+            if match:
+                data_str = match.group(1)
+                historico = match.group(2)
+                valor_str = match.group(3)
+                
+                transacoes_brutas.append((data_str, historico, valor_str))
+                todos_meses_encontrados.append(data_str[3:]) # Guarda apenas mm/aaaa
+        
+        # 2. Lógica de "Desempate" do Mês de Referência
+        # Se não achou no cabeçalho, assume o mês que tiver mais linhas no arquivo
+        if mes_ref is None and todos_meses_encontrados:
+            c = Counter(todos_meses_encontrados)
+            # Pega o mais comum (ex: Jan=20 linhas, Fev=3 linhas -> Assume Jan)
+            mes_ref = c.most_common(1)[0][0]
             
-            mes_ref = obter_mes_referencia_extrato(texto_completo)
-            # Remove quebras de linha para tratar transações que ocupam 2 linhas
-            texto_limpo = texto_completo.replace('\n', ' ')
+        termos_receita = [
+            "ARR CCV DH", "ARR CV INT", "ARR DH AG",
+            "CRED ARREC CONV CB DIN", "CREDITO ARREC INTERNET",
+            "CREDITO ARREC AUTOATEND", "CREDITO ARREC CON PV DINH"
+        ]
+
+        # Passagem 2: Processa e soma apenas o que for do mês correto
+        for data_str, historico, valor_str in transacoes_brutas:
+            mes_lancamento = data_str[3:]
             
-            termos_regex = (
-                r"ARR\s+CCV\s+DH|"
-                r"ARR\s+CV\s+INT|"
-                r"ARR\s+DH\s+AG|"
-                r"CRED\s+ARREC\s+CONV\s+CB\s+DIN|"
-                r"CREDITO\s+ARREC\s+INTERNET|"
-                r"CREDITO\s+ARREC\s+AUTOATEND|"
-                r"CREDITO\s+ARREC\s+CON\s+PV\s+DINH"
-            )
-            
-            # --- LÓGICA NOVA: DISSOCIA O VALOR DO SUFIXO (C/D/0) ---
-            # 1. Encontra a data.
-            # 2. Encontra o termo da arrecadação.
-            # 3. Ignora qualquer caractere (aspas, letras, espaços) até achar o número.
-            # 4. Captura apenas o número. Não nos importamos mais com o que vem depois (C, D, 0, aspas).
-            regex = r'(\d{2}/\d{2}/\d{4}).*?(' + termos_regex + r').*?(\d{1,3}(?:\.\d{3})*,\d{2})'
-            
-            matches = re.findall(regex, texto_limpo, re.IGNORECASE)
-            
-            for data_str, _, valor_str in matches:
-                mes_lancamento = data_str[3:] 
-                if mes_ref is None or mes_lancamento == mes_ref:
-                    data_formatada = padronizar_data(data_str)
-                    
-                    # Como filtramos por termos que SÃO receitas, o valor é sempre positivo.
-                    # Não precisamos checar C ou D.
-                    val_final = limpar_numero(valor_str)
-                    
-                    total += val_final
-                    if data_formatada:
-                        diario[data_formatada] = diario.get(data_formatada, 0.0) + val_final
+            # Filtro de Mês: Se temos um mês de referência definido, ignoramos os outros
+            if mes_ref and mes_lancamento != mes_ref:
+                continue
+
+            # Filtro de Histórico: Verifica se é uma receita válida
+            historico_upper = historico.upper()
+            if any(t in historico_upper for t in termos_receita):
+                valor_num = limpar_numero(valor_str)
+                data_formatada = padronizar_data(data_str)
+                
+                total += valor_num
+                if data_formatada:
+                    diario[data_formatada] = diario.get(data_formatada, 0.0) + valor_num
+
     except Exception as e:
+        st.error(f"Erro ao ler Caixa: {e}")
         return None, {}
+        
     return total, diario
 
 # ==============================================================================
