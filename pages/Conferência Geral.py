@@ -505,31 +505,22 @@ if arquivo_excel:
                 }
                 ks = list(mapa.keys())
                 
-                # --- CORREÇÃO DO BUG: FILTRO ESTRITO POR 'D' (RECEITA) NA CONTA ---
+               # --- LÓGICA ATUALIZADA: FILTRO ESTRITO POR "ARRECADAÇÃO" ---
                 df_sub = pd.DataFrame()
                 
-                # 1. Filtra contas de interesse
+                # 1. Filtra apenas as contas de interesse (definidas no mapa)
                 temp = df[df['Conta'].isin(ks)]
                 
-                # 2. Aplica filtro de Fato Contábil (se existir)
-                if 'Fato Contábil' in df.columns:
-                     mask_fato = temp['Fato Contábil'].astype(str).str.contains("Arrecadação", case=False, na=False)
-                     df_sub = temp[mask_fato]
-                
-                # 3. SEGURANÇA MÁXIMA: Se a filtragem por texto falhar (df vazio) OU para garantir pureza
-                # Força que seja DÉBITO (Entrada no Ativo)
-                if df_sub.empty:
-                    # Se não achou "Arrecadação", pega tudo que for Débito da conta
-                    if 'Tipo_DC' in temp.columns:
-                        df_sub = temp[temp['Tipo_DC'].astype(str).str.upper().str.strip() == 'D']
-                    else:
-                         # Se não tiver coluna D/C (improvável com novo map), usa fallback anterior
-                         df_sub = temp
+                # 2. Aplica filtro ESTRITO de Fato Contábil
+                # A regra é clara: Se não tiver "Arrecadação" escrito, não entra.
+                # Se o campo estiver vazio ou tiver outro texto, a linha é descartada.
+                if 'Fato Contábil' in temp.columns:
+                      mask_fato = temp['Fato Contábil'].astype(str).str.contains("Arrecadação", case=False, na=False)
+                      df_sub = temp[mask_fato]
                 else:
-                    # Mesmo se achou "Arrecadação", garante que é Débito (exclui estorno/pagamento classificado errado)
-                    if 'Tipo_DC' in df_sub.columns:
-                        df_sub = df_sub[df_sub['Tipo_DC'].astype(str).str.upper().str.strip() == 'D']
-                
+                      # Se por algum motivo a coluna não existir, o df fica vazio para evitar falsos positivos
+                      df_sub = pd.DataFrame(columns=temp.columns)
+               
                 df_res_total = df_sub.groupby('Conta')['Valor'].sum().reset_index()
                 df_final = pd.merge(pd.DataFrame({'Conta': ks}), df_res_total, on='Conta', how='left').fillna(0)
 
