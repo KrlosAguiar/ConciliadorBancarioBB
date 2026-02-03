@@ -267,55 +267,49 @@ def extrair_caixa(arquivo_bytes, ano_ref):
     try:
         with pdfplumber.open(io.BytesIO(arquivo_bytes)) as pdf:
             texto_completo = ""
-            for pagina in pdf.pages: texto_completo += (pagina.extract_text() or "") + "\n"
+            for pagina in pdf.pages: 
+                # Concatena tudo
+                texto_completo += (pagina.extract_text() or "")
         
-        # 1. Tenta identificar o mês pelo cabeçalho (ex: "Mês: Janeiro/2026")
-        mes_ref = obter_mes_referencia_extrato(texto_completo)
+        # 1. TRATAMENTO: Remove quebras de linha para unir colunas separadas
+        texto_continuo = texto_completo.replace('\n', '').replace('\r', '')
+
+        # 2. Tenta identificar o mês no cabeçalho
+        mes_ref = obter_mes_referencia_extrato(texto_completo) 
         
-        linhas = texto_completo.split('\n')
+        # 3. REGEX BLINDADA (Lê coluna por coluna)
+        # Explicação técnica:
+        # "(\d...)"        -> Coluna 1: Data (Obrigatória)
+        # \s*,\s* -> Separador
+        # (?:".*?"|[^,]*)  -> Coluna 2: Doc (Pula sendo texto "..." ou vazio ,,)
+        # \s*,\s* -> Separador
+        # "([^"]*)"        -> Coluna 3: Histórico (Pega o texto mas PARA se achar aspas, evitando invadir outra linha)
+        # \s*,\s* -> Separador
+        # "([\d\.]+,\d{2}) -> Coluna 4: Valor (Pega só o número. Se não tiver valor aqui, descarta a linha)
+        regex = r'"(\d{2}/\d{2}/\d{4})"\s*,\s*(?:".*?"|[^,]*)\s*,\s*"([^"]*)"\s*,\s*"([\d\.]+,\d{2})'
         
-        # Regex ESTRUTURADA para o formato CSV do PDF da Caixa
-        # Grupo 1: Data | Grupo 2: Histórico | Grupo 3: Valor
-        regex_linha = re.compile(r'^"(\d{2}/\d{2}/\d{4})".*?"(.*?)"\s*,\s*"([\d\.]+,\d{2})"')
+        matches = re.findall(regex, texto_continuo)
         
-        # Listas temporárias para análise antes do processamento
-        transacoes_brutas = []
-        todos_meses_encontrados = []
-        
-        # Passagem 1: Coleta todos os dados brutos e meses existentes
-        for linha in linhas:
-            linha = linha.strip()
-            match = regex_linha.search(linha)
-            if match:
-                data_str = match.group(1)
-                historico = match.group(2)
-                valor_str = match.group(3)
+        # Fallback de mês (Segurança caso o cabeçalho falhe)
+        if mes_ref is None and matches:
+            datas = [m[0][3:] for m in matches] # Pega mm/aaaa
+            if datas:
+                mes_ref = Counter(datas).most_common(1)[0][0]
                 
-                transacoes_brutas.append((data_str, historico, valor_str))
-                todos_meses_encontrados.append(data_str[3:]) # Guarda apenas mm/aaaa
-        
-        # 2. Lógica de "Desempate" do Mês de Referência
-        # Se não achou no cabeçalho, assume o mês que tiver mais linhas no arquivo
-        if mes_ref is None and todos_meses_encontrados:
-            c = Counter(todos_meses_encontrados)
-            # Pega o mais comum (ex: Jan=20 linhas, Fev=3 linhas -> Assume Jan)
-            mes_ref = c.most_common(1)[0][0]
-            
         termos_receita = [
             "ARR CCV DH", "ARR CV INT", "ARR DH AG",
             "CRED ARREC CONV CB DIN", "CREDITO ARREC INTERNET",
             "CREDITO ARREC AUTOATEND", "CREDITO ARREC CON PV DINH"
         ]
 
-        # Passagem 2: Processa e soma apenas o que for do mês correto
-        for data_str, historico, valor_str in transacoes_brutas:
+        for data_str, historico, valor_str in matches:
             mes_lancamento = data_str[3:]
             
-            # Filtro de Mês: Se temos um mês de referência definido, ignoramos os outros
+            # Garante que é do mês correto
             if mes_ref and mes_lancamento != mes_ref:
                 continue
 
-            # Filtro de Histórico: Verifica se é uma receita válida
+            # Filtra apenas o que é receita
             historico_upper = historico.upper()
             if any(t in historico_upper for t in termos_receita):
                 valor_num = limpar_numero(valor_str)
@@ -326,7 +320,6 @@ def extrair_caixa(arquivo_bytes, ano_ref):
                     diario[data_formatada] = diario.get(data_formatada, 0.0) + valor_num
 
     except Exception as e:
-        st.error(f"Erro ao ler Caixa: {e}")
         return None, {}
         
     return total, diario
