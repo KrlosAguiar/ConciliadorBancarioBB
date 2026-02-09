@@ -160,25 +160,37 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
         for col in df.columns:
             if col in cols_ignoradas: continue
             try:
-                # AUMENTO DA AMOSTRA: Olha 5000 linhas para achar "Arrecadação"
-                # (Antes olhava só 30 e falhava se o início tivesse muito Saldo Inicial)
+                # AUMENTO DA AMOSTRA
                 amostra = df[col].dropna().astype(str).head(5000).str.cat(sep=' ')
                 
                 # Procura termos chave
                 termos_chave = ["Arrecadação", "Transferência Financeira", "Liquidação", "Implantação"]
                 
                 if any(x in amostra for x in termos_chave):
-                     # Prioriza colunas que tenham descrições claras
-                     if col_fato is None or "Arrecadação" in amostra: 
-                         col_fato = col
+                      # Prioriza colunas que tenham descrições claras
+                      if col_fato is None or "Arrecadação" in amostra: 
+                          col_fato = col
                 
-                # Identifica LCP (código tipo "264 - ...")
-                if re.search(r'\b\d{2,3}\s*-\s*', amostra):
+                # Identifica LCP (Agora aceita 2 ou 3 dígitos: \d{2,3})
+                if re.search(r'\b\d{2,3}\s*-\s*', amostra): 
                     col_lcp = col
             except: continue
 
-        if col_fato: df = df.rename(columns={col_fato: 'Fato Contábil'})
-        if col_lcp: df = df.rename(columns={col_lcp: 'LCP'})
+        # --- APLICAÇÃO SEGURA DOS NOMES DAS COLUNAS ---
+        # Evita erro se a mesma coluna for detectada como Fato e LCP
+        if col_fato: 
+            df = df.rename(columns={col_fato: 'Fato Contábil'})
+            # Se a coluna LCP for a mesma que acabou de virar 'Fato Contábil', ajustamos a referência
+            if col_lcp == col_fato:
+                col_lcp = 'Fato Contábil'
+
+        if col_lcp: 
+            # Se for a mesma coluna, duplicamos para ter ambas disponíveis sem conflito de nome
+            if col_lcp == 'Fato Contábil' or (col_fato and col_lcp == col_fato):
+                 df['LCP'] = df[col_lcp]
+            else:
+                 df = df.rename(columns={col_lcp: 'LCP'})
+
         if 'Data' not in df.columns and 4 in df.columns: df = df.rename(columns={4: 'Data'}) 
         
         # Garante existência das colunas
