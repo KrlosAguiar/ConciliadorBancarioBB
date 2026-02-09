@@ -136,64 +136,63 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
         # IDENTIFICAÇÃO DE COLUNAS
         col_valor = 8
         if df.shape[1] > 9:
-            # Tenta inferir coluna de valor verificando qual tem mais dados preenchidos
             count8 = df[8].dropna().astype(str).str.strip().replace('', None).count()
             count9 = df[9].dropna().astype(str).str.strip().replace('', None).count()
             if count9 > count8: col_valor = 9
         
-        # Mapeamento Básico
         mapa_colunas = {0: 'UG', 5: 'Tipo_DC', 6: 'Conta', col_valor: 'Valor'}
         df = df.rename(columns=mapa_colunas)
         
-        # Limpeza de linhas de totais
         if 'UG' in df.columns:
             mask = df['UG'].astype(str).str.contains("Totalizadores", case=False, na=False)
             if mask.any(): df = df.iloc[:mask.idxmax()].copy()
 
-        # --- CORREÇÃO DA DETECÇÃO DE COLUNAS (FATO CONTÁBIL) ---
+        # --- CORREÇÃO DA DETECÇÃO DE COLUNAS (FATO CONTÁBIL vs LCP) ---
         col_fato = None
         col_lcp = None
         
-        # Ignora colunas já mapeadas
         cols_ignoradas = ['UG', 'Conta', 'Valor', 'Tipo_DC']
         
         for col in df.columns:
             if col in cols_ignoradas: continue
             try:
-                # AUMENTO DA AMOSTRA
+                # Aumentamos a amostra para garantir que pegamos os códigos de implantação no início
                 amostra = df[col].dropna().astype(str).head(5000).str.cat(sep=' ')
                 
-                # Procura termos chave
+                # --- LÓGICA CIRÚRGICA (Trava de Segurança) ---
+                # Identifica marcadores específicos mencionados pelo usuário
+                tem_implanta_62 = "62 - Implantação" in amostra or "62 - IMPLANTAÇÃO" in amostra.upper()
+                tem_implanta_84 = "84 - Implantação" in amostra or "84 - IMPLANTAÇÃO" in amostra.upper()
+                
+                # Regex ajustada para 2 ou 3 dígitos (pega 84, 62, 264, etc)
+                eh_formato_lcp = re.search(r'\b\d{2,3}\s*-\s*', amostra)
+                
+                # DETECÇÃO LCP
+                if eh_formato_lcp:
+                    # Se tiver o marcador 84, É A COLUNA CERTA (prioridade máxima)
+                    if tem_implanta_84:
+                        col_lcp = col
+                    # Se tiver o marcador 62, É A COLUNA ERRADA (Regra), IGNORA para LCP
+                    elif tem_implanta_62:
+                        pass
+                    # Se não for nenhuma das duas (ex: arquivo de Dezembro), segue fluxo normal
+                    elif col_lcp is None:
+                        col_lcp = col
+
+                # DETECÇÃO FATO CONTÁBIL
                 termos_chave = ["Arrecadação", "Transferência Financeira", "Liquidação", "Implantação"]
-                
                 if any(x in amostra for x in termos_chave):
-                      # Prioriza colunas que tenham descrições claras
-                      if col_fato is None or "Arrecadação" in amostra: 
-                          col_fato = col
-                
-                # Identifica LCP (Agora aceita 2 ou 3 dígitos: \d{2,3})
-                if re.search(r'\b\d{2,3}\s*-\s*', amostra): 
-                    col_lcp = col
+                    # Fato contábil geralmente é texto puro, sem o padrão "Numero - Descrição"
+                    # Mas se "Arrecadação" estiver explícito, pegamos
+                    if not eh_formato_lcp or "Arrecadação" in amostra:
+                         if col_fato is None: 
+                             col_fato = col
             except: continue
 
-        # --- APLICAÇÃO SEGURA DOS NOMES DAS COLUNAS ---
-        # Evita erro se a mesma coluna for detectada como Fato e LCP
-        if col_fato: 
-            df = df.rename(columns={col_fato: 'Fato Contábil'})
-            # Se a coluna LCP for a mesma que acabou de virar 'Fato Contábil', ajustamos a referência
-            if col_lcp == col_fato:
-                col_lcp = 'Fato Contábil'
-
-        if col_lcp: 
-            # Se for a mesma coluna, duplicamos para ter ambas disponíveis sem conflito de nome
-            if col_lcp == 'Fato Contábil' or (col_fato and col_lcp == col_fato):
-                 df['LCP'] = df[col_lcp]
-            else:
-                 df = df.rename(columns={col_lcp: 'LCP'})
-
+        if col_fato: df = df.rename(columns={col_fato: 'Fato Contábil'})
+        if col_lcp: df = df.rename(columns={col_lcp: 'LCP'})
         if 'Data' not in df.columns and 4 in df.columns: df = df.rename(columns={4: 'Data'}) 
         
-        # Garante existência das colunas
         for c in ['Fato Contábil', 'LCP', 'UG', 'Tipo_DC']:
             if c not in df.columns: df[c] = ''
         
