@@ -173,7 +173,7 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
                          col_fato = col
                 
                 # Identifica LCP (código tipo "264 - ...")
-                if re.search(r'\b\d{3}\s*-\s*', amostra): 
+                if re.search(r'\b\d{2,3}\s*-\s*', amostra):
                     col_lcp = col
             except: continue
 
