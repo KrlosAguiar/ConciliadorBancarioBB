@@ -9,6 +9,7 @@ import io
 import os
 import shutil
 import tempfile
+import unicodedata
 from PIL import Image
 
 # --- IMPORTAÇÕES PARA PDF (REPORTLAB) ---
@@ -284,62 +285,85 @@ def encontrar_saldo_pdf(caminho_pdf):
         return 0.0, "Erro"
 
 # ==============================================================================
-# 3. LÓGICA DE CONSOLIDAÇÃO E CONFRONTO
+# 3. LÓGICA DE CONSOLIDAÇÃO E CONFRONTO (CORRIGIDA E ROBUSTA)
 # ==============================================================================
 
 def ler_planilha_e_consolidar(file_obj):
+    import unicodedata
+    
+    # Normalização para busca segura (ignora maiúsculas e acentos)
+    def normalizar(txt):
+        if pd.isna(txt): return ""
+        txt_str = str(txt).lower().strip()
+        return "".join(c for c in unicodedata.normalize('NFD', txt_str) if unicodedata.category(c) != 'Mn')
+
+    # 1. TENTATIVA DE LEITURA (EXCEL OU TEXTO/CSV)
+    df_raw = pd.DataFrame()
     try:
-        # Se funcionar como funcionava antes, ele entra no else e lê como Excel
-        if file_obj.name.endswith('.csv'):
-            df_raw = pd.read_csv(file_obj, header=None, dtype=object)
-        else:
-            df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl', dtype=object)
-    except Exception as e:
-        # Fallback: Se der erro lendo como Excel (o erro que você relatou), tenta ler como CSV/Texto
-        # Isso cobre o caso do arquivo ser um "falso xlsx" (texto salvo com extensão xlsx)
+        # Tenta como Excel nativo
+        df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl', dtype=object)
+    except:
         try:
+            # Se falhar, tenta como CSV/HTML (comum em exportações de sistemas)
             file_obj.seek(0)
-            df_raw = pd.read_csv(file_obj, header=None, dtype=object, sep=None, engine='python', encoding='latin-1')
-        except:
-            st.error(f"Erro ao ler planilha: {e}")
+            df_raw = pd.read_csv(file_obj, header=None, sep=None, engine='python', encoding='latin-1', dtype=object)
+        except Exception as e:
+            st.error(f"Erro crítico ao ler o arquivo: {e}")
             return {}
 
     idx_header = -1
-    # AJUSTE PONTUAL: Coluna de valor alterada para 10 (K) e busca por 'saldo atual'
-    col_map = {'CODIGO': 0, 'DESCRICAO': 2, 'CONTA_BANCO': 8, 'RAZAO': 10}
+    col_map = {} 
     
-    for i, row in df_raw.head(20).iterrows():
-        row_str = " ".join([str(x) for x in row.values]).lower()
-        # Alterado para buscar "saldo atual" ou "saldo contábil" para ser compatível com ambos
-        if "conta" in row_str and ("saldo atual" in row_str or "saldo contábil" in row_str or "saldo contabil" in row_str):
+    # 2. BUSCA DO CABEÇALHO INTELIGENTE (Detecta formato Antigo ou Novo)
+    for i, row in df_raw.head(30).iterrows():
+        # Cria linha normalizada
+        row_norm = [normalizar(x) for x in row.values]
+        row_str = " ".join(row_norm)
+        
+        # Procura "Conta" E ("Saldo Atual" OU "Saldo Contábil")
+        if "conta" in row_str and ("saldo atual" in row_str or "saldo contabil" in row_str):
             idx_header = i
-            for col_idx, val in enumerate(row.values):
-                val_str = str(val).lower().strip()
-                if val_str == "conta": col_map['CODIGO'] = col_idx
-                elif "descri" in val_str: col_map['DESCRICAO'] = col_idx
-                elif "banco" in val_str: col_map['CONTA_BANCO'] = col_idx
-                elif "saldo atual" in val_str or "saldo contábil" in val_str or "saldo contabil" in val_str: col_map['RAZAO'] = col_idx
+            
+            # Mapeamento Dinâmico das Colunas
+            for col_idx, val in enumerate(row_norm):
+                if val == "conta": 
+                    col_map['CODIGO'] = col_idx
+                elif "descri" in val: 
+                    col_map['DESCRICAO'] = col_idx
+                elif "banco" in val: 
+                    col_map['CONTA_BANCO'] = col_idx
+                elif "saldo atual" in val or "saldo contabil" in val:
+                    col_map['RAZAO'] = col_idx
             break
-    
-    if idx_header == -1: idx_header = 9 # Ajustado para o padrão visual do novo arquivo (linha 10)
-    
+            
+    if idx_header == -1 or not col_map:
+        st.error("Formato do relatório desconhecido. Não foi possível localizar as colunas 'Conta', 'Banco' e 'Saldo'.")
+        return {}
+
     dados_consolidados = {} 
     grupo_atual = "MOVIMENTO"
 
     for index, row in df_raw.iloc[idx_header+1:].iterrows():
-        linha_texto = " ".join([str(x) for x in row.values if pd.notna(x)]).lower()
+        # Verifica se o índice da coluna existe na linha atual
+        if max(col_map.values()) >= len(row): continue
+
+        linha_texto = " ".join([normalizar(x) for x in row.values if pd.notna(x)])
+        
         if "conta movimento" in linha_texto: grupo_atual = "MOVIMENTO"; continue
-        elif "conta aplicação" in linha_texto or "conta aplicacao" in linha_texto: grupo_atual = "APLICACAO"; continue
+        elif "conta aplicacao" in linha_texto: grupo_atual = "APLICACAO"; continue
         
         try:
-            if max(col_map.values()) >= len(row): continue
             conta_raw = str(row[col_map['CONTA_BANCO']]).strip()
             codigo = str(row[col_map['CODIGO']]).strip()
             
+            # Filtros de validação da linha
+            if not codigo or codigo.lower() == 'nan' or not conta_raw or conta_raw.lower() == 'nan': continue
+            if "banco" in conta_raw.lower(): continue # Evita ler repetição de cabeçalho
+
             numeros_conta_match = limpar_conta_excel(conta_raw)
             numeros_conta_full = extrair_digitos(conta_raw)
 
-            if codigo.isdigit() and len(conta_raw) > 3 and "banco" not in conta_raw.lower():
+            if codigo.isdigit() and len(conta_raw) > 3:
                 descricao = str(row[col_map['DESCRICAO']]).strip()
                 valor_final = limpar_numero(row[col_map['RAZAO']])
                 chave = (numeros_conta_full, grupo_atual)
@@ -625,7 +649,7 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                 # --- Leitura da Planilha ---
                 dados_excel = ler_planilha_e_consolidar(up_planilha)
                 if not dados_excel:
-                    st.error("Erro ao ler a planilha Excel. Verifique o formato.")
+                    # st.error já foi chamado dentro da função se falhar
                     shutil.rmtree(temp_dir)
                     st.stop()
 
