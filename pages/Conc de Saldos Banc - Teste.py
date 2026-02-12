@@ -288,9 +288,19 @@ def encontrar_saldo_pdf(caminho_pdf):
 # ==============================================================================
 
 def ler_planilha_e_consolidar(file_obj):
+    import unicodedata
+
+    # Função para normalizar texto (remove acentos e deixa minúsculo)
+    def normalizar(txt):
+        if pd.isna(txt): return ""
+        # Normaliza para form NFD, remove acentos e caracteres especiais
+        txt_str = str(txt).lower().strip()
+        return "".join(c for c in unicodedata.normalize('NFD', txt_str) if unicodedata.category(c) != 'Mn')
+
     try:
         if file_obj.name.endswith('.csv'):
-            df_raw = pd.read_csv(file_obj, header=None, dtype=object)
+            # sep=None com engine='python' detecta separador automaticamente (; ou ,)
+            df_raw = pd.read_csv(file_obj, header=None, dtype=object, sep=None, engine='python', encoding='latin-1')
         else:
             df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl', dtype=object)
     except Exception as e:
@@ -298,40 +308,64 @@ def ler_planilha_e_consolidar(file_obj):
         return {}
 
     idx_header = -1
-    # AJUSTE CIRÚRGICO: RAZAO alterado de 10 para 11 (Coluna L)
-    col_map = {'CODIGO': 0, 'DESCRICAO': 2, 'CONTA_BANCO': 8, 'RAZAO': 11}
+    # Padrão de segurança (fallback), mas o código tentará detectar dinamicamente
+    col_map = {'CODIGO': 0, 'DESCRICAO': 2, 'CONTA_BANCO': 8, 'RAZAO': 10}
     
-    for i, row in df_raw.head(20).iterrows():
-        row_str = " ".join([str(x) for x in row.values]).lower()
-        # AJUSTE CIRÚRGICO: busca por 'saldo contábil' para mapeamento dinâmico
-        if "conta" in row_str and "saldo contábil" in row_str:
+    # 1. Identificação Dinâmica das Colunas
+    for i, row in df_raw.head(30).iterrows():
+        # Cria uma string única da linha para verificar se é o cabeçalho
+        row_normalized = [normalizar(x) for x in row.values]
+        row_str = " ".join(row_normalized)
+        
+        # Verifica se a linha possui "conta" E ("saldo contabil" OU "saldo atual")
+        if "conta" in row_str and ("saldo contabil" in row_str or "saldo atual" in row_str):
             idx_header = i
-            for col_idx, val in enumerate(row.values):
-                val_str = str(val).lower().strip()
-                if val_str == "conta": col_map['CODIGO'] = col_idx
-                elif "descri" in val_str: col_map['DESCRICAO'] = col_idx
-                elif "banco" in val_str: col_map['CONTA_BANCO'] = col_idx
-                elif "saldo contábil" in val_str: col_map['RAZAO'] = col_idx
+            for col_idx, val in enumerate(row_normalized):
+                if not val: continue
+                
+                # Mapeamento Inteligente
+                if val == "conta": 
+                    col_map['CODIGO'] = col_idx
+                elif "descri" in val: 
+                    col_map['DESCRICAO'] = col_idx
+                elif "banco" in val: # Pega "Banco/Conta" ou "Banco"
+                    col_map['CONTA_BANCO'] = col_idx
+                elif "saldo contabil" in val or "saldo atual" in val: # Pega ambas as variações
+                    col_map['RAZAO'] = col_idx
             break
     
-    if idx_header == -1: idx_header = 7
+    if idx_header == -1:
+        st.warning("Cabeçalho padrão não detectado. Tentando processar com layout fixo (Novo Formato)...")
+        idx_header = 8 # Tentativa baseada no arquivo novo
+
     dados_consolidados = {} 
     grupo_atual = "MOVIMENTO"
 
+    # 2. Extração dos Dados
     for index, row in df_raw.iloc[idx_header+1:].iterrows():
-        linha_texto = " ".join([str(x) for x in row.values if pd.notna(x)]).lower()
+        # Verifica se o índice da coluna existe na linha (evita erro de index out of bounds)
+        if max(col_map.values()) >= len(row): continue
+
+        linha_texto = " ".join([normalizar(x) for x in row.values if pd.notna(x)])
+        
+        # Identificação de Grupos (Movimento vs Aplicação)
         if "conta movimento" in linha_texto: grupo_atual = "MOVIMENTO"; continue
-        elif "conta aplicação" in linha_texto or "conta aplicacao" in linha_texto: grupo_atual = "APLICACAO"; continue
+        elif "conta aplicacao" in linha_texto: grupo_atual = "APLICACAO"; continue
         
         try:
-            if max(col_map.values()) >= len(row): continue
             conta_raw = str(row[col_map['CONTA_BANCO']]).strip()
             codigo = str(row[col_map['CODIGO']]).strip()
             
+            # Pula linhas vazias ou cabeçalhos repetidos
+            if not codigo or codigo.lower() == 'nan' or not conta_raw or conta_raw.lower() == 'nan': continue
+            if "banco" in conta_raw.lower(): continue
+
+            # Extração dos números
             numeros_conta_match = limpar_conta_excel(conta_raw)
             numeros_conta_full = extrair_digitos(conta_raw)
 
-            if codigo.isdigit() and len(conta_raw) > 3 and "banco" not in conta_raw.lower():
+            # Validação básica: código numérico e conta válida
+            if codigo.isdigit() and len(conta_raw) > 3:
                 descricao = str(row[col_map['DESCRICAO']]).strip()
                 valor_final = limpar_numero(row[col_map['RAZAO']])
                 chave = (numeros_conta_full, grupo_atual)
@@ -354,6 +388,7 @@ def ler_planilha_e_consolidar(file_obj):
                         "UG": "N/D"
                     }
         except: continue
+        
     return dados_consolidados
 
 def processar_confronto(pasta_extratos, dados_dict):
