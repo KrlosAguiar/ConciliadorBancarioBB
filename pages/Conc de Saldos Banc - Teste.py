@@ -11,6 +11,7 @@ import shutil
 import tempfile
 import unicodedata
 from PIL import Image
+from concurrent.futures import ThreadPoolExecutor # <--- NOVA IMPORTAÇÃO PARA PARALELISMO
 
 # --- IMPORTAÇÕES PARA PDF (REPORTLAB) ---
 from reportlab.lib.pagesizes import A4, landscape
@@ -388,6 +389,13 @@ def ler_planilha_e_consolidar(file_obj):
         except: continue
     return dados_consolidados
 
+# --- FUNÇÃO HELPER PARA PARALELISMO ---
+def processar_um_pdf(pdf_item):
+    """Lê o saldo de um único PDF e retorna o dict atualizado"""
+    saldo, _ = encontrar_saldo_pdf(pdf_item['caminho'])
+    pdf_item['saldo'] = saldo
+    return pdf_item
+
 def processar_confronto(pasta_extratos, dados_dict):
     chaves_existentes = list(dados_dict.keys())
     arquivos_aplicacao = []
@@ -405,15 +413,25 @@ def processar_confronto(pasta_extratos, dados_dict):
                     'nome': file,
                     'ug': nome_ug,
                     'numeros': extrair_digitos(file),
-                    'processado': False
+                    'processado': False,
+                    'saldo': 0.0 # Placeholder
                 }
                 if "aplic" in file.lower(): arquivos_aplicacao.append(item)
                 else: arquivos_movimento.append(item)
 
+    # ==========================================================
+    # OTIMIZAÇÃO: LER PDFs EM PARALELO (MULTITHREADING)
+    # ==========================================================
+    # Isso acelera drasticamente a leitura pois não espera um acabar para começar o outro
+    with ThreadPoolExecutor() as executor:
+        # Processa todas as leituras de disco/PDF simultaneamente
+        arquivos_aplicacao = list(executor.map(processar_um_pdf, arquivos_aplicacao))
+        arquivos_movimento = list(executor.map(processar_um_pdf, arquivos_movimento))
+    
+    # A lógica de Match agora roda muito rápido pois os saldos já estão na memória
     def match_pdf(pdf_list, grupo_alvo):
         for pdf in pdf_list:
-            saldo_extrato, _ = encontrar_saldo_pdf(pdf['caminho'])
-            pdf['saldo'] = saldo_extrato
+            # saldo = pdf['saldo'] (Já processado no passo anterior)
             for (conta_excel, grupo_excel) in chaves_existentes:
                 if grupo_excel == grupo_alvo:
                     match_key = dados_dict[(conta_excel, grupo_excel)]['MATCH_KEY']
