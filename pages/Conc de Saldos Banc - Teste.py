@@ -11,7 +11,7 @@ import shutil
 import tempfile
 import unicodedata
 from PIL import Image
-from concurrent.futures import ThreadPoolExecutor, as_completed # Importação ajustada
+from concurrent.futures import ThreadPoolExecutor # <--- ÚNICA IMPORTAÇÃO NOVA
 
 # --- IMPORTAÇÕES PARA PDF (REPORTLAB) ---
 from reportlab.lib.pagesizes import A4, landscape
@@ -163,7 +163,7 @@ def identificar_banco(texto):
     return "DESCONHECIDO"
 
 # ==============================================================================
-# 2. MOTOR DE LEITURA DE PDF
+# 2. MOTOR DE LEITURA DE PDF (V35)
 # ==============================================================================
 
 def encontrar_saldo_pdf(caminho_pdf):
@@ -282,27 +282,30 @@ def encontrar_saldo_pdf(caminho_pdf):
                 if matches: saldo = limpar_numero(matches[-1])
 
             return saldo, banco
-    except Exception as e:
-        # Se der erro no PDFPLUMBER, retorna 0.0 e marca como Erro Leitura
-        return 0.0, f"Erro: {str(e)[:20]}"
+    except:
+        return 0.0, "Erro"
 
 # ==============================================================================
-# 3. LÓGICA DE CONSOLIDAÇÃO E CONFRONTO
+# 3. LÓGICA DE CONSOLIDAÇÃO E CONFRONTO (CORRIGIDA E ROBUSTA)
 # ==============================================================================
 
 def ler_planilha_e_consolidar(file_obj):
     import unicodedata
     
+    # Normalização para busca segura (ignora maiúsculas e acentos)
     def normalizar(txt):
         if pd.isna(txt): return ""
         txt_str = str(txt).lower().strip()
         return "".join(c for c in unicodedata.normalize('NFD', txt_str) if unicodedata.category(c) != 'Mn')
 
+    # 1. TENTATIVA DE LEITURA (EXCEL OU TEXTO/CSV)
     df_raw = pd.DataFrame()
     try:
+        # Tenta como Excel nativo
         df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl', dtype=object)
     except:
         try:
+            # Se falhar, tenta como CSV/HTML (comum em exportações de sistemas)
             file_obj.seek(0)
             df_raw = pd.read_csv(file_obj, header=None, sep=None, engine='python', encoding='latin-1', dtype=object)
         except Exception as e:
@@ -312,17 +315,26 @@ def ler_planilha_e_consolidar(file_obj):
     idx_header = -1
     col_map = {} 
     
+    # 2. BUSCA DO CABEÇALHO INTELIGENTE (Detecta formato Antigo ou Novo)
     for i, row in df_raw.head(30).iterrows():
+        # Cria linha normalizada
         row_norm = [normalizar(x) for x in row.values]
         row_str = " ".join(row_norm)
         
+        # Procura "Conta" E ("Saldo Atual" OU "Saldo Contábil")
         if "conta" in row_str and ("saldo atual" in row_str or "saldo contabil" in row_str):
             idx_header = i
+            
+            # Mapeamento Dinâmico das Colunas
             for col_idx, val in enumerate(row_norm):
-                if val == "conta": col_map['CODIGO'] = col_idx
-                elif "descri" in val: col_map['DESCRICAO'] = col_idx
-                elif "banco" in val: col_map['CONTA_BANCO'] = col_idx
-                elif "saldo atual" in val or "saldo contabil" in val: col_map['RAZAO'] = col_idx
+                if val == "conta": 
+                    col_map['CODIGO'] = col_idx
+                elif "descri" in val: 
+                    col_map['DESCRICAO'] = col_idx
+                elif "banco" in val: 
+                    col_map['CONTA_BANCO'] = col_idx
+                elif "saldo atual" in val or "saldo contabil" in val:
+                    col_map['RAZAO'] = col_idx
             break
             
     if idx_header == -1 or not col_map:
@@ -333,7 +345,9 @@ def ler_planilha_e_consolidar(file_obj):
     grupo_atual = "MOVIMENTO"
 
     for index, row in df_raw.iloc[idx_header+1:].iterrows():
+        # Verifica se o índice da coluna existe na linha atual
         if max(col_map.values()) >= len(row): continue
+
         linha_texto = " ".join([normalizar(x) for x in row.values if pd.notna(x)])
         
         if "conta movimento" in linha_texto: grupo_atual = "MOVIMENTO"; continue
@@ -343,8 +357,9 @@ def ler_planilha_e_consolidar(file_obj):
             conta_raw = str(row[col_map['CONTA_BANCO']]).strip()
             codigo = str(row[col_map['CODIGO']]).strip()
             
+            # Filtros de validação da linha
             if not codigo or codigo.lower() == 'nan' or not conta_raw or conta_raw.lower() == 'nan': continue
-            if "banco" in conta_raw.lower(): continue
+            if "banco" in conta_raw.lower(): continue # Evita ler repetição de cabeçalho
 
             numeros_conta_match = limpar_conta_excel(conta_raw)
             numeros_conta_full = extrair_digitos(conta_raw)
@@ -374,28 +389,21 @@ def ler_planilha_e_consolidar(file_obj):
         except: continue
     return dados_consolidados
 
-# --- FUNÇÃO HELPER PARA PARALELISMO SEGURO ---
-def processar_um_pdf_seguro(pdf_item):
+# --- FUNÇÃO HELPER PARA PARALELISMO (NOVA) ---
+def processar_pdf_individual(pdf_item):
     """
-    Função blindada: Tenta ler o PDF. Se falhar, captura o erro e retorna o item 
-    com saldo zero, evitando travar a thread.
+    Função auxiliar que processa um único PDF.
+    Serve para ser chamada pelo ThreadPoolExecutor.
     """
-    try:
-        saldo, msg_erro = encontrar_saldo_pdf(pdf_item['caminho'])
-        pdf_item['saldo'] = saldo
-        if msg_erro != identificar_banco(""): # Se retornou msg diferente de banco (ex: Erro)
-             # Opcional: Marcar no item que houve erro de leitura
-             pass
-    except Exception as e:
-        pdf_item['saldo'] = 0.0
-        # print(f"Erro thread: {e}") # Debug silencioso
+    saldo, _ = encontrar_saldo_pdf(pdf_item['caminho'])
+    pdf_item['saldo'] = saldo
     return pdf_item
 
 def processar_confronto(pasta_extratos, dados_dict):
     chaves_existentes = list(dados_dict.keys())
-    todos_arquivos = []
+    arquivos_aplicacao = []
+    arquivos_movimento = []
 
-    # 1. VARREDURA DE ARQUIVOS
     for root, dirs, files in os.walk(pasta_extratos):
         if "__MACOSX" in root: continue
         nome_ug = os.path.basename(root)
@@ -409,47 +417,27 @@ def processar_confronto(pasta_extratos, dados_dict):
                     'ug': nome_ug,
                     'numeros': extrair_digitos(file),
                     'processado': False,
-                    'saldo': 0.0,
-                    'tipo': "APLICACAO" if "aplic" in file.lower() else "MOVIMENTO"
+                    'saldo': 0.0 # Campo saldo inicializado
                 }
-                todos_arquivos.append(item)
+                if "aplic" in file.lower(): arquivos_aplicacao.append(item)
+                else: arquivos_movimento.append(item)
 
-    # 2. PROCESSAMENTO PARALELO COM BARRA DE PROGRESSO
-    total_arquivos = len(todos_arquivos)
-    arquivos_processados = []
+    # --- AQUI ESTÁ A OTIMIZAÇÃO DE PERFORMANCE (MAX WORKERS = 2 PARA SEGURANÇA) ---
+    # Usamos ThreadPoolExecutor para ler os arquivos em paralelo, mas limitamos a 2 por vez
+    # para evitar sobrecarga de memória que causa o travamento silencioso.
     
-    if total_arquivos > 0:
-        texto_progresso = st.empty()
-        barra_progresso = st.progress(0)
-        
-        # ATENÇÃO: max_workers=4 é um limite seguro para não estourar memória com PDFs
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            # Submete todas as tarefas
-            futures = [executor.submit(processar_um_pdf_seguro, item) for item in todos_arquivos]
-            
-            count = 0
-            for future in as_completed(futures):
-                try:
-                    res = future.result()
-                    arquivos_processados.append(res)
-                except Exception as e:
-                    st.warning(f"Erro fatal em um arquivo: {e}")
-                
-                count += 1
-                percentual = min(count / total_arquivos, 1.0)
-                barra_progresso.progress(percentual)
-                texto_progresso.text(f"Lendo extratos... {count}/{total_arquivos}")
-        
-        texto_progresso.empty()
-        barra_progresso.empty()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        # Processa as listas em paralelo
+        arquivos_aplicacao = list(executor.map(processar_pdf_individual, arquivos_aplicacao))
+        arquivos_movimento = list(executor.map(processar_pdf_individual, arquivos_movimento))
 
-    # Separa novamente para lógica de match
-    arquivos_aplicacao = [x for x in arquivos_processados if x['tipo'] == 'APLICACAO']
-    arquivos_movimento = [x for x in arquivos_processados if x['tipo'] == 'MOVIMENTO']
-    
-    # 3. LÓGICA DE MATCH (RÁPIDA, EM MEMÓRIA)
+    # --- FIM DA OTIMIZAÇÃO ---
+
     def match_pdf(pdf_list, grupo_alvo):
         for pdf in pdf_list:
+            # Não chamamos mais encontrar_saldo_pdf aqui, pois já foi chamado no paralelo
+            # saldo_extrato, _ = encontrar_saldo_pdf(pdf['caminho']) <--- REMOVIDO
+            
             for (conta_excel, grupo_excel) in chaves_existentes:
                 if grupo_excel == grupo_alvo:
                     match_key = dados_dict[(conta_excel, grupo_excel)]['MATCH_KEY']
@@ -464,10 +452,10 @@ def processar_confronto(pasta_extratos, dados_dict):
     match_pdf(arquivos_aplicacao, "APLICACAO")
     match_pdf(arquivos_movimento, "MOVIMENTO")
 
-    # REPESCAGEM
-    for pdf in arquivos_processados:
+    # REPESCAGEM RIGIDA
+    for pdf in arquivos_aplicacao + arquivos_movimento:
         if not pdf['processado']:
-            grupo_pdf = pdf['tipo']
+            grupo_pdf = "APLICACAO" if "aplic" in pdf['nome'].lower() else "MOVIMENTO"
             for (conta_excel, grupo_excel) in chaves_existentes:
                 if grupo_excel == grupo_pdf and not dados_dict[(conta_excel, grupo_excel)]['TEM_PDF']:
                     match_key = dados_dict[(conta_excel, grupo_excel)]['MATCH_KEY']
@@ -484,18 +472,19 @@ def processar_confronto(pasta_extratos, dados_dict):
         dados['DIFERENÇA'] = round(dados['RAZÃO'] - dados['EXTRATO'], 2)
         lista_final.append(dados)
     
-    for pdf in arquivos_processados:
+    for pdf in arquivos_aplicacao + arquivos_movimento:
         if not pdf['processado']:
+            grupo_pdf = "APLICACAO" if "aplic" in pdf['nome'].lower() else "MOVIMENTO"
             lista_final.append({
                 "UG": pdf['ug'], "CÓDIGO": "N/A", "DESCRIÇÃO": "PDF sem conta no Excel",
-                "CONTA": pdf['nome'], "RAZÃO": 0.0, "GRUPO": pdf['tipo'],
+                "CONTA": pdf['nome'], "RAZÃO": 0.0, "GRUPO": grupo_pdf,
                 "EXTRATO": pdf['saldo'], "DIFERENÇA": round(0.0 - pdf['saldo'], 2), "ARQUIVO_ORIGEM": pdf['nome']
             })
 
     return pd.DataFrame(lista_final)
 
 # ==============================================================================
-# 4. FUNÇÕES DE GERAÇÃO DE RELATÓRIOS
+# 4. FUNÇÕES DE GERAÇÃO DE RELATÓRIOS (EXCEL E PDF)
 # ==============================================================================
 
 def aplicar_estilo_excel(ws, wb, df, start_row, cols):
@@ -523,15 +512,18 @@ def aplicar_estilo_excel(ws, wb, df, start_row, cols):
 
 def gerar_pdf_conciliacao(df_final):
     buffer = io.BytesIO()
+    # Usa paisagem (landscape) para caber melhor as colunas
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=10*mm, leftMargin=10*mm, topMargin=15*mm, bottomMargin=15*mm)
     story = []
     styles = getSampleStyleSheet()
     title_style = styles["Title"]
-    title_style.alignment = 1
+    title_style.alignment = 1 # Centralizado
 
+    # --- TÍTULO PRINCIPAL ---
     story.append(Paragraph("Relatório de Conciliação de Saldos Bancários", title_style))
     story.append(Spacer(1, 10*mm))
 
+    # --- SEÇÃO DE CARDS (RESUMO POR UG) ---
     st_card_title = ParagraphStyle(name='CardTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, alignment=1, textColor=colors.darkgray)
     st_card_value = ParagraphStyle(name='CardValue', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=16, alignment=1, spaceBefore=4, spaceAfter=4)
     st_card_label = ParagraphStyle(name='CardLabel', parent=styles['Normal'], fontName='Helvetica', fontSize=8, alignment=1, textColor=colors.gray)
@@ -543,15 +535,18 @@ def gerar_pdf_conciliacao(df_final):
     for i, ug in enumerate(ugs_unicas):
         df_ug = df_final[df_final['UG'] == ug]
         pendencias = len(df_ug[abs(df_ug['DIFERENÇA']) > 0.01])
+        
         cor_valor = colors.red if pendencias > 0 else colors.green
         cor_borda = colors.red if pendencias > 0 else colors.green
         
+        # Cria uma tabela interna para o conteúdo do card
         sub_data = [
             [Paragraph(ug, st_card_title)],
             [Paragraph(str(pendencias), ParagraphStyle(name='V', parent=st_card_value, textColor=cor_valor))],
             [Paragraph("PENDÊNCIAS", st_card_label)]
         ]
         sub_table = Table(sub_data, colWidths=[48*mm])
+        # Estilo do card: Borda esquerda grossa e colorida, resto cinza fino
         sub_table.setStyle(TableStyle([
             ('BOX', (0,0), (-1,-1), 0.5, colors.lightgrey),
             ('LINEBEFORE', (0,0), (0,-1), 6, cor_borda),
@@ -561,35 +556,43 @@ def gerar_pdf_conciliacao(df_final):
         ]))
         row_cards.append(sub_table)
 
+        # Agrupa em linhas de 5 cards para o PDF paisagem
         if len(row_cards) == 5 or i == len(ugs_unicas) - 1:
+            # Preenche com células vazias se a última linha tiver menos de 5
             while len(row_cards) < 5: row_cards.append("") 
             card_data_matrix.append(row_cards)
             row_cards = []
 
     if card_data_matrix:
+        # Tabela contêiner para os cards
         t_cards = Table(card_data_matrix, colWidths=[50*mm]*5, hAlign='CENTER')
         t_cards.setStyle(TableStyle([
             ('VALIGN', (0,0), (-1,-1), 'TOP'),
             ('LEFTPADDING', (0,0), (-1,-1), 5),
             ('RIGHTPADDING', (0,0), (-1,-1), 5),
             ('TOPPADDING', (0,0), (-1,-1), 5),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 15), 
+            ('BOTTOMPADDING', (0,0), (-1,-1), 15), # Espaço após cada linha de cards
         ]))
         story.append(t_cards)
         story.append(Spacer(1, 5*mm))
 
+    # --- FUNÇÃO PARA GERAR TABELAS DE DADOS ---
     def add_data_table(df_part, titulo_secao):
         if df_part.empty: return
+        
+        # Cabeçalho da Seção (Fundo Preto, Texto Branco)
         header_style = ParagraphStyle(name='SectionHeader', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, alignment=0, textColor=colors.white, backColor=colors.black, padding=8, borderPadding=6)
         story.append(KeepTogether(Paragraph(titulo_secao.upper(), header_style)))
 
+        # Dados da Tabela
         cols_pdf = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA"]
         data = [cols_pdf]
+        
         ts = [
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
             ('ALIGN', (0,0), (-1,0), 'CENTER'),
-            ('ALIGN', (4,1), (-1,-1), 'RIGHT'),
+            ('ALIGN', (4,1), (-1,-1), 'RIGHT'), # Alinha valores à direita
             ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
             ('FONTSIZE', (0,0), (-1,-1), 8),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
@@ -598,26 +601,36 @@ def gerar_pdf_conciliacao(df_final):
         for i, row in df_part.iterrows():
             dif = row['DIFERENÇA']
             row_data = [
-                str(row['UG']), str(row['CÓDIGO']),
-                Paragraph(str(row['DESCRIÇÃO']), ParagraphStyle(name='DescTiny', fontSize=7)),
-                str(row['CONTA']), formatar_moeda(row['RAZÃO']),
-                formatar_moeda(row['EXTRATO']), formatar_moeda(dif)
+                str(row['UG']),
+                str(row['CÓDIGO']),
+                Paragraph(str(row['DESCRIÇÃO']), ParagraphStyle(name='DescTiny', fontSize=7)), # Descrição menor
+                str(row['CONTA']),
+                formatar_moeda(row['RAZÃO']),
+                formatar_moeda(row['EXTRATO']),
+                formatar_moeda(dif)
             ]
             data.append(row_data)
+            
+            # Destaca diferença em vermelho
             if abs(dif) > 0.01:
                 ts.append(('TEXTCOLOR', (6, i+1), (6, i+1), colors.red))
                 ts.append(('FONTNAME', (6, i+1), (6, i+1), 'Helvetica-Bold'))
 
+        # Larguras das colunas para A4 Paisagem (~277mm úteis)
         col_widths = [35*mm, 18*mm, 85*mm, 35*mm, 35*mm, 35*mm, 35*mm]
         t_data = Table(data, colWidths=col_widths, repeatRows=1)
         t_data.setStyle(TableStyle(ts))
         story.append(t_data)
         story.append(Spacer(1, 10*mm))
 
+    # Divide os dados
     df_app = df_final[df_final['GRUPO'] == 'APLICACAO'].copy()
     df_mov = df_final[df_final['GRUPO'] == 'MOVIMENTO'].copy()
+
+    # Adiciona as tabelas ao PDF
     add_data_table(df_app, "Contas Aplicação")
     add_data_table(df_mov, "Contas Movimento")
+
     doc.build(story)
     return buffer.getvalue()
 
@@ -638,124 +651,168 @@ with c2:
 
 if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width=True):
     if up_extratos and up_planilha:
-        
-        # IMPORTANTE: st.spinner removido para usar barra de progresso customizada
-        temp_dir = tempfile.mkdtemp()
-        try:
-            path_zip = os.path.join(temp_dir, up_extratos.name)
-            with open(path_zip, "wb") as f:
-                f.write(up_extratos.getbuffer())
+        with st.spinner("Processando..."):
             
+            temp_dir = tempfile.mkdtemp()
             try:
-                if up_extratos.name.lower().endswith('.rar'):
-                    with rarfile.RarFile(path_zip, 'r') as r: r.extractall(temp_dir)
+                # --- Preparação ---
+                path_zip = os.path.join(temp_dir, up_extratos.name)
+                with open(path_zip, "wb") as f:
+                    f.write(up_extratos.getbuffer())
+                
+                try:
+                    if up_extratos.name.lower().endswith('.rar'):
+                        with rarfile.RarFile(path_zip, 'r') as r: r.extractall(temp_dir)
+                    else:
+                        with zipfile.ZipFile(path_zip, 'r') as z: z.extractall(temp_dir)
+                except Exception as e:
+                    st.error(f"Erro ao descompactar: {e}. Verifique se o arquivo não está corrompido.")
+                    shutil.rmtree(temp_dir)
+                    st.stop()
+
+                # --- Leitura da Planilha ---
+                dados_excel = ler_planilha_e_consolidar(up_planilha)
+                if not dados_excel:
+                    # st.error já foi chamado dentro da função se falhar
+                    shutil.rmtree(temp_dir)
+                    st.stop()
+
+                # --- Processamento ---
+                df_final = processar_confronto(temp_dir, dados_excel)
+
+                if not df_final.empty:
+                    # Ordenação e Limpeza
+                    df_final['is_nd'] = df_final['UG'] == 'N/D'
+                    df_final = df_final.sort_values(by=['is_nd', 'UG', 'CÓDIGO']).drop(columns=['is_nd'])
+
+                    cols_view = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA", "ARQUIVO_ORIGEM"]
+                    cols_validas = [c for c in cols_view if c in df_final.columns]
+                    
+                    # CORREÇÃO: df_view é apenas para visualização. df_final (com GRUPO) é usado para downloads.
+                    df_view = df_final[cols_validas].copy()
+
+                    # ==========================================================
+                    # EXIBIÇÃO DE CARDS EM TELA
+                    # ==========================================================
+                    st.markdown("### Resumo de Pendências por UG")
+                    
+                    ugs_unicas = sorted(df_view['UG'].unique())
+                    
+                    for i in range(0, len(ugs_unicas), 4):
+                        cols = st.columns(4)
+                        for j in range(4):
+                            if i + j < len(ugs_unicas):
+                                ug_atual = ugs_unicas[i+j]
+                                df_ug = df_view[df_view['UG'] == ug_atual]
+                                pendencias = len(df_ug[abs(df_ug['DIFERENÇA']) > 0.01])
+                                
+                                # Usa classe base + classe de cor da borda
+                                classe_cor = "metric-card-green" if pendencias == 0 else "metric-card-red"
+                                cor_texto = "#28a745" if pendencias == 0 else "#ff4b4b"
+                                
+                                html_card = f"""
+                                <div class="metric-card-base {classe_cor}">
+                                    <div class="metric-ug-title" title="{ug_atual}">{ug_atual}</div>
+                                    <div class="metric-value" style="color: {cor_texto};">{pendencias}</div>
+                                    <div class="metric-label">Pendências</div>
+                                </div>
+                                """
+                                with cols[j]:
+                                    st.markdown(html_card, unsafe_allow_html=True)
+
+                    st.markdown("---")
+
+                    # ==========================================================
+                    # TABELA HTML EM TELA (Com Coluna Arquivo Origem)
+                    # ==========================================================
+                    # ATENÇÃO: Usando df_final para filtrar por GRUPO corretamente
+                    df_app_view = df_view[df_final['GRUPO'] == 'APLICACAO']
+                    df_mov_view = df_view[df_final['GRUPO'] == 'MOVIMENTO']
+                    
+                    def gerar_tabela_html(df_input, titulo):
+                        if df_input.empty: return ""
+                        # Título com fundo preto e texto branco
+                        html = f"<h4 class='section-title'>{titulo.upper()}</h4>"
+                        html += "<div class='preview-table-container'>"
+                        html += "<table class='preview-table'>"
+                        # Adicionada coluna ARQUIVO ORIGEM no cabeçalho
+                        html += "<thead><tr><th>UG</th><th>CÓDIGO</th><th>DESCRIÇÃO</th><th>CONTA</th><th>RAZÃO</th><th>EXTRATO</th><th>DIFERENÇA</th><th>ARQUIVO ORIGEM</th></tr></thead><tbody>"
+                        
+                        for _, row in df_input.iterrows():
+                            dif = row['DIFERENÇA']
+                            style_dif = "color: red; font-weight: bold;" if abs(dif) > 0.01 else "color: black;"
+                            html += "<tr>"
+                            html += f"<td>{row['UG']}</td><td>{row['CÓDIGO']}</td><td style='text-align: left;'>{row['DESCRIÇÃO']}</td><td>{row['CONTA']}</td>"
+                            html += f"<td style='text-align: right;'>{formatar_moeda(row['RAZÃO'])}</td><td style='text-align: right;'>{formatar_moeda(row['EXTRATO'])}</td>"
+                            html += f"<td style='text-align: right; {style_dif}'>{formatar_moeda(dif)}</td>"
+                            # Adicionada coluna ARQUIVO ORIGEM na linha
+                            html += f"<td style='font-size: 11px; font-style: italic; color: #555;'>{row['ARQUIVO_ORIGEM']}</td></tr>"
+                        html += "</tbody></table></div><br>"
+                        return html
+
+                    st.markdown(gerar_tabela_html(df_app_view, "Contas Aplicação"), unsafe_allow_html=True)
+                    st.markdown(gerar_tabela_html(df_mov_view, "Contas Movimento"), unsafe_allow_html=True)
+
+                    # ==========================================================
+                    # GERAÇÃO DOS ARQUIVOS PARA DOWNLOAD (Excel e PDF)
+                    # ==========================================================
+                    
+                    # Filtrando do df_final (que TEM a coluna GRUPO)
+                    df_app_final = df_final[df_final['GRUPO'] == 'APLICACAO']
+                    df_mov_final = df_final[df_final['GRUPO'] == 'MOVIMENTO']
+
+                    # 1. Excel (Mantém lógica original mas com colunas filtradas na escrita)
+                    output_excel = io.BytesIO()
+                    with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
+                        wb = writer.book
+                        ws = wb.add_worksheet('Conciliacao')
+                        writer.sheets['Conciliacao'] = ws
+                        row = 0
+                        if not df_app_final.empty:
+                            ws.write(row, 0, "--- CONTAS APLICAÇÃO ---", wb.add_format({'bold':True, 'font_color':'blue'}))
+                            row+=1
+                            # Exporta apenas as colunas visuais
+                            df_app_final[cols_validas].to_excel(writer, sheet_name='Conciliacao', startrow=row, index=False)
+                            aplicar_estilo_excel(ws, wb, df_app_final[cols_validas], row, cols_validas)
+                            row += len(df_app_final) + 2
+                        row += 1
+                        if not df_mov_final.empty:
+                            ws.write(row, 0, "--- CONTAS MOVIMENTO ---", wb.add_format({'bold':True, 'font_color':'blue'}))
+                            row+=1
+                            df_mov_final[cols_validas].to_excel(writer, sheet_name='Conciliacao', startrow=row, index=False)
+                            aplicar_estilo_excel(ws, wb, df_mov_final[cols_validas], row, cols_validas)
+                    output_excel.seek(0)
+
+                    # 2. PDF (Usa df_final completo para ter acesso ao GRUPO dentro da função)
+                    pdf_bytes = gerar_pdf_conciliacao(df_final)
+
+                    st.success("Processamento concluído com sucesso!")
+
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        st.download_button(
+                            label="BAIXAR RELATÓRIO EM EXCEL",
+                            data=output_excel,
+                            file_name="Relatorio_Conciliacao_Saldos.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                    with col_d2:
+                         st.download_button(
+                            label="BAIXAR RELATÓRIO EM PDF",
+                            data=pdf_bytes,
+                            file_name="Relatorio_Conciliacao_Saldos.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+
                 else:
-                    with zipfile.ZipFile(path_zip, 'r') as z: z.extractall(temp_dir)
+                    st.warning("O processamento não gerou dados. Verifique os arquivos.")
+            
             except Exception as e:
-                st.error(f"Erro ao descompactar: {e}.")
-                shutil.rmtree(temp_dir)
-                st.stop()
-
-            dados_excel = ler_planilha_e_consolidar(up_planilha)
-            if not dados_excel:
-                shutil.rmtree(temp_dir)
-                st.stop()
-
-            # Processamento (com barra de progresso interna)
-            df_final = processar_confronto(temp_dir, dados_excel)
-
-            if not df_final.empty:
-                df_final['is_nd'] = df_final['UG'] == 'N/D'
-                df_final = df_final.sort_values(by=['is_nd', 'UG', 'CÓDIGO']).drop(columns=['is_nd'])
-
-                cols_view = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA", "ARQUIVO_ORIGEM"]
-                cols_validas = [c for c in cols_view if c in df_final.columns]
-                df_view = df_final[cols_validas].copy()
-
-                st.markdown("### Resumo de Pendências por UG")
-                ugs_unicas = sorted(df_view['UG'].unique())
-                
-                for i in range(0, len(ugs_unicas), 4):
-                    cols = st.columns(4)
-                    for j in range(4):
-                        if i + j < len(ugs_unicas):
-                            ug_atual = ugs_unicas[i+j]
-                            df_ug = df_view[df_view['UG'] == ug_atual]
-                            pendencias = len(df_ug[abs(df_ug['DIFERENÇA']) > 0.01])
-                            classe_cor = "metric-card-green" if pendencias == 0 else "metric-card-red"
-                            cor_texto = "#28a745" if pendencias == 0 else "#ff4b4b"
-                            
-                            html_card = f"""
-                            <div class="metric-card-base {classe_cor}">
-                                <div class="metric-ug-title" title="{ug_atual}">{ug_atual}</div>
-                                <div class="metric-value" style="color: {cor_texto};">{pendencias}</div>
-                                <div class="metric-label">Pendências</div>
-                            </div>
-                            """
-                            with cols[j]: st.markdown(html_card, unsafe_allow_html=True)
-
-                st.markdown("---")
-
-                df_app_view = df_view[df_final['GRUPO'] == 'APLICACAO']
-                df_mov_view = df_view[df_final['GRUPO'] == 'MOVIMENTO']
-                
-                def gerar_tabela_html(df_input, titulo):
-                    if df_input.empty: return ""
-                    html = f"<h4 class='section-title'>{titulo.upper()}</h4>"
-                    html += "<div class='preview-table-container'><table class='preview-table'>"
-                    html += "<thead><tr><th>UG</th><th>CÓDIGO</th><th>DESCRIÇÃO</th><th>CONTA</th><th>RAZÃO</th><th>EXTRATO</th><th>DIFERENÇA</th><th>ARQUIVO ORIGEM</th></tr></thead><tbody>"
-                    for _, row in df_input.iterrows():
-                        dif = row['DIFERENÇA']
-                        style_dif = "color: red; font-weight: bold;" if abs(dif) > 0.01 else "color: black;"
-                        html += "<tr>"
-                        html += f"<td>{row['UG']}</td><td>{row['CÓDIGO']}</td><td style='text-align: left;'>{row['DESCRIÇÃO']}</td><td>{row['CONTA']}</td>"
-                        html += f"<td style='text-align: right;'>{formatar_moeda(row['RAZÃO'])}</td><td style='text-align: right;'>{formatar_moeda(row['EXTRATO'])}</td>"
-                        html += f"<td style='text-align: right; {style_dif}'>{formatar_moeda(dif)}</td>"
-                        html += f"<td style='font-size: 11px; font-style: italic; color: #555;'>{row['ARQUIVO_ORIGEM']}</td></tr>"
-                    html += "</tbody></table></div><br>"
-                    return html
-
-                st.markdown(gerar_tabela_html(df_app_view, "Contas Aplicação"), unsafe_allow_html=True)
-                st.markdown(gerar_tabela_html(df_mov_view, "Contas Movimento"), unsafe_allow_html=True)
-
-                df_app_final = df_final[df_final['GRUPO'] == 'APLICACAO']
-                df_mov_final = df_final[df_final['GRUPO'] == 'MOVIMENTO']
-
-                output_excel = io.BytesIO()
-                with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
-                    wb = writer.book
-                    ws = wb.add_worksheet('Conciliacao')
-                    writer.sheets['Conciliacao'] = ws
-                    row = 0
-                    if not df_app_final.empty:
-                        ws.write(row, 0, "--- CONTAS APLICAÇÃO ---", wb.add_format({'bold':True, 'font_color':'blue'}))
-                        row+=1
-                        df_app_final[cols_validas].to_excel(writer, sheet_name='Conciliacao', startrow=row, index=False)
-                        aplicar_estilo_excel(ws, wb, df_app_final[cols_validas], row, cols_validas)
-                        row += len(df_app_final) + 2
-                    row += 1
-                    if not df_mov_final.empty:
-                        ws.write(row, 0, "--- CONTAS MOVIMENTO ---", wb.add_format({'bold':True, 'font_color':'blue'}))
-                        row+=1
-                        df_mov_final[cols_validas].to_excel(writer, sheet_name='Conciliacao', startrow=row, index=False)
-                        aplicar_estilo_excel(ws, wb, df_mov_final[cols_validas], row, cols_validas)
-                output_excel.seek(0)
-
-                pdf_bytes = gerar_pdf_conciliacao(df_final)
-
-                st.success("Processamento concluído com sucesso!")
-
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    st.download_button("BAIXAR RELATÓRIO EM EXCEL", output_excel, "Relatorio_Conciliacao.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-                with col_d2:
-                        st.download_button("BAIXAR RELATÓRIO EM PDF", pdf_bytes, "Relatorio_Conciliacao.pdf", "application/pdf", use_container_width=True)
-            else:
-                st.warning("O processamento não gerou dados. Verifique os arquivos.")
-        
-        except Exception as e:
-            st.error(f"Erro fatal: {e}")
-        finally:
-            if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+                st.error(f"Erro fatal: {e}")
+            finally:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
     else:
         st.warning("⚠️ Selecione o arquivo ZIP/RAR e a Planilha Excel primeiro.")
