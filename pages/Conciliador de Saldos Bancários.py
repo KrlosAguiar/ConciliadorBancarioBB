@@ -360,12 +360,6 @@ def processar_pdf_worker(item):
     return item
 
 def processar_confronto(pasta_extratos, dados_dict):
-    # ==========================================================================
-    # CORREÇÃO CRÍTICA NA LÓGICA DE MATCH
-    # ==========================================================================
-    # Ordenamos as chaves por comprimento do MATCH_KEY (decrescente).
-    # Isso garante que contas longas (ex: 170021) sejam verificadas ANTES 
-    # de contas curtas (ex: 170). Evita que '170' roube o PDF de '170021'.
     chaves_existentes = sorted(
         list(dados_dict.keys()), 
         key=lambda k: len(dados_dict[k]['MATCH_KEY']), 
@@ -543,7 +537,8 @@ def gerar_pdf_conciliacao(df_final):
         header_style = ParagraphStyle(name='SectionHeader', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, alignment=0, textColor=colors.white, backColor=colors.black, padding=8, borderPadding=6)
         story.append(KeepTogether(Paragraph(titulo_secao.upper(), header_style)))
 
-        cols_pdf = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA"]
+        # ADICIONADO COLUNA "ARQUIVO" NO CABEÇALHO
+        cols_pdf = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA", "ARQUIVO"]
         data = [cols_pdf]
         
         ts = [
@@ -565,15 +560,19 @@ def gerar_pdf_conciliacao(df_final):
                 str(row['CONTA']),
                 formatar_moeda(row['RAZÃO']),
                 formatar_moeda(row['EXTRATO']),
-                formatar_moeda(dif)
+                formatar_moeda(dif),
+                # ADICIONADO VALOR DO ARQUIVO ORIGEM
+                Paragraph(str(row.get('ARQUIVO_ORIGEM', '')), ParagraphStyle(name='DescTiny', fontSize=7))
             ]
             data.append(row_data)
             
+            # Ajuste de cor para a coluna DIFERENÇA (índice 6)
             if abs(dif) > 0.009:
                 ts.append(('TEXTCOLOR', (6, i+1), (6, i+1), colors.red))
                 ts.append(('FONTNAME', (6, i+1), (6, i+1), 'Helvetica-Bold'))
 
-        col_widths = [35*mm, 18*mm, 85*mm, 35*mm, 35*mm, 35*mm, 35*mm]
+        # LARGURAS REAJUSTADAS PARA CABER A NOVA COLUNA
+        col_widths = [20*mm, 15*mm, 60*mm, 28*mm, 27*mm, 27*mm, 27*mm, 65*mm]
         t_data = Table(data, colWidths=col_widths, repeatRows=1)
         t_data.setStyle(TableStyle(ts))
         story.append(t_data)
