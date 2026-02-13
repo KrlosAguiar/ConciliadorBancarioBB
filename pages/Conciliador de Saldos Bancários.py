@@ -36,7 +36,6 @@ except:
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
-    
     div.stButton > button {
         background-color: rgb(38, 39, 48) !important;
         color: white !important;
@@ -47,9 +46,6 @@ st.markdown("""
         transition: 0.3s;
     }
     div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
-    
-    .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
-    
     .metric-card-base {
         background-color: white !important;
         padding: 15px;
@@ -63,11 +59,9 @@ st.markdown("""
     }
     .metric-card-red { border-left: 8px solid #ff4b4b !important; }
     .metric-card-green { border-left: 8px solid #28a745 !important; }
-    
     .metric-ug-title { font-size: 14px; font-weight: bold; color: #555; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .metric-value { font-size: 26px; font-weight: bold; margin: 5px 0; }
     .metric-label { font-size: 11px; color: #777; text-transform: uppercase; }
-    
     .section-title {
         background-color: black !important;
         color: white !important;
@@ -77,14 +71,12 @@ st.markdown("""
         border-top-left-radius: 5px;
         border-top-right-radius: 5px;
     }
-
     .preview-table-container {
         border: 1px solid #000;
         border-top: none;
         margin-bottom: 20px;
         overflow-x: auto;
     }
-
     .preview-table {
         width: 100%;
         border-collapse: collapse;
@@ -117,7 +109,9 @@ st.markdown("""
 def formatar_moeda(valor):
     if pd.isna(valor): return "0,00"
     try:
-        valor_float = float(valor)
+        # Garante arredondamento antes de formatar
+        valor_float = round(float(valor), 2)
+        if abs(valor_float) < 0.01: valor_float = 0.00
     except: return "0,00"
     return f"{valor_float:,.2f}".replace(',', '_').replace('.', ',').replace('_', '.')
 
@@ -153,7 +147,7 @@ def identificar_banco(texto):
     return "DESCONHECIDO"
 
 # ==============================================================================
-# 2. MOTOR DE LEITURA DE PDF (V35)
+# 2. MOTOR DE LEITURA DE PDF
 # ==============================================================================
 
 def encontrar_saldo_pdf(caminho_pdf):
@@ -276,7 +270,7 @@ def encontrar_saldo_pdf(caminho_pdf):
         return 0.0, "Erro"
 
 # ==============================================================================
-# 3. LÓGICA DE CONSOLIDAÇÃO INTELIGENTE (SEM CONFUSÃO CSV/XLSX)
+# 3. LÓGICA DE CONSOLIDAÇÃO INTELIGENTE
 # ==============================================================================
 
 def ler_planilha_e_consolidar(file_obj):
@@ -284,18 +278,12 @@ def ler_planilha_e_consolidar(file_obj):
     
     def normalizar(txt):
         if pd.isna(txt): return ""
-        # Remove acentos e joga para minúsculo
         txt_str = str(txt).lower().strip()
         nfkd = unicodedata.normalize('NFKD', txt_str)
         return "".join([c for c in nfkd if not unicodedata.combining(c)])
 
-    # TENTA LER O ARQUIVO BASEADO NA EXTENSÃO CORRETA
     try:
-        if file_obj.name.lower().endswith('.csv'):
-            df_raw = pd.read_csv(file_obj, header=None, dtype=object, encoding='latin-1', sep=None, engine='python')
-        else:
-            # Se é .xlsx, força leitura como Excel
-            df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl', dtype=object)
+        df_raw = pd.read_excel(file_obj, header=None, engine='openpyxl', dtype=object)
     except Exception as e:
         st.error(f"Erro ao ler planilha: {e}")
         return {}
@@ -303,35 +291,25 @@ def ler_planilha_e_consolidar(file_obj):
     idx_header = -1
     col_map = {}
     
-    # BUSCA AUTOMÁTICA DO CABEÇALHO (Para lidar com colunas que mudam de lugar)
     for i, row in df_raw.head(30).iterrows():
         row_str = " ".join([normalizar(x) for x in row.values])
-        
-        # Procura "Conta", "Banco" e "Saldo" na mesma linha
-        # Agora busca especificamente "SALDO CONTABIL" (sem acento)
-        if "conta" in row_str and ("saldo atual" in row_str or "saldo contabil" in row_str):
+        if "conta" in row_str and ("saldo" in row_str and "contabil" in row_str):
             idx_header = i
-            
             for col_idx, val in enumerate(row.values):
                 val_str = normalizar(val)
                 if val_str == "conta": 
                     col_map['CODIGO'] = col_idx
                 elif "descri" in val_str: 
                     col_map['DESCRICAO'] = col_idx
-                # Pega "Banco/Conta" ou apenas "Banco"
-                elif "banco" in val_str: 
+                elif "banco" in val_str and "conta" in val_str: 
                     col_map['CONTA_BANCO'] = col_idx
-                # Pega "Saldo Contábil" ou "Saldo Atual"
-                elif "saldo atual" in val_str or "saldo contabil" in val_str:
+                elif "saldo" in val_str and "contabil" in val_str:
                     col_map['RAZAO'] = col_idx
             break
             
-    # Se não achou dinamicamente, usa o padrão do seu arquivo
     if idx_header == -1 or not col_map:
-        # Fallback para tentar ler mesmo se o cabeçalho estiver estranho
-        # Padrão observado: Conta(0), Descrição(2), Banco/Conta(8), Saldo Contábil(12)
-        idx_header = 9 # Linha do cabeçalho observada
-        col_map = {'CODIGO': 0, 'DESCRICAO': 2, 'CONTA_BANCO': 8, 'RAZAO': 12}
+        idx_header = 9
+        col_map = {'CODIGO': 0, 'DESCRICAO': 2, 'CONTA_BANCO': 7, 'RAZAO': 11}
 
     dados_consolidados = {} 
     grupo_atual = "MOVIMENTO"
@@ -347,13 +325,11 @@ def ler_planilha_e_consolidar(file_obj):
             conta_raw = str(row[col_map['CONTA_BANCO']]).strip()
             codigo = str(row[col_map['CODIGO']]).strip()
             
-            # Limpa e valida
             if not codigo or codigo.lower() == 'nan' or "banco" in conta_raw.lower(): continue
 
             numeros_conta_match = limpar_conta_excel(conta_raw)
             numeros_conta_full = extrair_digitos(conta_raw)
 
-            # Valida se é uma linha de dados (código numérico e conta válida)
             if codigo.isdigit() and len(conta_raw) > 3:
                 descricao = str(row[col_map['DESCRICAO']]).strip()
                 valor_final = limpar_numero(row[col_map['RAZAO']])
@@ -379,9 +355,7 @@ def ler_planilha_e_consolidar(file_obj):
         except: continue
     return dados_consolidados
 
-# --- WORKER PARA LEITURA PARALELA SEGURA ---
 def processar_pdf_worker(item):
-    """Lê um PDF individualmente e retorna o item com saldo."""
     saldo, _ = encontrar_saldo_pdf(item['caminho'])
     item['saldo'] = saldo
     return item
@@ -391,7 +365,6 @@ def processar_confronto(pasta_extratos, dados_dict):
     arquivos_aplicacao = []
     arquivos_movimento = []
 
-    # 1. Varredura
     for root, dirs, files in os.walk(pasta_extratos):
         if "__MACOSX" in root: continue
         nome_ug = os.path.basename(root)
@@ -410,17 +383,13 @@ def processar_confronto(pasta_extratos, dados_dict):
                 if "aplic" in file.lower(): arquivos_aplicacao.append(item)
                 else: arquivos_movimento.append(item)
 
-    # 2. Leitura Paralela (Max Workers = 2 para não travar)
     all_files = arquivos_aplicacao + arquivos_movimento
-    
     if all_files:
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(processar_pdf_worker, all_files))
-        
         arquivos_aplicacao = results[:len(arquivos_aplicacao)]
         arquivos_movimento = results[len(arquivos_aplicacao):]
 
-    # 3. Match
     def match_pdf(pdf_list, grupo_alvo):
         for pdf in pdf_list:
             for (conta_excel, grupo_excel) in chaves_existentes:
@@ -437,7 +406,6 @@ def processar_confronto(pasta_extratos, dados_dict):
     match_pdf(arquivos_aplicacao, "APLICACAO")
     match_pdf(arquivos_movimento, "MOVIMENTO")
 
-    # Repescagem
     for pdf in arquivos_aplicacao + arquivos_movimento:
         if not pdf['processado']:
             grupo_pdf = "APLICACAO" if "aplic" in pdf['nome'].lower() else "MOVIMENTO"
@@ -454,16 +422,21 @@ def processar_confronto(pasta_extratos, dados_dict):
 
     lista_final = []
     for chave, dados in dados_dict.items():
-        dados['DIFERENÇA'] = round(dados['RAZÃO'] - dados['EXTRATO'], 2)
+        # Arredondamento rígido
+        diferenca = round(dados['RAZÃO'] - dados['EXTRATO'], 2)
+        if abs(diferenca) < 0.01: diferenca = 0.0
+        dados['DIFERENÇA'] = diferenca
         lista_final.append(dados)
     
     for pdf in arquivos_aplicacao + arquivos_movimento:
         if not pdf['processado']:
             grupo_pdf = "APLICACAO" if "aplic" in pdf['nome'].lower() else "MOVIMENTO"
+            diferenca = round(0.0 - pdf['saldo'], 2)
+            if abs(diferenca) < 0.01: diferenca = 0.0
             lista_final.append({
                 "UG": pdf['ug'], "CÓDIGO": "N/A", "DESCRIÇÃO": "PDF sem conta no Excel",
                 "CONTA": pdf['nome'], "RAZÃO": 0.0, "GRUPO": grupo_pdf,
-                "EXTRATO": pdf['saldo'], "DIFERENÇA": round(0.0 - pdf['saldo'], 2), "ARQUIVO_ORIGEM": pdf['nome']
+                "EXTRATO": pdf['saldo'], "DIFERENÇA": diferenca, "ARQUIVO_ORIGEM": pdf['nome']
             })
 
     return pd.DataFrame(lista_final)
@@ -483,6 +456,7 @@ def aplicar_estilo_excel(ws, wb, df, start_row, cols):
     try:
         idx_dif = cols.index("DIFERENÇA")
         letra = chr(65 + idx_dif) 
+        # Critério ajustado para > 0.009
         ws.conditional_format(f'{letra}{start_row+2}:{letra}{start_row+1+len(df)}', 
                               {'type': 'cell', 'criteria': 'not between', 'minimum': -0.009, 'maximum': 0.009, 'format': fmt_red})
     except: pass
@@ -516,7 +490,7 @@ def gerar_pdf_conciliacao(df_final):
 
     for i, ug in enumerate(ugs_unicas):
         df_ug = df_final[df_final['UG'] == ug]
-        pendencias = len(df_ug[abs(df_ug['DIFERENÇA']) > 0.01])
+        pendencias = len(df_ug[abs(df_ug['DIFERENÇA']) > 0.009])
         
         cor_valor = colors.red if pendencias > 0 else colors.green
         cor_borda = colors.red if pendencias > 0 else colors.green
@@ -572,7 +546,9 @@ def gerar_pdf_conciliacao(df_final):
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ]
 
-        for i, row in df_part.iterrows():
+        # CORREÇÃO: Usando enumerate para obter o índice visual da linha (i)
+        # para que o estilo (vermelho/negrito) seja aplicado na linha correta do PDF
+        for i, (idx, row) in enumerate(df_part.iterrows()):
             dif = row['DIFERENÇA']
             row_data = [
                 str(row['UG']),
@@ -585,7 +561,8 @@ def gerar_pdf_conciliacao(df_final):
             ]
             data.append(row_data)
             
-            if abs(dif) > 0.01:
+            # Ajuste de sensibilidade para 0.009 para não pegar 0.00
+            if abs(dif) > 0.009:
                 ts.append(('TEXTCOLOR', (6, i+1), (6, i+1), colors.red))
                 ts.append(('FONTNAME', (6, i+1), (6, i+1), 'Helvetica-Bold'))
 
@@ -643,7 +620,6 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                 # --- Leitura da Planilha ---
                 dados_excel = ler_planilha_e_consolidar(up_planilha)
                 if not dados_excel:
-                    st.error("Erro ao ler a planilha Excel. Verifique o formato.")
                     shutil.rmtree(temp_dir)
                     st.stop()
 
@@ -651,9 +627,14 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                 df_final = processar_confronto(temp_dir, dados_excel)
 
                 if not df_final.empty:
-                    # Ordenação e Limpeza
+                    # ORDENAÇÃO CORRIGIDA:
+                    # 1. UG (Alfabético)
+                    # 2. Tem Diferença (True primeiro, então False) -> Usamos sem_dif ascending
+                    # 3. Código (Alfabético)
                     df_final['is_nd'] = df_final['UG'] == 'N/D'
-                    df_final = df_final.sort_values(by=['is_nd', 'UG', 'CÓDIGO']).drop(columns=['is_nd'])
+                    df_final['sem_dif'] = abs(df_final['DIFERENÇA']) <= 0.009
+                    
+                    df_final = df_final.sort_values(by=['is_nd', 'UG', 'sem_dif', 'CÓDIGO']).drop(columns=['is_nd', 'sem_dif'])
 
                     cols_view = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA", "ARQUIVO_ORIGEM"]
                     cols_validas = [c for c in cols_view if c in df_final.columns]
@@ -673,7 +654,7 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                             if i + j < len(ugs_unicas):
                                 ug_atual = ugs_unicas[i+j]
                                 df_ug = df_view[df_view['UG'] == ug_atual]
-                                pendencias = len(df_ug[abs(df_ug['DIFERENÇA']) > 0.01])
+                                pendencias = len(df_ug[abs(df_ug['DIFERENÇA']) > 0.009])
                                 
                                 classe_cor = "metric-card-green" if pendencias == 0 else "metric-card-red"
                                 cor_texto = "#28a745" if pendencias == 0 else "#ff4b4b"
@@ -705,7 +686,7 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                         
                         for _, row in df_input.iterrows():
                             dif = row['DIFERENÇA']
-                            style_dif = "color: red; font-weight: bold;" if abs(dif) > 0.01 else "color: black;"
+                            style_dif = "color: red; font-weight: bold;" if abs(dif) > 0.009 else "color: black;"
                             html += "<tr>"
                             html += f"<td>{row['UG']}</td><td>{row['CÓDIGO']}</td><td style='text-align: left;'>{row['DESCRIÇÃO']}</td><td>{row['CONTA']}</td>"
                             html += f"<td style='text-align: right;'>{formatar_moeda(row['RAZÃO'])}</td><td style='text-align: right;'>{formatar_moeda(row['EXTRATO'])}</td>"
