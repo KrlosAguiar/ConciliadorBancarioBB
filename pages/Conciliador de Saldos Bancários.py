@@ -537,15 +537,20 @@ def gerar_pdf_conciliacao(df_final):
         header_style = ParagraphStyle(name='SectionHeader', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, alignment=0, textColor=colors.white, backColor=colors.black, padding=8, borderPadding=6)
         story.append(KeepTogether(Paragraph(titulo_secao.upper(), header_style)))
 
-        # ADICIONADO COLUNA "ARQUIVO" NO CABEÇALHO
         cols_pdf = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA", "ARQUIVO"]
         data = [cols_pdf]
         
+        # DEFINIÇÃO DE ESTILOS COM CENTRALIZAÇÃO DE UG E CÓDIGO
         ts = [
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-            ('ALIGN', (0,0), (-1,0), 'CENTER'),
-            ('ALIGN', (4,1), (-1,-1), 'RIGHT'),
+            ('ALIGN', (0,0), (-1,0), 'CENTER'), # Cabeçalho centralizado
+            
+            # --- ALINHAMENTOS DO CORPO ---
+            ('ALIGN', (0,1), (1,-1), 'CENTER'), # Colunas UG(0) e CÓDIGO(1) CENTRALIZADAS
+            ('ALIGN', (4,1), (6,-1), 'RIGHT'),  # Colunas de valores (4,5,6) à DIREITA
+            ('ALIGN', (7,1), (7,-1), 'LEFT'),   # Coluna ARQUIVO (7) à ESQUERDA
+            
             ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
             ('FONTSIZE', (0,0), (-1,-1), 8),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
@@ -561,18 +566,16 @@ def gerar_pdf_conciliacao(df_final):
                 formatar_moeda(row['RAZÃO']),
                 formatar_moeda(row['EXTRATO']),
                 formatar_moeda(dif),
-                # ADICIONADO VALOR DO ARQUIVO ORIGEM
                 Paragraph(str(row.get('ARQUIVO_ORIGEM', '')), ParagraphStyle(name='DescTiny', fontSize=7))
             ]
             data.append(row_data)
             
-            # Ajuste de cor para a coluna DIFERENÇA (índice 6)
             if abs(dif) > 0.009:
                 ts.append(('TEXTCOLOR', (6, i+1), (6, i+1), colors.red))
                 ts.append(('FONTNAME', (6, i+1), (6, i+1), 'Helvetica-Bold'))
 
-        # LARGURAS REAJUSTADAS PARA CABER A NOVA COLUNA
-        col_widths = [20*mm, 15*mm, 60*mm, 28*mm, 27*mm, 27*mm, 27*mm, 65*mm]
+        # LARGURAS REAJUSTADAS: ARQUIVO reduzido (32mm), DESCRIÇÃO aumentada (93mm)
+        col_widths = [20*mm, 15*mm, 93*mm, 28*mm, 27*mm, 27*mm, 27*mm, 32*mm]
         t_data = Table(data, colWidths=col_widths, repeatRows=1)
         t_data.setStyle(TableStyle(ts))
         story.append(t_data)
