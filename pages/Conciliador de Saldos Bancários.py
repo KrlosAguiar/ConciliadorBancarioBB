@@ -109,7 +109,6 @@ st.markdown("""
 def formatar_moeda(valor):
     if pd.isna(valor): return "0,00"
     try:
-        # Garante arredondamento antes de formatar
         valor_float = round(float(valor), 2)
         if abs(valor_float) < 0.01: valor_float = 0.00
     except: return "0,00"
@@ -422,7 +421,6 @@ def processar_confronto(pasta_extratos, dados_dict):
 
     lista_final = []
     for chave, dados in dados_dict.items():
-        # Arredondamento rígido
         diferenca = round(dados['RAZÃO'] - dados['EXTRATO'], 2)
         if abs(diferenca) < 0.01: diferenca = 0.0
         dados['DIFERENÇA'] = diferenca
@@ -456,7 +454,6 @@ def aplicar_estilo_excel(ws, wb, df, start_row, cols):
     try:
         idx_dif = cols.index("DIFERENÇA")
         letra = chr(65 + idx_dif) 
-        # Critério ajustado para > 0.009
         ws.conditional_format(f'{letra}{start_row+2}:{letra}{start_row+1+len(df)}', 
                               {'type': 'cell', 'criteria': 'not between', 'minimum': -0.009, 'maximum': 0.009, 'format': fmt_red})
     except: pass
@@ -546,8 +543,6 @@ def gerar_pdf_conciliacao(df_final):
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ]
 
-        # CORREÇÃO: Usando enumerate para obter o índice visual da linha (i)
-        # para que o estilo (vermelho/negrito) seja aplicado na linha correta do PDF
         for i, (idx, row) in enumerate(df_part.iterrows()):
             dif = row['DIFERENÇA']
             row_data = [
@@ -561,7 +556,6 @@ def gerar_pdf_conciliacao(df_final):
             ]
             data.append(row_data)
             
-            # Ajuste de sensibilidade para 0.009 para não pegar 0.00
             if abs(dif) > 0.009:
                 ts.append(('TEXTCOLOR', (6, i+1), (6, i+1), colors.red))
                 ts.append(('FONTNAME', (6, i+1), (6, i+1), 'Helvetica-Bold'))
@@ -627,14 +621,21 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                 df_final = processar_confronto(temp_dir, dados_excel)
 
                 if not df_final.empty:
-                    # ORDENAÇÃO CORRIGIDA:
-                    # 1. UG (Alfabético)
-                    # 2. Tem Diferença (True primeiro, então False) -> Usamos sem_dif ascending
-                    # 3. Código (Alfabético)
+                    # ==========================================================
+                    # LÓGICA DE ORDENAÇÃO ATUALIZADA (DIFERENÇA PRIMEIRO, CONTA)
+                    # ==========================================================
                     df_final['is_nd'] = df_final['UG'] == 'N/D'
-                    df_final['sem_dif'] = abs(df_final['DIFERENÇA']) <= 0.009
+                    # True se tiver diferença real (> 0.009)
+                    df_final['tem_diferenca'] = abs(df_final['DIFERENÇA']) > 0.009
                     
-                    df_final = df_final.sort_values(by=['is_nd', 'UG', 'sem_dif', 'CÓDIGO']).drop(columns=['is_nd', 'sem_dif'])
+                    # Ordenação:
+                    # 1. tem_diferenca (DESC para True vir antes) -> Todas as diferenças no topo
+                    # 2. UG (ASC para alfabético)
+                    # 3. CONTA (ASC) -> Substituindo Código
+                    df_final = df_final.sort_values(
+                        by=['tem_diferenca', 'UG', 'CONTA'], 
+                        ascending=[False, True, True]
+                    ).drop(columns=['is_nd', 'tem_diferenca'])
 
                     cols_view = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA", "ARQUIVO_ORIGEM"]
                     cols_validas = [c for c in cols_view if c in df_final.columns]
