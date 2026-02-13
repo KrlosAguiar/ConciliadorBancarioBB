@@ -468,7 +468,9 @@ def aplicar_estilo_excel(ws, wb, df, start_row, cols):
 
 def gerar_pdf_conciliacao(df_final):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=10*mm, leftMargin=10*mm, topMargin=15*mm, bottomMargin=15*mm)
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), 
+                            rightMargin=10*mm, leftMargin=10*mm, topMargin=15*mm, bottomMargin=15*mm,
+                            title="Relatorio_Conciliacao.pdf")
     story = []
     styles = getSampleStyleSheet()
     title_style = styles["Title"]
@@ -622,20 +624,24 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
 
                 if not df_final.empty:
                     # ==========================================================
-                    # LÓGICA DE ORDENAÇÃO ATUALIZADA (DIFERENÇA PRIMEIRO, CONTA)
+                    # LÓGICA DE ORDENAÇÃO CORRIGIDA 
                     # ==========================================================
-                    df_final['is_nd'] = df_final['UG'] == 'N/D'
-                    # True se tiver diferença real (> 0.009)
+                    
+                    # 1. Cria coluna auxiliar de UG para ordenação (N/D vira ZZZZZ)
+                    df_final['UG_Sort'] = df_final['UG'].apply(lambda x: 'ZZZZZ' if x == 'N/D' else x)
+                    
+                    # 2. Flag para Diferença (True se tiver diferença)
                     df_final['tem_diferenca'] = abs(df_final['DIFERENÇA']) > 0.009
                     
-                    # Ordenação:
-                    # 1. tem_diferenca (DESC para True vir antes) -> Todas as diferenças no topo
-                    # 2. UG (ASC para alfabético)
-                    # 3. CONTA (ASC) -> Substituindo Código
+                    # ORDENAÇÃO:
+                    # 1o: tem_diferenca DESC (True vem primeiro) -> Diferenças no topo
+                    # 2o: UG_Sort ASC (A-Z, mas N/D é ZZZZZ e vai pro fim)
+                    # 3o: CONTA ASC (Numérica crescente)
+                    
                     df_final = df_final.sort_values(
-                        by=['tem_diferenca', 'UG', 'CONTA'], 
+                        by=['tem_diferenca', 'UG_Sort', 'CONTA'], 
                         ascending=[False, True, True]
-                    ).drop(columns=['is_nd', 'tem_diferenca'])
+                    ).drop(columns=['UG_Sort', 'tem_diferenca'])
 
                     cols_view = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA", "ARQUIVO_ORIGEM"]
                     cols_validas = [c for c in cols_view if c in df_final.columns]
