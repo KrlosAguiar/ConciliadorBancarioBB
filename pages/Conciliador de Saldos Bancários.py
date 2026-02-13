@@ -360,7 +360,18 @@ def processar_pdf_worker(item):
     return item
 
 def processar_confronto(pasta_extratos, dados_dict):
-    chaves_existentes = list(dados_dict.keys())
+    # ==========================================================================
+    # CORREÇÃO CRÍTICA NA LÓGICA DE MATCH
+    # ==========================================================================
+    # Ordenamos as chaves por comprimento do MATCH_KEY (decrescente).
+    # Isso garante que contas longas (ex: 170021) sejam verificadas ANTES 
+    # de contas curtas (ex: 170). Evita que '170' roube o PDF de '170021'.
+    chaves_existentes = sorted(
+        list(dados_dict.keys()), 
+        key=lambda k: len(dados_dict[k]['MATCH_KEY']), 
+        reverse=True
+    )
+    
     arquivos_aplicacao = []
     arquivos_movimento = []
 
@@ -624,19 +635,10 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
 
                 if not df_final.empty:
                     # ==========================================================
-                    # LÓGICA DE ORDENAÇÃO CORRIGIDA 
+                    # LÓGICA DE ORDENAÇÃO
                     # ==========================================================
-                    
-                    # 1. Cria coluna auxiliar de UG para ordenação (N/D vira ZZZZZ)
                     df_final['UG_Sort'] = df_final['UG'].apply(lambda x: 'ZZZZZ' if x == 'N/D' else x)
-                    
-                    # 2. Flag para Diferença (True se tiver diferença)
                     df_final['tem_diferenca'] = abs(df_final['DIFERENÇA']) > 0.009
-                    
-                    # ORDENAÇÃO:
-                    # 1o: tem_diferenca DESC (True vem primeiro) -> Diferenças no topo
-                    # 2o: UG_Sort ASC (A-Z, mas N/D é ZZZZZ e vai pro fim)
-                    # 3o: CONTA ASC (Numérica crescente)
                     
                     df_final = df_final.sort_values(
                         by=['tem_diferenca', 'UG_Sort', 'CONTA'], 
