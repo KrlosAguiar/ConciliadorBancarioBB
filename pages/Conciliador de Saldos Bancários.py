@@ -488,7 +488,8 @@ def gerar_pdf_conciliacao(df_final):
     st_card_value = ParagraphStyle(name='CardValue', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=16, alignment=1, spaceBefore=4, spaceAfter=4)
     st_card_label = ParagraphStyle(name='CardLabel', parent=styles['Normal'], fontName='Helvetica', fontSize=8, alignment=1, textColor=colors.gray)
 
-    ugs_unicas = sorted(df_final['UG'].unique())
+    # ORDENAÇÃO DOS CARDS NO PDF (N/D NO FINAL)
+    ugs_unicas = sorted(df_final['UG'].unique(), key=lambda x: 'ZZZZZ' if x == 'N/D' else x)
     card_data_matrix = []
     row_cards = []
 
@@ -540,16 +541,15 @@ def gerar_pdf_conciliacao(df_final):
         cols_pdf = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA", "ARQUIVO"]
         data = [cols_pdf]
         
-        # DEFINIÇÃO DE ESTILOS COM CENTRALIZAÇÃO DE UG E CÓDIGO
         ts = [
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-            ('ALIGN', (0,0), (-1,0), 'CENTER'), # Cabeçalho centralizado
+            ('ALIGN', (0,0), (-1,0), 'CENTER'),
             
             # --- ALINHAMENTOS DO CORPO ---
-            ('ALIGN', (0,1), (1,-1), 'CENTER'), # Colunas UG(0) e CÓDIGO(1) CENTRALIZADAS
-            ('ALIGN', (4,1), (6,-1), 'RIGHT'),  # Colunas de valores (4,5,6) à DIREITA
-            ('ALIGN', (7,1), (7,-1), 'LEFT'),   # Coluna ARQUIVO (7) à ESQUERDA
+            ('ALIGN', (0,1), (1,-1), 'CENTER'),
+            ('ALIGN', (4,1), (6,-1), 'RIGHT'),
+            ('ALIGN', (7,1), (7,-1), 'LEFT'),
             
             ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
             ('FONTSIZE', (0,0), (-1,-1), 8),
@@ -574,7 +574,6 @@ def gerar_pdf_conciliacao(df_final):
                 ts.append(('TEXTCOLOR', (6, i+1), (6, i+1), colors.red))
                 ts.append(('FONTNAME', (6, i+1), (6, i+1), 'Helvetica-Bold'))
 
-        # LARGURAS REAJUSTADAS: ARQUIVO reduzido (32mm), DESCRIÇÃO aumentada (93mm)
         col_widths = [20*mm, 15*mm, 93*mm, 28*mm, 27*mm, 27*mm, 27*mm, 32*mm]
         t_data = Table(data, colWidths=col_widths, repeatRows=1)
         t_data.setStyle(TableStyle(ts))
@@ -657,7 +656,8 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                     # ==========================================================
                     st.markdown("### Resumo de Pendências por UG")
                     
-                    ugs_unicas = sorted(df_view['UG'].unique())
+                    # ORDENAÇÃO DOS CARDS EM TELA (N/D NO FINAL)
+                    ugs_unicas = sorted(df_view['UG'].unique(), key=lambda x: 'ZZZZZ' if x == 'N/D' else x)
                     
                     for i in range(0, len(ugs_unicas), 4):
                         cols = st.columns(4)
