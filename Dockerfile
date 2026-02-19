@@ -5,10 +5,13 @@ WORKDIR /app
 
 # Instala apenas o essencial e o unrar-free
 # O próprio pacote já cria o atalho 'unrar', não precisamos fazer manualmente
+
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
     unrar-free \
+    pkg-config \
+    libcairo2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copia os arquivos do GitHub para dentro do servidor
