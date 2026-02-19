@@ -60,7 +60,7 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
 * **Projeção de FOPAG:** Calcula a projeção da Folha de Pagamento para os meses restantes do exercício.
 
-* **Conferência Geral:** Realiza conferências de rotinas mensais.
+* **Conferência Geral:** Realiza conferências de rotinas mensais no Razão da Contabilidade.
 
 * **Tarifas Bancárias:** Extrai os lançamentos das tarifas do Extrato Bancário para empenho, liquidação e pagamento.
 
@@ -72,6 +72,7 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 ---
 **Status do Sistema:** ✅ Online
 """)
+
 
 
 
