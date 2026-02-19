@@ -34,6 +34,11 @@ st.markdown("""
     }
     div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
     .big-label { font-size: 20px !important; font-weight: 600 !important; margin-bottom: 10px; }
+    
+    /* AJUSTE CIRÚRGICO: Remove os botões + e - dos campos numéricos */
+    div[data-testid="stNumberInput"] button {
+        display: none !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -476,7 +481,8 @@ if st.button("PROCESSAR RELATÓRIO", use_container_width=True):
             pdf_bytes_final = pdf_io.getvalue()
 
             # --- RENDERIZAÇÃO NA TELA ---
-            st.success(f"✅ Extração de PASEP concluída (Retenção Total: R$ {total_pasep_retido:,.2f}).")
+            # AJUSTE CIRÚRGICO: Formatação do valor para padrão brasileiro na mensagem de sucesso
+            st.success(f"✅ Extração de PASEP concluída (Total de PASEP Retido: R$ {formatar_para_br(total_pasep_retido)}).")
             
             st.markdown(f"<div style='background-color: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd; overflow-x: auto;'>{html_tela}</div>", unsafe_allow_html=True)
             
