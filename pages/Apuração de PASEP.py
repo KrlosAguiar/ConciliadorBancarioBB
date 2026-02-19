@@ -236,21 +236,21 @@ def parse_balancete_exato_v2(lines):
 st.markdown("<h1 style='text-align: center;'>Relatório de Apuração do PASEP</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
-st.markdown("### ⚙️ Informe os repasses da ARSEP do mês")
+st.markdown("### Informe os valores referentes à ARSEP")
 col_arsep1, col_arsep2 = st.columns(2)
 with col_arsep1:
-    val_taxas_arsep = st.number_input("Valor de 'Taxas' (R$)", min_value=0.0, step=0.01, format="%.2f")
+    val_taxas_arsep = st.number_input("Valor Total das Taxas", min_value=0.0, step=0.01, format="%.2f")
 with col_arsep2:
-    val_aplic_arsep = st.number_input("Valor de 'Aplicação Financeira' (R$)", min_value=0.0, step=0.01, format="%.2f")
+    val_aplic_arsep = st.number_input("Valor do Rendimento de Aplicação Financeira", min_value=0.0, step=0.01, format="%.2f")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 c1, c2 = st.columns(2)
 with c1: 
-    st.markdown('<p class="big-label">📄 Demonstrativo DAF PASEP (PDF)</p>', unsafe_allow_html=True)
+    st.markdown('<p class="big-label">Demonstrativo DAF-PASEP (PDF)</p>', unsafe_allow_html=True)
     upload_pdf = st.file_uploader(" ", type="pdf", key="up_pdf", label_visibility="collapsed")
 with c2: 
-    st.markdown('<p class="big-label">📊 Balancete da Receita (Excel)</p>', unsafe_allow_html=True)
+    st.markdown('<p class="big-label">Balancete da Receita (.xlsx)</p>', unsafe_allow_html=True)
     upload_xlsx = st.file_uploader(" ", type=["xlsx"], key="up_xlsx", label_visibility="collapsed")
 
 if st.button("PROCESSAR RELATÓRIO", use_container_width=True):
