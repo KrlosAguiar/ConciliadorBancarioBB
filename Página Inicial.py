@@ -50,6 +50,8 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 &nbsp;
 &nbsp;
 
+* **Apuração de PASEP:** Realiza a apuração mensal do PASEP de cada UG.
+
 * **Conciliador Bancário:** Cruza os dados do Extrato Bancário com o Razão da Contabilidade.
 
 * **Conciliador de Retenções:** Concilia os valores extraorçamentários retidos e pagos.
@@ -70,6 +72,7 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 ---
 **Status do Sistema:** ✅ Online
 """)
+
 
 
 
