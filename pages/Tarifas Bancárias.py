@@ -232,7 +232,7 @@ def processar_bb(file_bytes):
     return df_final[["dt_obj", "Histórico", "Documento", "Valor"]]
 
 def processar_caixa(file_bytes):
-    FILTER_TERMS = ["DEB TARIFA", "DEB ARREC", "TAR ARREC", "DOC/TED PE", "TAR CC ATV"]
+    FILTER_TERMS = ["DEB TARIFA", "DEB ARREC", "TAR ARREC", "DOC/TED PE", "TAR CC ATV", "DEB SICAP/SICAS LOTERICO"]
     DATE_RE = re.compile(r'^\s*(\d{2}/\d{2}/\d{4})\b')
     VALOR_RE = re.compile(r'\(?-?\d{1,3}(?:[.\u00A0]\d{3})*,\d{2}\)?')
     NOISE_RE = re.compile(r'_{3,}|(^|\s)(CAIXA|SAC|OUVIDORIA|AL[ÔO] CAIXA|GERENCIADOR)(\s|$)', re.I)
