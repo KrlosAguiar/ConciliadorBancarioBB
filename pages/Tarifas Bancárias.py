@@ -300,7 +300,7 @@ def processar_caixa(file_bytes):
     return df_filtered[["dt_obj", "Histórico", "Documento", "Valor"]]
 
 def processar_banpara(file_bytes):
-    TARGET_TERMS = ["TAR ELET TRIB ARREC", "TAF ARREC TRIB", "MANUT CONTA ATIVA PJ", "TED PESSOAL", "TRANSF.RECURSO(P)", "PCT SERV MAXIEMP"]
+    TARGET_TERMS = ["TAR ELET TRIB ARREC", "TAF ARREC TRIB", "MANUT CONTA ATIVA PJ", "TED PESSOAL", "TRANSF.RECURSO(P)", "PCT SERV MAXIEMP", "PACOTE TARIF PJ MAST"]
     DATE_FULL = re.compile(r'^\s*\d{2}/\d{2}/\d{4}\b')
     DATE_DM = re.compile(r'^\s*(\d{2}/\d{2})\b')
     VALOR_RE = re.compile(r'\(?-?\d{1,3}(?:[.\u00A0]\d{3})*,\d{2}\)?')
