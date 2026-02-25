@@ -534,7 +534,7 @@ def gerar_pdf_conciliacao(df_final):
         story.append(t_cards)
 
     # ==========================================
-    # 2. NOVO: TABELA DE TOTAIS POR UG NO PDF
+    # 2. TABELA DE TOTAIS POR UG NO PDF
     # ==========================================
     header_style = ParagraphStyle(name='SectionHeader', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, alignment=0, textColor=colors.white, backColor=colors.black, padding=8, borderPadding=6)
     story.append(KeepTogether(Paragraph("RESUMO DE TOTAIS POR UG", header_style)))
@@ -546,7 +546,7 @@ def gerar_pdf_conciliacao(df_final):
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
         ('ALIGN', (0,0), (-1,0), 'CENTER'),
-        ('ALIGN', (4,1), (6,-1), 'RIGHT'), # Alinha valores à direita
+        ('ALIGN', (4,1), (6,-1), 'RIGHT'),
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
         ('FONTSIZE', (0,0), (-1,-1), 8),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
@@ -592,7 +592,6 @@ def gerar_pdf_conciliacao(df_final):
                 row_idx += 1
 
     if len(data_resumo) > 1:
-        # Distribuindo as larguras para preencher bem a página
         col_widths_resumo = [25*mm, 20*mm, 100*mm, 30*mm, 35*mm, 35*mm, 32*mm]
         t_resumo = Table(data_resumo, colWidths=col_widths_resumo, repeatRows=1)
         t_resumo.setStyle(TableStyle(ts_resumo))
@@ -700,7 +699,7 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                 # --- Processamento ---
                 df_final = processar_confronto(temp_dir, dados_excel)
 
-if not df_final.empty:
+                if not df_final.empty:
                     # ==========================================================
                     # FILTRO GLOBAL DE CONTAS A SEREM OCULTADAS
                     # ==========================================================
@@ -801,7 +800,7 @@ if not df_final.empty:
                     # TABELA HTML EM TELA (Tabelas Detalhadas)
                     # ==========================================================
                     df_app_view = df_view[df_final['GRUPO'] == 'APLICACAO']
-                    df_mov_view = df_view[df_final['GRUPO'] == 'MOVIMENTO'] # Já vem filtrado da base
+                    df_mov_view = df_view[df_final['GRUPO'] == 'MOVIMENTO']
                     
                     def gerar_tabela_html(df_input, titulo):
                         if df_input.empty: return ""
@@ -828,7 +827,7 @@ if not df_final.empty:
                     # GERAÇÃO DOS ARQUIVOS PARA DOWNLOAD (Excel e PDF)
                     # ==========================================================
                     df_app_final = df_final[df_final['GRUPO'] == 'APLICACAO']
-                    df_mov_final = df_final[df_final['GRUPO'] == 'MOVIMENTO'] # Já vem filtrado da base
+                    df_mov_final = df_final[df_final['GRUPO'] == 'MOVIMENTO']
 
                     # 1. Excel
                     output_excel = io.BytesIO()
