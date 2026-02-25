@@ -488,7 +488,9 @@ def gerar_pdf_conciliacao(df_final):
     st_card_value = ParagraphStyle(name='CardValue', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=16, alignment=1, spaceBefore=4, spaceAfter=4)
     st_card_label = ParagraphStyle(name='CardLabel', parent=styles['Normal'], fontName='Helvetica', fontSize=8, alignment=1, textColor=colors.gray)
 
-    # ORDENAÇÃO DOS CARDS NO PDF (N/D NO FINAL)
+    # ==========================================
+    # 1. CARDS DE RESUMO NO PDF
+    # ==========================================
     ugs_unicas = sorted(df_final['UG'].unique(), key=lambda x: 'ZZZZZ' if x == 'N/D' else x)
     card_data_matrix = []
     row_cards = []
@@ -527,15 +529,82 @@ def gerar_pdf_conciliacao(df_final):
             ('LEFTPADDING', (0,0), (-1,-1), 5),
             ('RIGHTPADDING', (0,0), (-1,-1), 5),
             ('TOPPADDING', (0,0), (-1,-1), 5),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 15), 
+            ('BOTTOMPADDING', (0,0), (-1,-1), 10), 
         ]))
         story.append(t_cards)
-        story.append(Spacer(1, 5*mm))
 
+    # ==========================================
+    # 2. NOVO: TABELA DE TOTAIS POR UG NO PDF
+    # ==========================================
+    header_style = ParagraphStyle(name='SectionHeader', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, alignment=0, textColor=colors.white, backColor=colors.black, padding=8, borderPadding=6)
+    story.append(KeepTogether(Paragraph("RESUMO DE TOTAIS POR UG", header_style)))
+
+    cols_resumo = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA"]
+    data_resumo = [cols_resumo]
+    
+    ts_resumo = [
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+        ('ALIGN', (0,0), (-1,0), 'CENTER'),
+        ('ALIGN', (4,1), (6,-1), 'RIGHT'), # Alinha valores à direita
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('FONTSIZE', (0,0), (-1,-1), 8),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]
+
+    ugs_resumo = sorted([ug for ug in df_final['UG'].unique() if ug != 'N/D'])
+    row_idx = 1
+    
+    for ug in ugs_resumo:
+        df_ug = df_final[df_final['UG'] == ug]
+        total_razao = df_ug['RAZÃO'].sum()
+        total_extrato = df_ug['EXTRATO'].sum()
+        total_dif = df_ug['DIFERENÇA'].sum()
+        
+        # Linha Total
+        data_resumo.append([
+            str(ug), "-", "TOTAL GERAL", "-", 
+            formatar_moeda(total_razao), formatar_moeda(total_extrato), formatar_moeda(total_dif)
+        ])
+        ts_resumo.append(('FONTNAME', (0, row_idx), (-1, row_idx), 'Helvetica-Bold'))
+        ts_resumo.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#f4f6f9')))
+        if abs(total_dif) > 0.009:
+            ts_resumo.append(('TEXTCOLOR', (6, row_idx), (6, row_idx), colors.red))
+        row_idx += 1
+        
+        # Linhas de Subtotal
+        for grupo in ['APLICACAO', 'MOVIMENTO']:
+            df_grupo = df_ug[df_ug['GRUPO'] == grupo]
+            if not df_grupo.empty:
+                sub_razao = df_grupo['RAZÃO'].sum()
+                sub_extrato = df_grupo['EXTRATO'].sum()
+                sub_dif = df_grupo['DIFERENÇA'].sum()
+                nome_grupo = "Aplicação" if grupo == 'APLICACAO' else "Movimento"
+                
+                data_resumo.append([
+                    "", "-", f"Subtotal {nome_grupo}", "-",
+                    formatar_moeda(sub_razao), formatar_moeda(sub_extrato), formatar_moeda(sub_dif)
+                ])
+                ts_resumo.append(('FONTSIZE', (0, row_idx), (-1, row_idx), 7))
+                ts_resumo.append(('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.darkgrey))
+                if abs(sub_dif) > 0.009:
+                    ts_resumo.append(('TEXTCOLOR', (6, row_idx), (6, row_idx), colors.red))
+                row_idx += 1
+
+    if len(data_resumo) > 1:
+        # Distribuindo as larguras para preencher bem a página
+        col_widths_resumo = [25*mm, 20*mm, 100*mm, 30*mm, 35*mm, 35*mm, 32*mm]
+        t_resumo = Table(data_resumo, colWidths=col_widths_resumo, repeatRows=1)
+        t_resumo.setStyle(TableStyle(ts_resumo))
+        story.append(t_resumo)
+        story.append(Spacer(1, 10*mm))
+
+    # ==========================================
+    # 3. TABELAS DETALHADAS
+    # ==========================================
     def add_data_table(df_part, titulo_secao):
         if df_part.empty: return
         
-        header_style = ParagraphStyle(name='SectionHeader', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, alignment=0, textColor=colors.white, backColor=colors.black, padding=8, borderPadding=6)
         story.append(KeepTogether(Paragraph(titulo_secao.upper(), header_style)))
 
         cols_pdf = ["UG", "CÓDIGO", "DESCRIÇÃO", "CONTA", "RAZÃO", "EXTRATO", "DIFERENÇA", "ARQUIVO"]
@@ -545,12 +614,9 @@ def gerar_pdf_conciliacao(df_final):
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
             ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
             ('ALIGN', (0,0), (-1,0), 'CENTER'),
-            
-            # --- ALINHAMENTOS DO CORPO ---
             ('ALIGN', (0,1), (1,-1), 'CENTER'),
             ('ALIGN', (4,1), (6,-1), 'RIGHT'),
             ('ALIGN', (7,1), (7,-1), 'LEFT'),
-            
             ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
             ('FONTSIZE', (0,0), (-1,-1), 8),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
@@ -634,7 +700,14 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                 # --- Processamento ---
                 df_final = processar_confronto(temp_dir, dados_excel)
 
-                if not df_final.empty:
+if not df_final.empty:
+                    # ==========================================================
+                    # FILTRO GLOBAL DE CONTAS A SEREM OCULTADAS
+                    # ==========================================================
+                    codigos_ocultos = ['8920', '8243', '8242', '8007']
+                    mascara_ocultar = (df_final['GRUPO'] == 'MOVIMENTO') & (df_final['CÓDIGO'].astype(str).isin(codigos_ocultos))
+                    df_final = df_final[~mascara_ocultar].copy()
+
                     # ==========================================================
                     # LÓGICA DE ORDENAÇÃO
                     # ==========================================================
@@ -656,7 +729,6 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                     # ==========================================================
                     st.markdown("### Resumo de Pendências por UG")
                     
-                    # ORDENAÇÃO DOS CARDS EM TELA (N/D NO FINAL)
                     ugs_unicas = sorted(df_view['UG'].unique(), key=lambda x: 'ZZZZZ' if x == 'N/D' else x)
                     
                     for i in range(0, len(ugs_unicas), 4):
@@ -679,38 +751,33 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                                 """
                                 with cols[j]:
                                     st.markdown(html_card, unsafe_allow_html=True)
-                 
+
                     st.markdown("---")
 
                     # ==========================================================
-                    # NOVO: TABELA DE RESUMO DE TOTAIS POR UG
+                    # TABELA DE RESUMO DE TOTAIS POR UG
                     # ==========================================================
                     st.markdown("<h4 class='section-title'>RESUMO DE TOTAIS POR UG</h4>", unsafe_allow_html=True)
                     html_resumo = "<div class='preview-table-container'><table class='preview-table'>"
                     html_resumo += "<thead><tr><th>UG</th><th>CÓDIGO</th><th>DESCRIÇÃO</th><th>CONTA</th><th>RAZÃO</th><th>EXTRATO</th><th>DIFERENÇA</th></tr></thead><tbody>"
 
-                    # Filtra removendo o 'N/D' e ordena alfabeticamente
                     ugs_resumo = sorted([ug for ug in df_final['UG'].unique() if ug != 'N/D'])
 
                     for ug in ugs_resumo:
                         df_ug = df_final[df_final['UG'] == ug]
                         
-                        # 1. Totais da UG (Linha Principal)
                         total_razao = df_ug['RAZÃO'].sum()
                         total_extrato = df_ug['EXTRATO'].sum()
                         total_dif = df_ug['DIFERENÇA'].sum()
                         
-                        # Formatação condicional para o total
                         style_dif_total = "color: red; font-weight: bold;" if abs(total_dif) > 0.009 else "color: black; font-weight: bold;"
                         
-                        # Adiciona a linha de Total Geral da UG (em negrito)
                         html_resumo += f"<tr style='font-weight: bold; background-color: #f4f6f9;'>"
                         html_resumo += f"<td>{ug}</td><td>-</td><td style='text-align: left;'>TOTAL GERAL</td><td>-</td>"
                         html_resumo += f"<td style='text-align: right;'>{formatar_moeda(total_razao)}</td>"
                         html_resumo += f"<td style='text-align: right;'>{formatar_moeda(total_extrato)}</td>"
                         html_resumo += f"<td style='text-align: right; {style_dif_total}'>{formatar_moeda(total_dif)}</td></tr>"
                         
-                        # 2. Subtotais (Linhas de Detalhe por Grupo)
                         for grupo in ['APLICACAO', 'MOVIMENTO']:
                             df_grupo = df_ug[df_ug['GRUPO'] == grupo]
                             if not df_grupo.empty:
@@ -721,7 +788,6 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                                 style_dif_sub = "color: red;" if abs(sub_dif) > 0.009 else "color: black;"
                                 nome_grupo = "Aplicação" if grupo == 'APLICACAO' else "Movimento"
                                 
-                                # Adiciona a linha de Subtotal (Fonte menor, sem negrito, recuada)
                                 html_resumo += f"<tr style='font-size: 11px; color: #555;'>"
                                 html_resumo += f"<td></td><td>-</td><td style='text-align: left; padding-left: 15px;'>Subtotal {nome_grupo}</td><td>-</td>"
                                 html_resumo += f"<td style='text-align: right;'>{formatar_moeda(sub_razao)}</td>"
@@ -731,17 +797,11 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                     html_resumo += "</tbody></table></div><br>"
                     st.markdown(html_resumo, unsafe_allow_html=True)
 
-
                     # ==========================================================
                     # TABELA HTML EM TELA (Tabelas Detalhadas)
                     # ==========================================================
-                    # Códigos que devem ser ocultados da tabela de movimento
-                    codigos_ocultos = ['8920', '8243', '8242', '8007']
-                    
                     df_app_view = df_view[df_final['GRUPO'] == 'APLICACAO']
-                    
-                    # Filtra o grupo Movimento excluindo os códigos especificados
-                    df_mov_view = df_view[(df_final['GRUPO'] == 'MOVIMENTO') & (~df_view['CÓDIGO'].astype(str).isin(codigos_ocultos))]
+                    df_mov_view = df_view[df_final['GRUPO'] == 'MOVIMENTO'] # Já vem filtrado da base
                     
                     def gerar_tabela_html(df_input, titulo):
                         if df_input.empty: return ""
@@ -767,13 +827,8 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                     # ==========================================================
                     # GERAÇÃO DOS ARQUIVOS PARA DOWNLOAD (Excel e PDF)
                     # ==========================================================
-                    
                     df_app_final = df_final[df_final['GRUPO'] == 'APLICACAO']
-                    
-                    # Aplica a mesma regra de exclusão para a exportação (PDF e Excel)
-                    df_mov_final = df_final[(df_final['GRUPO'] == 'MOVIMENTO') & (~df_final['CÓDIGO'].astype(str).isin(codigos_ocultos))]
-
-                    # ... [O restante do código de exportação PDF e Excel continua exatamente igual a partir daqui] ...
+                    df_mov_final = df_final[df_final['GRUPO'] == 'MOVIMENTO'] # Já vem filtrado da base
 
                     # 1. Excel
                     output_excel = io.BytesIO()
