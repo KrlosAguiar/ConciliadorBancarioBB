@@ -561,6 +561,14 @@ def gerar_pdf_conciliacao(df_final):
         total_extrato = df_ug['EXTRATO'].sum()
         total_dif = df_ug['DIFERENÇA'].sum()
         
+        # --- INJEÇÃO CAIXA ---
+        valores_caixa = {'PMB': 86.65, 'FMAS': 7.06, 'FME': 4614.80}
+        valor_caixa = valores_caixa.get(str(ug).strip().upper(), 0.0)
+        
+        total_razao += valor_caixa
+        total_extrato += valor_caixa
+        # ---------------------
+        
         # Linha Total
         data_resumo.append([
             str(ug), "-", "TOTAL GERAL", "-", 
@@ -571,6 +579,17 @@ def gerar_pdf_conciliacao(df_final):
         if abs(total_dif) > 0.009:
             ts_resumo.append(('TEXTCOLOR', (6, row_idx), (6, row_idx), colors.red))
         row_idx += 1
+        
+        # --- LINHA SUBTOTAL CAIXA ---
+        if valor_caixa > 0:
+            data_resumo.append([
+                "", "-", "Subtotal Caixa", "-",
+                formatar_moeda(valor_caixa), formatar_moeda(valor_caixa), "0,00"
+            ])
+            ts_resumo.append(('FONTSIZE', (0, row_idx), (-1, row_idx), 7))
+            ts_resumo.append(('TEXTCOLOR', (0, row_idx), (-1, row_idx), colors.darkgrey))
+            row_idx += 1
+        # ----------------------------
         
         # Linhas de Subtotal
         for grupo in ['APLICACAO', 'MOVIMENTO']:
@@ -769,6 +788,14 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                         total_extrato = df_ug['EXTRATO'].sum()
                         total_dif = df_ug['DIFERENÇA'].sum()
                         
+                        # --- INJEÇÃO CAIXA ---
+                        valores_caixa = {'PMB': 86.65, 'FMAS': 7.06, 'FME': 4614.80}
+                        valor_caixa = valores_caixa.get(str(ug).strip().upper(), 0.0)
+                        
+                        total_razao += valor_caixa
+                        total_extrato += valor_caixa
+                        # ---------------------
+                        
                         style_dif_total = "color: red; font-weight: bold;" if abs(total_dif) > 0.009 else "color: black; font-weight: bold;"
                         
                         html_resumo += f"<tr style='font-weight: bold; background-color: #f4f6f9;'>"
@@ -776,6 +803,15 @@ if st.button("PROCESSAR CONCILIAÇÃO DE SALDOS BANCÁRIOS", use_container_width
                         html_resumo += f"<td style='text-align: right;'>{formatar_moeda(total_razao)}</td>"
                         html_resumo += f"<td style='text-align: right;'>{formatar_moeda(total_extrato)}</td>"
                         html_resumo += f"<td style='text-align: right; {style_dif_total}'>{formatar_moeda(total_dif)}</td></tr>"
+                        
+                        # --- LINHA SUBTOTAL CAIXA ---
+                        if valor_caixa > 0:
+                            html_resumo += f"<tr style='font-size: 11px; color: #555;'>"
+                            html_resumo += f"<td></td><td>-</td><td style='text-align: left; padding-left: 15px;'>Subtotal Caixa</td><td>-</td>"
+                            html_resumo += f"<td style='text-align: right;'>{formatar_moeda(valor_caixa)}</td>"
+                            html_resumo += f"<td style='text-align: right;'>{formatar_moeda(valor_caixa)}</td>"
+                            html_resumo += f"<td style='text-align: right; color: black;'>0,00</td></tr>"
+                        # ----------------------------
                         
                         for grupo in ['APLICACAO', 'MOVIMENTO']:
                             df_grupo = df_ug[df_ug['GRUPO'] == grupo]
