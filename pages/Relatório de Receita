@@ -1,0 +1,208 @@
+import streamlit as st
+import pandas as pd
+import pdfplumber
+import re
+import io
+import os
+from PIL import Image
+
+# --- CONFIGURAÇÃO DA PÁGINA ---
+icon_path = os.path.join(os.getcwd(), "Barcarena.png")
+try:
+    icon_image = Image.open(icon_path)
+    st.set_page_config(page_title="Extrator Contábil", page_icon=icon_image, layout="wide")
+except:
+    st.set_page_config(page_title="Extrator Contábil", layout="wide")
+
+# --- CSS PERSONALIZADO ---
+st.markdown("""
+<style>
+    .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
+    div.stButton > button {
+        background-color: rgb(38, 39, 48) !important;
+        color: white !important;
+        font-weight: bold !important;
+        border: 1px solid rgb(60, 60, 60);
+        border-radius: 5px;
+        font-size: 16px;
+        transition: 0.3s;
+    }
+    div.stButton > button:hover { background-color: rgb(20, 20, 25) !important; border-color: white; }
+    .big-label { font-size: 24px !important; font-weight: 600 !important; margin-bottom: 10px; }
+</style>
+""", unsafe_allow_html=True)
+
+# ==============================================================================
+# 1. FUNÇÕES DE PROCESSAMENTO
+# ==============================================================================
+
+def limpar_conta(conta_raw):
+    """Limpa zeros à esquerda de contas no formato XX/000123/X"""
+    partes = conta_raw.split('/')
+    if len(partes) == 3:
+        meio = partes[1].strip()
+        meio_limpo = re.sub(r'^0+(\d)', r'\1', meio)
+        return meio_limpo
+    return conta_raw.strip()
+
+def extrair_relatorio_inteligente(file_bytes):
+    dados = []
+    
+    banco_atual = None
+    conta_atual = None
+    data_pag_atual = None
+    data_cred_atual = None
+    
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        for pagina in pdf.pages:
+            texto = pagina.extract_text()
+            if not texto:
+                continue
+            
+            texto = texto.replace('"', '')
+            texto = re.sub(r'(\d{1,3}(?:\.\d{3})*,\d{2})(\d{5,20})', r'\1\n\2', texto)
+            
+            linhas_originais = texto.split('\n')
+            linhas_processadas = []
+            
+            for lin in linhas_originais:
+                lin = lin.strip()
+                lin = re.sub(r'^,\s*', '', lin) 
+                
+                if not lin:
+                    continue
+                    
+                is_novo_bloco = (
+                    lin.startswith('Banco:') or
+                    lin.startswith('Conta:') or
+                    lin.startswith('Data Pagamento:') or
+                    lin.startswith('Data Crédito:') or
+                    lin.lower().startswith('total') or
+                    re.match(r'^\d{5,20}', lin)
+                )
+                
+                if is_novo_bloco:
+                    linhas_processadas.append(lin)
+                else:
+                    if linhas_processadas:
+                        linhas_processadas[-1] += " " + lin
+                    else:
+                        linhas_processadas.append(lin)
+                        
+            for linha in linhas_processadas:
+                linha = re.sub(r'\s+', ' ', linha).strip()
+                
+                if linha.startswith('Banco:'):
+                    if 'Conta:' in linha:
+                        banco_part, conta_part = linha.split('Conta:', 1)
+                        banco_atual = banco_part.replace('Banco:', '').strip()
+                        conta_atual = limpar_conta(conta_part.strip())
+                    else:
+                        banco_atual = linha.replace('Banco:', '').strip()
+                        
+                elif linha.startswith('Conta:'):
+                    conta_atual = limpar_conta(linha.replace('Conta:', '').strip())
+                    
+                elif linha.startswith('Data Pagamento:'):
+                    if 'Data Crédito:' in linha:
+                        dp_part, dc_part = linha.split('Data Crédito:', 1)
+                        m_pag = re.search(r'(\d{2}/\d{2}/\d{4})', dp_part)
+                        if m_pag: data_pag_atual = m_pag.group(1)
+                        m_cred = re.search(r'(\d{2}/\d{2}/\d{4})', dc_part)
+                        if m_cred: data_cred_atual = m_cred.group(1)
+                    else:
+                        m_pag = re.search(r'(\d{2}/\d{2}/\d{4})', linha)
+                        if m_pag: data_pag_atual = m_pag.group(1)
+                        
+                elif linha.startswith('Data Crédito:'):
+                    m_cred = re.search(r'(\d{2}/\d{2}/\d{4})', linha)
+                    if m_cred: data_cred_atual = m_cred.group(1)
+                        
+                elif linha.lower().startswith('total'):
+                    continue
+                    
+                elif re.match(r'^\d{5,20}', linha):
+                    m_lancamento = re.match(r'^(\d{5,20})\s+(.*?)\s+(\d{1,3}(?:\.\d{3})*,\d{2})$', linha)
+                    
+                    if m_lancamento:
+                        codigo = m_lancamento.group(1)
+                        desc = m_lancamento.group(2).strip().strip('- ,')
+                        valor_str = m_lancamento.group(3)
+                        
+                        dados.append({
+                            'Banco': banco_atual,
+                            'Conta': conta_atual,
+                            'Data Pagamento': data_pag_atual,
+                            'Data Crédito': data_cred_atual,
+                            'Código': codigo,
+                            'Descrição': desc,
+                            'Valor (R$)': valor_str
+                        })
+
+    df = pd.DataFrame(dados)
+    if not df.empty:
+        df['Código'] = df['Código'].astype(str)
+    return df
+
+def gerar_excel_simples(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Lançamentos')
+        workbook = writer.book
+        worksheet = writer.sheets['Lançamentos']
+        
+        fmt_header = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center'})
+        for col_num, value in enumerate(df.columns.values):
+            worksheet.write(0, col_num, value, fmt_header)
+            
+        worksheet.set_column('A:B', 25)
+        worksheet.set_column('C:D', 15)
+        worksheet.set_column('E:E', 15)
+        worksheet.set_column('F:F', 40)
+        worksheet.set_column('G:G', 15)
+        
+    return output.getvalue()
+
+# ==============================================================================
+# 2. INTERFACE
+# ==============================================================================
+st.markdown("<h1 style='text-align: center;'>Extrator de Relatório Contábil Diário</h1>", unsafe_allow_html=True)
+st.markdown("---")
+
+# Centralizando o uploader
+st.markdown('<p class="big-label" style="text-align: center;">Selecione o Relatório Contábil em PDF</p>', unsafe_allow_html=True)
+c1, c2, c3 = st.columns([1, 2, 1])
+with c2:
+    up_pdf = st.file_uploader("", type="pdf", key="up_pdf", label_visibility="collapsed")
+
+st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+
+if st.button("PROCESSAR EXTRAÇÃO", use_container_width=True):
+    if up_pdf:
+        with st.spinner("Lendo documento e reconstruindo linhas..."):
+            pdf_bytes = up_pdf.read()
+            df_resultado = extrair_relatorio_inteligente(pdf_bytes)
+            
+            if not df_resultado.empty:
+                st.success(f"✅ Extração concluída! Foram encontrados {len(df_resultado)} registros.")
+                
+                # Exibe a tabela na tela
+                st.dataframe(df_resultado, use_container_width=True, hide_index=True)
+                
+                # Gera os bytes do Excel e cria o botão de download com o mesmo estilo
+                excel_data = gerar_excel_simples(df_resultado)
+                nome_base = os.path.splitext(up_pdf.name)[0]
+                
+                st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+                
+                st.download_button(
+                    label="BAIXAR PLANILHA EXCEL LIMPADA",
+                    data=excel_data,
+                    file_name=f"Extracao_{nome_base}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            else:
+                st.error("❌ Nenhum dado financeiro capturado. Verifique se o arquivo está no formato correto.")
+    else:
+        st.warning("⚠️ Selecione o arquivo PDF antes de processar.")
