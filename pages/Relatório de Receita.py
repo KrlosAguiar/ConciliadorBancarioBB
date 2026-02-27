@@ -256,7 +256,7 @@ def gerar_excel_simples(df):
 # ==============================================================================
 # 2. INTERFACE DO APLICATIVO
 # ==============================================================================
-st.markdown("<h1 style='text-align: center;'>Extrator de Relatório Contábil Diário</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>Conversor de Relatório de Receitas Próprias Arrecadadas</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
 st.markdown('<p class="big-label" style="text-align: center;">Selecione o Relatório Contábil em PDF</p>', unsafe_allow_html=True)
@@ -266,9 +266,9 @@ with c2:
 
 st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
 
-if st.button("PROCESSAR EXTRAÇÃO", use_container_width=True):
+if st.button("PROCESSAR A EXTRAÇÃO DE DADOS", use_container_width=True):
     if up_pdf:
-        with st.spinner("Lendo documento e reconstruindo quebras de página..."):
+        with st.spinner("Lendo documento e extraíndo dados..."):
             pdf_bytes = up_pdf.read()
             df_resultado = extrair_relatorio_inteligente(pdf_bytes)
             
@@ -285,9 +285,9 @@ if st.button("PROCESSAR EXTRAÇÃO", use_container_width=True):
                 st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
                 
                 st.download_button(
-                    label="BAIXAR PLANILHA EXCEL CORRIGIDA",
+                    label="BAIXAR RELATÓRIO CONVERTIDO EM EXCEL",
                     data=excel_data,
-                    file_name=f"Extracao_{nome_base}.xlsx",
+                    file_name=f"{nome_base}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
