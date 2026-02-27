@@ -11,7 +11,7 @@ icon_path = os.path.join(os.getcwd(), "Barcarena.png")
 try:
     icon_image = Image.open(icon_path)
     st.set_page_config(page_title="Extrator Contábil", page_icon=icon_image, layout="wide")
-except:
+except FileNotFoundError:
     st.set_page_config(page_title="Extrator Contábil", layout="wide")
 
 # --- CSS PERSONALIZADO ---
@@ -153,7 +153,7 @@ def extrair_relatorio_inteligente(file_bytes):
             continue
             
         elif re.match(r'^\d{5,20}', linha):
-            # NOVO MOTOR DE EXTRAÇÃO COM BUSCA REVERSA DO VALOR
+            # MOTOR DE EXTRAÇÃO COM BUSCA REVERSA
             m_codigo = re.match(r'^(\d{5,20})', linha)
             if m_codigo:
                 codigo = m_codigo.group(1)
@@ -179,6 +179,55 @@ def extrair_relatorio_inteligente(file_bytes):
                         'Descrição': desc,
                         'Valor (R$)': valor_str
                     })
+                else:
+                    # =========================================================
+                    # FALLBACK MAGNÉTICO: RESGATA O VALOR SOBREPOSTO AO TEXTO
+                    # =========================================================
+                    idx_virgula = resto.rfind(',')
+                    if idx_virgula != -1:
+                        centavos = ""
+                        idx_fim_centavos = idx_virgula
+                        
+                        # Caça os 2 próximos números ignorando letras soltas
+                        for i in range(idx_virgula + 1, len(resto)):
+                            if resto[i].isdigit():
+                                centavos += resto[i]
+                                if len(centavos) == 2:
+                                    idx_fim_centavos = i
+                                    break
+                        
+                        if len(centavos) == 2:
+                            # Isola o último bloco de palavras para não roubar números de outras partes da descrição
+                            idx_espaco = resto.rfind(' ', 0, idx_virgula)
+                            if idx_espaco == -1: idx_espaco = 0
+                                
+                            inteiros = ""
+                            # Sugando a parte inteira
+                            for i in range(idx_espaco, idx_virgula):
+                                if resto[i].isdigit() or resto[i] == '.':
+                                    inteiros += resto[i]
+                            
+                            inteiros = inteiros.lstrip('.')
+                            if inteiros == "": inteiros = "0"
+                            
+                            valor_str = f"{inteiros},{centavos}"
+                            
+                            # Limpa a descrição removendo APENAS os dígitos e pontos do bloco final misturado
+                            bloco_final = resto[idx_espaco:idx_fim_centavos+1]
+                            bloco_limpo = re.sub(r'[\d,\.]', '', bloco_final)
+                            
+                            desc_raw = resto[:idx_espaco] + " " + bloco_limpo + resto[idx_fim_centavos+1:]
+                            desc = re.sub(r'\s+', ' ', desc_raw).strip('- ,')
+                            
+                            dados.append({
+                                'Banco': banco_atual,
+                                'Conta': conta_atual,
+                                'Data Pagamento': data_pag_atual,
+                                'Data Crédito': data_cred_atual,
+                                'Código': codigo,
+                                'Descrição': desc,
+                                'Valor (R$)': valor_str
+                            })
 
     df = pd.DataFrame(dados)
     if not df.empty:
