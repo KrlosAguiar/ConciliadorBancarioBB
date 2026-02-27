@@ -62,6 +62,8 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 
 * **Conferência Geral:** Realiza conferências de rotinas mensais no Razão da Contabilidade.
 
+* **Relatório de Receita Arrecadada:** Converte o Relatório da Receita Arrecadada em PDF para Excel.
+
 * **Tarifas Bancárias:** Extrai os lançamentos das tarifas do Extrato Bancário para empenho, liquidação e pagamento.
 
 * **(Em breve) Novos Módulos:** Outras ferramentas serão adicionadas aqui.
@@ -72,6 +74,7 @@ Utilize o menu lateral à esquerda para navegar entre os módulos disponíveis:
 ---
 **Status do Sistema:** ✅ Online
 """)
+
 
 
 
