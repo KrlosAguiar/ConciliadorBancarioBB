@@ -276,28 +276,25 @@ def extrair_caixa(arquivo_bytes, ano_ref):
     import re
     
     # 1. Configurações Baseadas no seu Código
-    # Termos de RECEITA (Adicionei variações para garantir)
+    # Termos de RECEITA (Removido "DEB ARREC" pois são despesas/tarifas bancárias)
     FILTER_TERMS = [
         "ARR CCV DH", "ARR CV INT", "ARR DH AG", 
-        "CRED ARREC", "CREDITO ARREC", "DEB ARREC" # Mantive DEB ARREC caso apareça estorno/correção
+        "CRED ARREC", "CREDITO ARREC" 
     ]
     
     # Regex de Data (Início da linha)
     DATE_RE = re.compile(r'^\s*"?(\d{2}/\d{2}/\d{4})"?')
     
-    # Regex de Valor (Sua regex, que é excelente pois para na segunda casa decimal)
-    # Ignora sufixos como C, D, 0, aspas, etc.
+    # Regex de Valor (Para na segunda casa decimal)
     VALOR_RE = re.compile(r'\(?-?\d{1,3}(?:[.\u00A0]?\d{3})*,\d{2}\)?')
     
     # Regex de Ruído (Cabeçalhos/Rodapés)
     NOISE_RE = re.compile(r'_{3,}|(^|\s)(CAIXA|SAC|OUVIDORIA|AL[ÔO] CAIXA|GERENCIADOR)(\s|$)', re.I)
 
-    # Função auxiliar de conversão (Simplificada do seu código)
+    # Função auxiliar de conversão
     def br_to_float(s):
         if not s: return 0.0
-        # Remove aspas e caracteres invisíveis
         t = str(s).strip().replace('"', '').replace("'", "")
-        # Remove pontos de milhar e troca vírgula por ponto
         t = re.sub(r'[^\d,]', '', t).replace(',', '.')
         try: return float(t)
         except: return 0.0
@@ -311,12 +308,10 @@ def extrair_caixa(arquivo_bytes, ano_ref):
             for page in pdf.pages:
                 full_text += (page.extract_text() or "") + "\n"
             
-            # Tenta identificar o mês global do extrato para filtrar "sobras" de outros meses
             mes_ref = obter_mes_referencia_extrato(full_text)
 
             for ln in full_text.splitlines():
                 s = ln.strip()
-                # Pula linhas vazias ou ruído
                 if not s or NOISE_RE.search(s): continue
                 
                 # 1. Identifica se a linha começa com DATA
@@ -324,7 +319,6 @@ def extrair_caixa(arquivo_bytes, ano_ref):
                 if match_date:
                     date_str = match_date.group(1)
                     
-                    # Trava de Segurança: Filtra mês se detectado no cabeçalho
                     if mes_ref:
                         mes_linha = date_str[3:]
                         if mes_linha != mes_ref: continue
@@ -334,15 +328,12 @@ def extrair_caixa(arquivo_bytes, ano_ref):
                     if not any(termo in s_upper for termo in FILTER_TERMS):
                         continue
                     
-                    # 3. Extração Inteligente de Valores (Lógica do seu script)
+                    # 3. Extração Inteligente de Valores
                     val_matches = VALOR_RE.findall(s)
                     if not val_matches: continue
                     
                     valor_str = None
                     
-                    # A LÓGICA DE OURO:
-                    # Se houver 2 ou mais valores na linha (Transação + Saldo), pegamos o penúltimo [-2].
-                    # Se houver apenas 1 valor, assumimos que é a Transação.
                     if len(val_matches) >= 2:
                         valor_str = val_matches[-2]
                     else:
@@ -350,9 +341,7 @@ def extrair_caixa(arquivo_bytes, ano_ref):
                     
                     val_float = br_to_float(valor_str)
                     
-                    # Tratamento de Sinal:
-                    # Se for Débito (ex: estorno de arrecadação), subtrai. Se for Crédito, soma.
-                    # Verifica se tem "D" logo após o valor extraído na linha original ou se é termo de débito
+                    # Mantido apenas por segurança estrutural (caso surja um estorno de CRED ARREC)
                     eh_debito = "DEB" in s_upper or f"{valor_str}D" in s.replace(' ','').upper()
                     
                     if eh_debito:
