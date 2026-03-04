@@ -637,7 +637,7 @@ if arquivo_excel:
                     if not ok: dif_html = f"<div style='font-size:11px; margin-top:2px; color:#c00'>(Dif: {formatar_moeda(dif)})</div>"
                     return textwrap.dedent(f"""<div class="metric-card {cls_cor}"><div class="metric-title">{d['titulo']}</div><div class="metric-row"><span>{d['l1']}</span><span class="metric-val">{formatar_moeda(d['v1'])}</span></div><div class="metric-row" style="border-bottom:1px dashed #ccc; padding-bottom:3px; margin-bottom:3px;"><span>{d['l2']}</span><span class="metric-val">{formatar_moeda(d['v2'])}</span></div><div class="metric-status" style="background:{bg_st}; color:{col_st};">{txt_st}{dif_html}</div></div>""").strip()
 
-                st.markdown("### 1. Situação das Transferências")
+                st.markdown("### 1. Conciliação de Transferências - LCPs")
                 cols1 = st.columns(4)
                 for i, d in enumerate(dados_c1):
                     with cols1[i]: st.markdown(render_card(d), unsafe_allow_html=True)
@@ -649,7 +649,7 @@ if arquivo_excel:
                 # EXIBIÇÃO DA TABELA DE DIVERGÊNCIAS (HTML CUSTOMIZADO)
                 # ==========================================
                 if not df_divergencias_transf.empty:
-                    st.markdown("<br><h5 style='color:#dc3545;'>⚠️ Lançamentos Desiguais Encontrados nas Transferências</h5>", unsafe_allow_html=True)
+                    st.markdown("<br><h5 style='color:#ffffff;'>Divergências encontradas nas transferências</h5>", unsafe_allow_html=True)
                     
                     rows_html_div = ""
                     for _, r in df_divergencias_transf.iterrows():
