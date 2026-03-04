@@ -431,7 +431,7 @@ def gerar_pdf_completo(dados_cards_1, dados_cards_2, df_receitas, lista_detalhes
     story.append(Paragraph("RELATÓRIO DE CONCILIAÇÃO CONTÁBIL", styles["Title"]))
     story.append(Spacer(1, 8*mm))
 
-    story.append(Paragraph("<b>1. SITUAÇÃO DAS TRANSFERÊNCIAS</b>", styles["Heading3"]))
+    story.append(Paragraph("<b>1. CONCILIAÇÃO DE TRANSFERÊNCIAS - LCPs</b>", styles["Heading3"]))
     story.append(Spacer(1, 2*mm))
 
     row1_tables = []
