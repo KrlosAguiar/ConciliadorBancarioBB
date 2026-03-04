@@ -30,8 +30,6 @@ except:
 # 0. CONFIGURAÇÃO DA PÁGINA E CSS
 # ==============================================================================
 
-st.set_page_config(page_title="Conciliador de Receitas", layout="wide")
-
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem !important; padding-bottom: 2rem !important; }
@@ -114,6 +112,38 @@ def padronizar_data(data_str):
     except:
         return None
 
+def obter_divergencias_1_pra_1(df, col_filtro, val1, val2, exato=False):
+    if col_filtro not in df.columns: return pd.DataFrame()
+    
+    if exato:
+        f1 = df[col_filtro].astype(str).str.contains(str(val1), case=False, na=False)
+        f2 = df[col_filtro].astype(str).str.contains(str(val2), case=False, na=False)
+    else:
+        f1 = df[col_filtro].astype(str).str.startswith(str(val1), na=False)
+        f2 = df[col_filtro].astype(str).str.startswith(str(val2), na=False)
+        
+    df1 = df[f1].copy()
+    df2 = df[f2].copy()
+    
+    df1['matched'] = False
+    df2['matched'] = False
+    
+    df2_vals = {}
+    for idx, row in df2.iterrows():
+        v = round(row['Valor'], 2)
+        if v not in df2_vals: df2_vals[v] = []
+        df2_vals[v].append(idx)
+        
+    for idx, row in df1.iterrows():
+        v = round(row['Valor'], 2)
+        if v in df2_vals and len(df2_vals[v]) > 0:
+            matched_idx = df2_vals[v].pop(0)
+            df1.at[idx, 'matched'] = True
+            df2.at[matched_idx, 'matched'] = True
+            
+    df_sobras = pd.concat([df1[~df1['matched']], df2[~df2['matched']]])
+    return df_sobras
+
 def carregar_razao_robust(arquivo_bytes, is_csv=False):
     try:
         # LEITURA INICIAL
@@ -140,7 +170,8 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
             count9 = df[9].dropna().astype(str).str.strip().replace('', None).count()
             if count9 > count8: col_valor = 9
         
-        mapa_colunas = {0: 'UG', 5: 'Tipo_DC', 6: 'Conta', col_valor: 'Valor'}
+        # Mapeamento atualizado incluindo a coluna de Histórico (7)
+        mapa_colunas = {0: 'UG', 5: 'Tipo_DC', 6: 'Conta', 7: 'Histórico', col_valor: 'Valor'}
         df = df.rename(columns=mapa_colunas)
         
         if 'UG' in df.columns:
@@ -151,39 +182,31 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
         col_fato = None
         col_lcp = None
         
-        cols_ignoradas = ['UG', 'Conta', 'Valor', 'Tipo_DC']
+        cols_ignoradas = ['UG', 'Conta', 'Valor', 'Tipo_DC', 'Histórico']
         
         for col in df.columns:
             if col in cols_ignoradas: continue
             try:
-                # Aumentamos a amostra para garantir que pegamos os códigos de implantação no início
                 amostra = df[col].dropna().astype(str).head(5000).str.cat(sep=' ')
                 
                 # --- LÓGICA CIRÚRGICA (Trava de Segurança) ---
-                # Identifica marcadores específicos mencionados pelo usuário
                 tem_implanta_62 = "62 - Implantação" in amostra or "62 - IMPLANTAÇÃO" in amostra.upper()
                 tem_implanta_84 = "84 - Implantação" in amostra or "84 - IMPLANTAÇÃO" in amostra.upper()
                 
-                # Regex ajustada para 2 ou 3 dígitos (pega 84, 62, 264, etc)
                 eh_formato_lcp = re.search(r'\b\d{2,3}\s*-\s*', amostra)
                 
                 # DETECÇÃO LCP
                 if eh_formato_lcp:
-                    # Se tiver o marcador 84, É A COLUNA CERTA (prioridade máxima)
                     if tem_implanta_84:
                         col_lcp = col
-                    # Se tiver o marcador 62, É A COLUNA ERRADA (Regra), IGNORA para LCP
                     elif tem_implanta_62:
                         pass
-                    # Se não for nenhuma das duas (ex: arquivo de Dezembro), segue fluxo normal
                     elif col_lcp is None:
                         col_lcp = col
 
                 # DETECÇÃO FATO CONTÁBIL
                 termos_chave = ["Arrecadação", "Transferência Financeira", "Liquidação", "Implantação"]
                 if any(x in amostra for x in termos_chave):
-                    # Fato contábil geralmente é texto puro, sem o padrão "Numero - Descrição"
-                    # Mas se "Arrecadação" estiver explícito, pegamos
                     if not eh_formato_lcp or "Arrecadação" in amostra:
                          if col_fato is None: 
                              col_fato = col
@@ -193,7 +216,8 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
         if col_lcp: df = df.rename(columns={col_lcp: 'LCP'})
         if 'Data' not in df.columns and 4 in df.columns: df = df.rename(columns={4: 'Data'}) 
         
-        for c in ['Fato Contábil', 'LCP', 'UG', 'Tipo_DC']:
+        # Garante a existência de todas as colunas necessárias
+        for c in ['Fato Contábil', 'LCP', 'UG', 'Tipo_DC', 'Histórico']:
             if c not in df.columns: df[c] = ''
         
         return df
@@ -275,8 +299,7 @@ def extrair_banpara(arquivo_bytes, ano_ref):
 def extrair_caixa(arquivo_bytes, ano_ref):
     import re
     
-    # 1. Configurações Baseadas no seu Código
-    # Termos de RECEITA (Removido "DEB ARREC" pois são despesas/tarifas bancárias)
+    # Termos de RECEITA (Removido "DEB ARREC")
     FILTER_TERMS = [
         "ARR CCV DH", "ARR CV INT", "ARR DH AG", 
         "CRED ARREC", "CREDITO ARREC" 
@@ -285,7 +308,7 @@ def extrair_caixa(arquivo_bytes, ano_ref):
     # Regex de Data (Início da linha)
     DATE_RE = re.compile(r'^\s*"?(\d{2}/\d{2}/\d{4})"?')
     
-    # Regex de Valor (Para na segunda casa decimal)
+    # Regex de Valor
     VALOR_RE = re.compile(r'\(?-?\d{1,3}(?:[.\u00A0]?\d{3})*,\d{2}\)?')
     
     # Regex de Ruído (Cabeçalhos/Rodapés)
@@ -341,7 +364,7 @@ def extrair_caixa(arquivo_bytes, ano_ref):
                     
                     val_float = br_to_float(valor_str)
                     
-                    # Mantido apenas por segurança estrutural (caso surja um estorno de CRED ARREC)
+                    # Mantido apenas por segurança estrutural (caso surja um estorno de receita)
                     eh_debito = "DEB" in s_upper or f"{valor_str}D" in s.replace(' ','').upper()
                     
                     if eh_debito:
@@ -545,24 +568,59 @@ if arquivo_excel:
                     f2 = df[col].astype(str).str.startswith(str(v2), na=False)
                     return df.loc[f1, 'Valor'].sum(), df.loc[f2, 'Valor'].sum()
 
-                # CARDS
+                # ==========================================
+                # GERAÇÃO DOS CARDS E CAÇA ÀS DIVERGÊNCIAS
+                # ==========================================
                 dados_c1 = []
-                for tit, col, c1, c2 in [("TRANSF. CONST. - FMS", 'LCP', 264, 265), ("TRANSF. CONST. - FME", 'LCP', 266, 267), ("TRANSF. CONST. - FMAS", 'LCP', 268, 269), ("TRANSF. PARA ARSEP", 'LCP', 270, 271)]:
+                df_divergencias_transf = pd.DataFrame()
+
+                for tit, col, c1, c2 in [("TRANSF. CONST. - FMS", 'LCP', 264, 265), 
+                                         ("TRANSF. CONST. - FME", 'LCP', 266, 267), 
+                                         ("TRANSF. CONST. - FMAS", 'LCP', 268, 269), 
+                                         ("TRANSF. PARA ARSEP", 'LCP', 270, 271)]:
                     v1, v2 = get_vals(col, c1, c2)
                     dados_c1.append({'titulo': tit, 'l1': str(c1), 'v1': v1, 'l2': str(c2), 'v2': v2})
+                    
+                    if round(v1, 2) != round(v2, 2):
+                        sobras = obter_divergencias_1_pra_1(df, col, c1, c2)
+                        if not sobras.empty:
+                            if df_divergencias_transf.empty: df_divergencias_transf = sobras
+                            else: df_divergencias_transf = pd.concat([df_divergencias_transf, sobras], ignore_index=True)
 
                 dados_c2 = []
+                
+                # LCP 250 vs 251
                 v1, v2 = get_vals('LCP', 250, 251)
                 dados_c2.append({'titulo': "TRANSFERÊNCIAS ENTRE UGS", 'l1': "250", 'v1': v1, 'l2': "251", 'v2': v2})
+                if round(v1, 2) != round(v2, 2):
+                    sobras = obter_divergencias_1_pra_1(df, 'LCP', 250, 251)
+                    if not sobras.empty:
+                        if df_divergencias_transf.empty: df_divergencias_transf = sobras
+                        else: df_divergencias_transf = pd.concat([df_divergencias_transf, sobras], ignore_index=True)
+
+                # LCP 258 vs 259
                 v1, v2 = get_vals('LCP', 258, 259)
                 dados_c2.append({'titulo': "RENDIMENTOS DE APLICAÇÃO", 'l1': "258", 'v1': v1, 'l2': "259", 'v2': v2})
+                if round(v1, 2) != round(v2, 2):
+                    sobras = obter_divergencias_1_pra_1(df, 'LCP', 258, 259)
+                    if not sobras.empty:
+                        if df_divergencias_transf.empty: df_divergencias_transf = sobras
+                        else: df_divergencias_transf = pd.concat([df_divergencias_transf, sobras], ignore_index=True)
                 
+                # Duodécimo
                 t1_duo, t2_duo = 0.0, 0.0
                 if 'Fato Contábil' in df.columns:
                     f1 = df['Fato Contábil'].astype(str).str.contains("Transferência Financeira Concedida", case=False, na=False)
                     f2 = df['Fato Contábil'].astype(str).str.contains("Transferência Financeira Recebida", case=False, na=False)
                     t1_duo = df.loc[f1, 'Valor'].sum()
                     t2_duo = df.loc[f2, 'Valor'].sum()
+                    
+                    if round(t1_duo, 2) != round(t2_duo, 2):
+                        sobras_duo = obter_divergencias_1_pra_1(df, 'Fato Contábil', "Transferência Financeira Concedida", "Transferência Financeira Recebida", exato=True)
+                        if not sobras_duo.empty:
+                            if df_divergencias_transf.empty: df_divergencias_transf = sobras_duo
+                            else: df_divergencias_transf = pd.concat([df_divergencias_transf, sobras_duo], ignore_index=True)
+                        
                 dados_c2.append({'titulo': "TRANSF. DUODÉCIMO", 'l1': "Concedida", 'v1': t1_duo, 'l2': "Recebida", 'v2': t2_duo})
 
                 def render_card(d):
@@ -584,6 +642,20 @@ if arquivo_excel:
                 for i, d in enumerate(dados_c2):
                     with cols2[i]: st.markdown(render_card(d), unsafe_allow_html=True)
 
+                # ==========================================
+                # EXIBIÇÃO DA TABELA DE DIVERGÊNCIAS
+                # ==========================================
+                if not df_divergencias_transf.empty:
+                    st.markdown("<br><h5 style='color:#dc3545;'>⚠️ Lançamentos Desiguais Encontrados nas Transferências</h5>", unsafe_allow_html=True)
+                    
+                    colunas_alvo = ['UG', 'Data', 'Valor', 'LCP', 'Histórico', 'Fato Contábil']
+                    colunas_presentes = [c for c in colunas_alvo if c in df_divergencias_transf.columns]
+                    
+                    df_exibir = df_divergencias_transf[colunas_presentes].copy()
+                    df_exibir['Valor'] = df_exibir['Valor'].apply(formatar_moeda)
+                    
+                    st.dataframe(df_exibir, use_container_width=True, hide_index=True)
+
                 st.markdown("---")
 
                 # TABELA RECEITAS
@@ -597,20 +669,16 @@ if arquivo_excel:
                 }
                 ks = list(mapa.keys())
                 
-               # --- LÓGICA ATUALIZADA: FILTRO ESTRITO POR "ARRECADAÇÃO" ---
                 df_sub = pd.DataFrame()
                 
-                # 1. Filtra apenas as contas de interesse (definidas no mapa)
                 temp = df[df['Conta'].isin(ks)]
                 
-                # 2. Aplica filtro ESTRITO pelo termo exato "Arrecadação da Receita"
                 if 'Fato Contábil' in temp.columns:
-                      # Usa regex=False para buscar a string literal exata e segura
                       mask_fato = temp['Fato Contábil'].astype(str).str.contains("Arrecadação da Receita", case=False, na=False, regex=False)
                       df_sub = temp[mask_fato]
                 else:
                       df_sub = pd.DataFrame(columns=temp.columns)
-               
+                
                 df_res_total = df_sub.groupby('Conta')['Valor'].sum().reset_index()
                 df_final = pd.merge(pd.DataFrame({'Conta': ks}), df_res_total, on='Conta', how='left').fillna(0)
 
