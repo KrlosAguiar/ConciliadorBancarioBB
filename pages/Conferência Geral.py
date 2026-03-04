@@ -154,6 +154,16 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
                 if 'UG' in df.columns and 'Valor' in df.columns:
                     mask = df['UG'].str.contains("Totalizadores", case=False, na=False)
                     if mask.any(): df = df.iloc[:mask.idxmax()].copy()
+                    
+                    # Garante a captura da coluna AC (índice 28)
+                    if len(df.columns) > 28:
+                        df['Histórico'] = df.iloc[:, 28]
+                    elif 'Complemento Histórico' in df.columns:
+                        df['Histórico'] = df['Complemento Histórico']
+                    
+                    for c in ['Fato Contábil', 'LCP', 'UG', 'Tipo_DC', 'Histórico']:
+                        if c not in df.columns: df[c] = ''
+                        
                     return df
             except:
                 pass
@@ -170,8 +180,13 @@ def carregar_razao_robust(arquivo_bytes, is_csv=False):
             count9 = df[9].dropna().astype(str).str.strip().replace('', None).count()
             if count9 > count8: col_valor = 9
         
-        # Mapeamento atualizado incluindo a coluna de Histórico (7)
-        mapa_colunas = {0: 'UG', 5: 'Tipo_DC', 6: 'Conta', 7: 'Histórico', col_valor: 'Valor'}
+        # Mapeamento atualizado para capturar a coluna AC (28) como Histórico
+        mapa_colunas = {0: 'UG', 5: 'Tipo_DC', 6: 'Conta', col_valor: 'Valor'}
+        if 28 in df.columns:
+            mapa_colunas[28] = 'Histórico'
+        elif 7 in df.columns:
+            mapa_colunas[7] = 'Histórico'
+            
         df = df.rename(columns=mapa_colunas)
         
         if 'UG' in df.columns:
@@ -305,16 +320,10 @@ def extrair_caixa(arquivo_bytes, ano_ref):
         "CRED ARREC", "CREDITO ARREC" 
     ]
     
-    # Regex de Data (Início da linha)
     DATE_RE = re.compile(r'^\s*"?(\d{2}/\d{2}/\d{4})"?')
-    
-    # Regex de Valor
     VALOR_RE = re.compile(r'\(?-?\d{1,3}(?:[.\u00A0]?\d{3})*,\d{2}\)?')
-    
-    # Regex de Ruído (Cabeçalhos/Rodapés)
     NOISE_RE = re.compile(r'_{3,}|(^|\s)(CAIXA|SAC|OUVIDORIA|AL[ÔO] CAIXA|GERENCIADOR)(\s|$)', re.I)
 
-    # Função auxiliar de conversão
     def br_to_float(s):
         if not s: return 0.0
         t = str(s).strip().replace('"', '').replace("'", "")
@@ -337,7 +346,6 @@ def extrair_caixa(arquivo_bytes, ano_ref):
                 s = ln.strip()
                 if not s or NOISE_RE.search(s): continue
                 
-                # 1. Identifica se a linha começa com DATA
                 match_date = DATE_RE.match(s)
                 if match_date:
                     date_str = match_date.group(1)
@@ -346,17 +354,14 @@ def extrair_caixa(arquivo_bytes, ano_ref):
                         mes_linha = date_str[3:]
                         if mes_linha != mes_ref: continue
 
-                    # 2. Identifica se é uma transação de INTERESSE (Receita)
                     s_upper = s.upper()
                     if not any(termo in s_upper for termo in FILTER_TERMS):
                         continue
                     
-                    # 3. Extração Inteligente de Valores
                     val_matches = VALOR_RE.findall(s)
                     if not val_matches: continue
                     
                     valor_str = None
-                    
                     if len(val_matches) >= 2:
                         valor_str = val_matches[-2]
                     else:
@@ -364,7 +369,6 @@ def extrair_caixa(arquivo_bytes, ano_ref):
                     
                     val_float = br_to_float(valor_str)
                     
-                    # Mantido apenas por segurança estrutural (caso surja um estorno de receita)
                     eh_debito = "DEB" in s_upper or f"{valor_str}D" in s.replace(' ','').upper()
                     
                     if eh_debito:
@@ -643,18 +647,42 @@ if arquivo_excel:
                     with cols2[i]: st.markdown(render_card(d), unsafe_allow_html=True)
 
                 # ==========================================
-                # EXIBIÇÃO DA TABELA DE DIVERGÊNCIAS
+                # EXIBIÇÃO DA TABELA DE DIVERGÊNCIAS (HTML CUSTOMIZADO)
                 # ==========================================
                 if not df_divergencias_transf.empty:
                     st.markdown("<br><h5 style='color:#dc3545;'>⚠️ Lançamentos Desiguais Encontrados nas Transferências</h5>", unsafe_allow_html=True)
                     
-                    colunas_alvo = ['UG', 'Data', 'Valor', 'LCP', 'Histórico', 'Fato Contábil']
-                    colunas_presentes = [c for c in colunas_alvo if c in df_divergencias_transf.columns]
-                    
-                    df_exibir = df_divergencias_transf[colunas_presentes].copy()
-                    df_exibir['Valor'] = df_exibir['Valor'].apply(formatar_moeda)
-                    
-                    st.dataframe(df_exibir, use_container_width=True, hide_index=True)
+                    rows_html_div = ""
+                    for _, r in df_divergencias_transf.iterrows():
+                        ug = str(r.get('UG', '')).replace('nan', '')
+                        data_val = str(r.get('Data', '')).replace('nan', '')
+                        valor = r.get('Valor', 0.0)
+                        lcp = str(r.get('LCP', '')).replace('nan', '')
+                        historico = str(r.get('Histórico', '')).replace('nan', '')
+                        
+                        rows_html_div += f"<tr style='border-bottom:1px solid #eee;'>"
+                        rows_html_div += f"<td style='text-align:center;'>{ug}</td>"
+                        rows_html_div += f"<td style='text-align:center;'>{data_val}</td>"
+                        rows_html_div += f"<td style='text-align:right; font-weight:bold;'>{formatar_moeda(valor)}</td>"
+                        rows_html_div += f"<td style='text-align:center;'>{lcp}</td>"
+                        rows_html_div += f"<td style='font-size:11px; max-width:400px; white-space:normal; overflow-wrap:break-word; padding-left:8px;'>{historico}</td>"
+                        rows_html_div += "</tr>"
+
+                    tbl_html_div = textwrap.dedent(f"""
+                    <div style='background-color:white;padding:15px;border-radius:5px;border:1px solid #ddd;'>
+                        <table style='width:100%;border-collapse:collapse;color:black !important;'>
+                            <tr style='background-color:black;color:white;'>
+                                <th style='text-align:center; width:10%;'>UG</th>
+                                <th style='text-align:center; width:10%;'>Data</th>
+                                <th style='text-align:right; width:15%;'>Valor</th>
+                                <th style='text-align:center; width:10%;'>LCP</th>
+                                <th style='text-align:left; width:55%; padding-left:8px;'>Histórico</th>
+                            </tr>
+                            {rows_html_div}
+                        </table>
+                    </div>
+                    """).strip()
+                    st.markdown(tbl_html_div, unsafe_allow_html=True)
 
                 st.markdown("---")
 
