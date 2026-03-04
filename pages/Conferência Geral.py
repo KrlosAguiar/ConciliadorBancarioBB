@@ -660,12 +660,14 @@ if arquivo_excel:
                         historico = str(r.get('Histórico', '')).replace('nan', '')
                         
                         rows_html_div += f"<tr style='border-bottom:1px solid #eee;'>"
-                        # UG: negrito, fonte maior
-                        rows_html_div += f"<td style='text-align:center; font-weight:bold; font-size:14px;'>{ug}</td>"
-                        rows_html_div += f"<td style='text-align:center;'>{data_val}</td>"
-                        rows_html_div += f"<td style='text-align:right; font-weight:bold;'>{formatar_moeda(valor)}</td>"
-                        # LCP: fonte menor, texto em uma linha sem quebra
-                        rows_html_div += f"<td style='text-align:center; font-size:11px; white-space:nowrap;'>{lcp}</td>"
+                        # UG: negrito, fonte maior (16px)
+                        rows_html_div += f"<td style='text-align:center; font-weight:bold; font-size:16px;'>{ug}</td>"
+                        # Data: negrito, fonte (14px)
+                        rows_html_div += f"<td style='text-align:center; font-weight:bold; font-size:14px;'>{data_val}</td>"
+                        # Valor: negrito, fonte (14px)
+                        rows_html_div += f"<td style='text-align:right; font-weight:bold; font-size:14px;'>{formatar_moeda(valor)}</td>"
+                        # LCP: negrito, fonte maior (13px), sem quebra de linha
+                        rows_html_div += f"<td style='text-align:center; font-weight:bold; font-size:13px; white-space:nowrap;'>{lcp}</td>"
                         # Histórico: fonte menor, com quebra de linha permitida
                         rows_html_div += f"<td style='font-size:11px; white-space:normal; overflow-wrap:break-word; padding-left:12px;'>{historico}</td>"
                         rows_html_div += "</tr>"
@@ -677,8 +679,8 @@ if arquivo_excel:
                                 <th style='text-align:center; width:5%;'>UG</th>
                                 <th style='text-align:center; width:10%;'>Data</th>
                                 <th style='text-align:right; width:15%;'>Valor</th>
-                                <th style='text-align:center; width:25%;'>LCP</th>
-                                <th style='text-align:left; width:45%; padding-left:12px;'>Histórico</th>
+                                <th style='text-align:center; width:30%;'>LCP</th>
+                                <th style='text-align:left; width:40%; padding-left:12px;'>Histórico</th>
                             </tr>
                             {rows_html_div}
                         </table>
