@@ -314,7 +314,6 @@ def extrair_banpara(arquivo_bytes, ano_ref):
 def extrair_caixa(arquivo_bytes, ano_ref):
     import re
     
-    # Termos de RECEITA (Removido "DEB ARREC")
     FILTER_TERMS = [
         "ARR CCV DH", "ARR CV INT", "ARR DH AG", 
         "CRED ARREC", "CREDITO ARREC" 
@@ -661,22 +660,25 @@ if arquivo_excel:
                         historico = str(r.get('Histórico', '')).replace('nan', '')
                         
                         rows_html_div += f"<tr style='border-bottom:1px solid #eee;'>"
-                        rows_html_div += f"<td style='text-align:center;'>{ug}</td>"
+                        # UG: negrito, fonte maior
+                        rows_html_div += f"<td style='text-align:center; font-weight:bold; font-size:14px;'>{ug}</td>"
                         rows_html_div += f"<td style='text-align:center;'>{data_val}</td>"
                         rows_html_div += f"<td style='text-align:right; font-weight:bold;'>{formatar_moeda(valor)}</td>"
-                        rows_html_div += f"<td style='text-align:center;'>{lcp}</td>"
-                        rows_html_div += f"<td style='font-size:11px; max-width:400px; white-space:normal; overflow-wrap:break-word; padding-left:8px;'>{historico}</td>"
+                        # LCP: fonte menor, texto em uma linha sem quebra
+                        rows_html_div += f"<td style='text-align:center; font-size:11px; white-space:nowrap;'>{lcp}</td>"
+                        # Histórico: fonte menor, com quebra de linha permitida
+                        rows_html_div += f"<td style='font-size:11px; white-space:normal; overflow-wrap:break-word; padding-left:12px;'>{historico}</td>"
                         rows_html_div += "</tr>"
 
                     tbl_html_div = textwrap.dedent(f"""
                     <div style='background-color:white;padding:15px;border-radius:5px;border:1px solid #ddd;'>
                         <table style='width:100%;border-collapse:collapse;color:black !important;'>
                             <tr style='background-color:black;color:white;'>
-                                <th style='text-align:center; width:10%;'>UG</th>
+                                <th style='text-align:center; width:5%;'>UG</th>
                                 <th style='text-align:center; width:10%;'>Data</th>
                                 <th style='text-align:right; width:15%;'>Valor</th>
-                                <th style='text-align:center; width:10%;'>LCP</th>
-                                <th style='text-align:left; width:55%; padding-left:8px;'>Histórico</th>
+                                <th style='text-align:center; width:25%;'>LCP</th>
+                                <th style='text-align:left; width:45%; padding-left:12px;'>Histórico</th>
                             </tr>
                             {rows_html_div}
                         </table>
