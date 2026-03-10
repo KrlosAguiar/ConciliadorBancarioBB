@@ -11,3 +11,4 @@ pymupdf
 xlsxwriter
 rarfile
 xhtml2pdf
+odfpy
