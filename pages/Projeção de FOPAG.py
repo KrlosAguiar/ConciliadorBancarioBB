@@ -152,7 +152,7 @@ if uploaded_file:
         with st.spinner("A processar os dados..."):
             file_bytes = uploaded_file.read()
             
-            # 1. Leitura robusta do Pandas (Resolve o agrupamento das células e necessita da odfpy)
+            # 1. Leitura robusta do Pandas
             try:
                 df_raw = pd.read_excel(io.BytesIO(file_bytes), engine="odf", header=None)
             except Exception as e:
@@ -183,7 +183,6 @@ if uploaded_file:
                         row_c = df_dados.iloc[i].copy()
                         row_baixo = df_dados.iloc[i+1]
                         
-                        # Preenche as colunas vazias com a linha de baixo
                         for c_idx in range(len(row_c)):
                             v_c = str(row_c.iloc[c_idx]).strip()
                             if v_c in ["nan", "None", ""]:
@@ -204,8 +203,6 @@ if uploaded_file:
             restantes = 13 - decorridos if decorridos > 0 else 12
 
             df_calc = df_res.iloc[1:].copy()
-            
-            # Limpa qualquer linha que tenha vindo totalmente vazia
             df_calc = df_calc.dropna(how='all')
 
             idx_total = header_row.index("Total") if "Total" in header_row else 6
@@ -219,15 +216,17 @@ if uploaded_file:
             df_calc['Projeção'] = df_calc['Média'] * restantes
             df_calc['Suplementar'] = col_saldo - df_calc['Projeção']
 
-            # Ajuste do preenchimento do Órgão (ffill) de forma segura
-            df_calc.iloc[:, 0] = df_calc.iloc[:, 0].replace(["", "nan", "None"], np.nan).ffill()
-            df_calc['Órgão'] = df_calc.iloc[:, 0].apply(lambda x: re.sub(r'^\d+\s*', '', str(x)))
-            df_calc['Código'] = df_calc.iloc[:, 1]
+            # =========================================================
+            # CORREÇÃO: Preenchimento do Órgão (ffill) blindado contra espaços
+            # =========================================================
+            col_orgao = df_calc.iloc[:, 0].astype(str).str.strip() # Transforma em texto e remove espaços
+            col_orgao = col_orgao.replace(["", "nan", "None", "NaN"], np.nan) # Força virar nulo real
+            col_orgao = col_orgao.ffill() # Preenche para baixo
+            df_calc['Órgão'] = col_orgao.apply(lambda x: re.sub(r'^\d+\s*', '', str(x)) if pd.notna(x) else "")
             
-            # Filtro para ignorar linhas de lixo: só passa o que tem código preenchido
-            df_calc = df_calc[df_calc['Código'].astype(str).str.strip() != "nan"]
-            df_calc = df_calc[df_calc['Código'].astype(str).str.strip() != "None"]
-            df_calc = df_calc[df_calc['Código'].astype(str).str.strip() != ""]
+            # Limpeza do Código
+            df_calc['Código'] = df_calc.iloc[:, 1].astype(str).str.strip()
+            df_calc = df_calc[~df_calc['Código'].isin(["nan", "None", ""])] # Remove linhas vazias/lixo
 
             df_calc['Despesa'] = df_calc.iloc[:, 2]
             df_calc['Saldo_Val'] = col_saldo
@@ -250,7 +249,6 @@ if uploaded_file:
                 </tr>"""
             
             for _, r in df_f.iterrows():
-                # Destaque Visual APENAS na coluna Suplementar (Vermelho/Negrito se Negativo)
                 is_neg = r['Suplementar'] < 0
                 s_color = "red" if is_neg else "black"
                 s_weight = "bold" if is_neg else "normal"
