@@ -20,7 +20,10 @@ from reportlab.lib.units import mm, inch
 # CONFIGURAÇÃO DA PÁGINA
 # ==============================================================================
 icon_path = os.path.join(os.getcwd(), "Barcarena.png")
-icon_image = Image.open(icon_path)
+try:
+    icon_image = Image.open(icon_path)
+except:
+    icon_image = None # Evita quebrar se a imagem não for encontrada
 
 st.set_page_config(
     page_title="Projeção de FOPAG",
@@ -160,21 +163,40 @@ st.markdown('<p class="big-label">Selecione o arquivo no formato .ods</p>', unsa
 uploaded_file = st.file_uploader("", type=["ods"], label_visibility="collapsed")
 
 if uploaded_file:
-    if st.button("INICIAR PROCESSAMENTO", use_container_width=True):
+    # Criação das duas colunas para os botões lado a lado
+    col_btn1, col_btn2 = st.columns(2)
+    
+    modo_processamento = None
+    
+    with col_btn1:
+        if st.button("INICIAR PROCESSAMENTO (até Março)", use_container_width=True):
+            modo_processamento = "1_linha"
+            
+    with col_btn2:
+        if st.button("INICIAR PROCESSAMENTO (Abril a Dezembro)", use_container_width=True):
+            modo_processamento = "2_linhas"
+
+    if modo_processamento:
         with st.spinner("Processando..."):
             file_bytes = uploaded_file.read()
             df_raw = read_ods_streamlit(file_bytes)
             
+            # Limpeza inicial das linhas de cabeçalho irrelevantes
             df_limpo = df_raw.drop([0, 1, 2, 3, 4, 7]).reset_index(drop=True)
-            if df_limpo.iloc[1].astype(str).str.contains("Diferença", case=False).any():
+            
+            # --- ROTEAMENTO DA LÓGICA BASEADO NO BOTÃO CLICADO ---
+            if modo_processamento == "2_linhas":
+                # Lógica Antiga (Macro ProcessarPlanilha_Dados_Projecao_ComSuplementar_ContabilEstilo)
                 merged = []
                 for i in range(0, len(df_limpo), 2):
                     if i + 1 < len(df_limpo):
                         merged.append(pd.concat([df_limpo.iloc[i], df_limpo.iloc[i+1].iloc[4:13]], ignore_index=True))
                 df_res = pd.DataFrame(merged)
             else:
+                # Lógica Nova (Macro ProcessarPlanilha_Dados_Projecao_1Linha)
                 df_res = df_limpo
 
+            # --- LÓGICA COMPARTILHADA (Meses, Cálculos e Formatação) ---
             header_row = df_res.iloc[0].astype(str).str.strip().tolist()
             meses_lista = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
             meses_encontrados = [m for m in meses_lista if any(m.lower() == h.lower() for h in header_row)]
@@ -190,10 +212,11 @@ if uploaded_file:
             col_saldo = df_calc.iloc[:, idx_saldo].apply(to_num)
 
             df_calc['Liquidado'] = abs(col_saldo - col_total)
-            df_calc['Média'] = df_calc['Liquidado'] / decorridos
+            df_calc['Média'] = df_calc['Liquidado'] / decorridos if decorridos > 0 else 0
             df_calc['Projeção'] = df_calc['Média'] * restantes
             df_calc['Suplementar'] = col_saldo - df_calc['Projeção']
 
+            # Preenchimento das células vazias na Coluna A (equivalente à lastValueA da macro VBA)
             df_calc.iloc[:, 0] = df_calc.iloc[:, 0].replace("", np.nan).ffill()
             df_calc['Órgão'] = df_calc.iloc[:, 0].apply(lambda x: re.sub(r'^\d+\s*', '', str(x)))
             df_calc['Código'] = df_calc.iloc[:, 1]
