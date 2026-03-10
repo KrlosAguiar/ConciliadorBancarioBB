@@ -1,12 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import zipfile
-import xml.etree.ElementTree as ET
 import re
 import io
 import os
-import datetime
 from PIL import Image
 
 # ReportLab Imports
@@ -14,7 +11,7 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import mm, inch
+from reportlab.lib.units import mm
 
 # ==============================================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -66,35 +63,12 @@ def formatar_moeda_br(valor):
         return str(valor)
 
 def to_num(val):
-    if val is None or str(val).strip() in ["", "-", "None"]: return 0.0
+    if val is None or str(val).strip() in ["", "-", "None", "nan"]: return 0.0
     s = str(val).strip()
     try:
         if ',' in s: s = s.replace('.', '').replace(',', '.')
         return float(s)
     except: return 0.0
-
-def read_ods_streamlit(file_bytes):
-    with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-        with z.open('content.xml') as f:
-            root = ET.parse(f).getroot()
-    ns = {'table': 'urn:oasis:names:tc:opendocument:xmlns:table:1.0',
-          'text': 'urn:oasis:names:tc:opendocument:xmlns:text:1.0',
-          'office': 'urn:oasis:names:tc:opendocument:xmlns:office:1.0'}
-    data = []
-    for sheet in root.findall('.//table:table', ns)[:1]:
-        for row in sheet.findall('.//table:table-row', ns):
-            row_data = []
-            for cell in row.findall('.//table:table-cell', ns):
-                repeat = cell.get('{urn:oasis:names:tc:opendocument:xmlns:table:1.0}number-columns-repeated')
-                val = cell.get('{urn:oasis:names:tc:opendocument:xmlns:office:1.0}value')
-                if val is None:
-                    text_nodes = cell.findall('.//text:p', ns)
-                    val = " ".join([ET.tostring(t, method='text', encoding='unicode') for t in text_nodes]) if text_nodes else ""
-                for _ in range(int(repeat) if repeat else 1):
-                    row_data.append(val.strip())
-            data.append(row_data)
-    max_len = max(len(r) for r in data) if data else 0
-    return pd.DataFrame([r + [""] * (max_len - len(r)) for r in data])
 
 # ==============================================================================
 # 2. GERAÇÃO DO PDF
@@ -163,9 +137,7 @@ st.markdown('<p class="big-label">Selecione o arquivo no formato .ods</p>', unsa
 uploaded_file = st.file_uploader("", type=["ods"], label_visibility="collapsed")
 
 if uploaded_file:
-    # Criação das duas colunas para os botões lado a lado
     col_btn1, col_btn2 = st.columns(2)
-    
     modo_processamento = None
     
     with col_btn1:
@@ -177,34 +149,65 @@ if uploaded_file:
             modo_processamento = "2_linhas"
 
     if modo_processamento:
-        with st.spinner("Processando..."):
+        with st.spinner("A processar os dados..."):
             file_bytes = uploaded_file.read()
-            df_raw = read_ods_streamlit(file_bytes)
             
-            # Limpeza inicial das linhas de cabeçalho irrelevantes
-            df_limpo = df_raw.drop([0, 1, 2, 3, 4, 7]).reset_index(drop=True)
+            # 1. Leitura robusta do Pandas (Resolve o agrupamento das células e necessita da odfpy)
+            try:
+                df_raw = pd.read_excel(io.BytesIO(file_bytes), engine="odf", header=None)
+            except Exception as e:
+                st.error("Erro na leitura. Certifique-se de que a biblioteca 'odfpy' está instalada no seu ambiente (pip install odfpy).")
+                st.stop()
+                
+            # 2. Busca Dinâmica do Cabeçalho
+            idx_cabecalho = 0
+            for i in range(min(20, len(df_raw))):
+                linha_str = " ".join(df_raw.iloc[i].astype(str).str.upper())
+                # Procura a linha que contém as palavras-chave da sua tabela
+                if "DESPESA" in linha_str and "SALDO" in linha_str:
+                    idx_cabecalho = i
+                    break
+                    
+            # 3. Corta o dataframe exatamente no cabeçalho
+            df_limpo = df_raw.iloc[idx_cabecalho:].reset_index(drop=True)
             
-            # --- ROTEAMENTO DA LÓGICA BASEADO NO BOTÃO CLICADO ---
+            # --- ROTEAMENTO DA LÓGICA BASEADO NO BOTÃO ---
             if modo_processamento == "2_linhas":
-                # Lógica Antiga (Macro ProcessarPlanilha_Dados_Projecao_ComSuplementar_ContabilEstilo)
-                merged = []
-                for i in range(0, len(df_limpo), 2):
-                    if i + 1 < len(df_limpo):
-                        merged.append(pd.concat([df_limpo.iloc[i], df_limpo.iloc[i+1].iloc[4:13]], ignore_index=True))
-                df_res = pd.DataFrame(merged)
+                # Lógica Antiga (Separar cabeçalho dos dados e mesclar linhas)
+                df_cab = df_limpo.iloc[[0]]
+                df_dados = df_limpo.iloc[1:].reset_index(drop=True)
+                merged = [df_cab]
+                
+                for i in range(0, len(df_dados), 2):
+                    if i + 1 < len(df_dados):
+                        row_c = df_dados.iloc[i].copy()
+                        row_baixo = df_dados.iloc[i+1]
+                        
+                        # Preenche as colunas vazias com a linha de baixo
+                        for c_idx in range(len(row_c)):
+                            v_c = str(row_c.iloc[c_idx]).strip()
+                            if v_c in ["nan", "None", ""]:
+                                row_c.iloc[c_idx] = row_baixo.iloc[c_idx]
+                                
+                        merged.append(row_c.to_frame().T)
+                df_res = pd.concat(merged, ignore_index=True)
             else:
-                # Lógica Nova (Macro ProcessarPlanilha_Dados_Projecao_1Linha)
+                # Formato novo (1 linha direta)
                 df_res = df_limpo
 
-            # --- LÓGICA COMPARTILHADA (Meses, Cálculos e Formatação) ---
+            # --- LÓGICA COMPARTILHADA (Meses, Cálculos e Limpeza) ---
             header_row = df_res.iloc[0].astype(str).str.strip().tolist()
             meses_lista = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
             meses_encontrados = [m for m in meses_lista if any(m.lower() == h.lower() for h in header_row)]
             ultimo_mes = meses_encontrados[-1] if meses_encontrados else "Processamento"
             decorridos = len(meses_encontrados)
-            restantes = 13 - decorridos
+            restantes = 13 - decorridos if decorridos > 0 else 12
 
             df_calc = df_res.iloc[1:].copy()
+            
+            # Limpa qualquer linha que tenha vindo totalmente vazia
+            df_calc = df_calc.dropna(how='all')
+
             idx_total = header_row.index("Total") if "Total" in header_row else 6
             idx_saldo = header_row.index("Saldo") if "Saldo" in header_row else 18
             
@@ -216,10 +219,16 @@ if uploaded_file:
             df_calc['Projeção'] = df_calc['Média'] * restantes
             df_calc['Suplementar'] = col_saldo - df_calc['Projeção']
 
-            # Preenchimento das células vazias na Coluna A (equivalente à lastValueA da macro VBA)
-            df_calc.iloc[:, 0] = df_calc.iloc[:, 0].replace("", np.nan).ffill()
+            # Ajuste do preenchimento do Órgão (ffill) de forma segura
+            df_calc.iloc[:, 0] = df_calc.iloc[:, 0].replace(["", "nan", "None"], np.nan).ffill()
             df_calc['Órgão'] = df_calc.iloc[:, 0].apply(lambda x: re.sub(r'^\d+\s*', '', str(x)))
             df_calc['Código'] = df_calc.iloc[:, 1]
+            
+            # Filtro para ignorar linhas de lixo: só passa o que tem código preenchido
+            df_calc = df_calc[df_calc['Código'].astype(str).str.strip() != "nan"]
+            df_calc = df_calc[df_calc['Código'].astype(str).str.strip() != "None"]
+            df_calc = df_calc[df_calc['Código'].astype(str).str.strip() != ""]
+
             df_calc['Despesa'] = df_calc.iloc[:, 2]
             df_calc['Saldo_Val'] = col_saldo
 
