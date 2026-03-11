@@ -256,7 +256,7 @@ def gerar_excel_simples(df):
 # ==============================================================================
 # 2. INTERFACE DO APLICATIVO
 # ==============================================================================
-st.markdown("<h1 style='text-align: center;'>Conversor de Relatório de Receitas Próprias Arrecadadas</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>Conversor de Relatório de Receitas Arrecadadas</h1>", unsafe_allow_html=True)
 st.markdown("---")
 
 st.markdown('<p class="big-label" style="text-align: center;">Selecione o Relatório Contábil em PDF</p>', unsafe_allow_html=True)
