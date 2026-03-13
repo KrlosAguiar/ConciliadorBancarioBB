@@ -198,7 +198,7 @@ def processar_excel_detalhado(file_bytes, df_pdf_ref, is_csv=False):
         mask_transf_std = (df['Info_Z'].astype(str).str.contains("TRANSFERENCIA ENTRE CONTAS DE MESMA UG", case=False, na=False)) & (df['DC'].str.strip().str.upper() == 'C')
         mask_codes_z = df['Info_Z'].astype(str).str.contains(r"266|264|268|262", case=False, regex=True, na=False)
         cond_250_z = df['Info_Z'].astype(str).str.contains("250", case=False, na=False)
-        cond_ab_text = df['Info_AB'].astype(str).str.contains("transferência financeira concedida|repasse financeiro concedido|transferencia financeira concedida", case=False, na=False)
+        cond_ab_text = df['Info_AB'].astype(str).str.contains("transferência financeira concedida|repasse financeiro concedido|transferencia financeira concedida|devolução|devoluçao|devolucao", case=False, na=False)
         mask_250_restrict = cond_250_z & cond_ab_text
         mask_aa_ded = df['Info_AA'].astype(str).str.contains(r"Ded\.", case=False, regex=True, na=False)
         
